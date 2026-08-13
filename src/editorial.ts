@@ -22,7 +22,19 @@ const SCORE_ONLY_TERMS: Partial<Record<string, RegExp>> = { agents: /workflow/gi
 
 const DEPRIORITIZED_TERMS = /\bvideo\b|\blocal\b|on-device|stable diffusion|comfyui|quantization|\bgpu\b|cuda|\bhardware\b|api pricing/gi;
 const EXCEPTIONAL_TERMS = /\bfirst[- ]ever\b|\bbreakthrough\b|\bunprecedented\b|new state[- ]of[- ]the[- ]art/gi;
-const PERMISSION_TERMS = /\bpermission(?:s)?\b|\bapproval(?:s)?\b|access control|agent security|sandbox(?:ing|ed)?/gi;
+const PERMISSION_DESIGN_TERMS = [
+  /\b(?:agent|tool|runtime|command|action|file|network|browser|terminal|shell|system|user) permission(?:s)?\b/i,
+  /\bpermission(?:s)? (?:design|model|scope|scopes|boundary|boundaries|policy|policies|prompt|prompts|gate|gates|control|controls|system|systems|setting|settings)\b/i,
+  /\b(?:grant|grants|granted|granting|deny|denies|denied|denying|revoke|revokes|revoked|revoking|request|requests|requested|requesting|require|requires|required|requiring|bypass|bypasses|bypassed|bypassing|check|checks|checked|checking|enforce|enforces|enforced|enforcing) (?:a |the |user )?permission(?:s)?\b/i,
+  /\b(?:human|manual|user|operator|admin|administrator|reviewer) approval(?:s)?\b/i,
+  /\bapproval(?:s)? (?:gate|gates|flow|flows|workflow|workflows|policy|policies|prompt|prompts|requirement|requirements|request|requests|queue|queues|step|steps|checkpoint|checkpoints|control|controls|mode|modes)\b/i,
+  /\b(?:require|requires|required|requiring|request|requests|requested|requesting|seek|seeks|seeking|await|awaits|awaiting|bypass|bypasses|bypassed|bypassing|grant|grants|granted|granting) (?:human |user |manual )?approval(?:s)?\b/i,
+  /\bapprove(?:d|s|ing)? (?:or deny|before|commands?|actions?|tool calls?)\b/i,
+  /\bapproval(?:s)? (?:for|before|to) (?:run|execute|access|use|call|modify|delete|write|deploy)\b/i,
+  /access control/i,
+  /agent security/i,
+  /sandbox(?:ing|ed)?/i
+];
 const GEOGRAPHY_TERMS = /cluster geography|data cent(?:er|re)|sovereign|regional capacity|\bchina\b|united states|\bu\.s\.\b/gi;
 const CATEGORY_PRIORITY = ["codex", "harness", "agents", "integration", "business", "newSystems", "frontier", "research", "training", "lowFit"];
 
@@ -33,6 +45,10 @@ export type ModelIssueInventory = { issue: RssIssue; candidates: CandidateStory[
 function matches(pattern: RegExp, value: string): number {
   pattern.lastIndex = 0;
   return value.match(pattern)?.length ?? 0;
+}
+
+export function isPermissionDesignSignal(textValue: string): boolean {
+  return PERMISSION_DESIGN_TERMS.some((pattern) => matches(pattern, textValue) > 0);
 }
 
 function blockScore(text: string, profile: Profile, linkCount: number): number {
@@ -219,7 +235,7 @@ export function compactIssueInventory(issue: RssIssue, profile: Profile): ModelI
       categoryLabel: category.label,
       score: candidate.score,
       exceptional: matches(EXCEPTIONAL_TERMS, candidate.text) > 0,
-      watchPermission: matches(PERMISSION_TERMS, candidate.text) > 0,
+      watchPermission: isPermissionDesignSignal(candidate.text),
       watchGeography: matches(GEOGRAPHY_TERMS, candidate.text) > 0,
       sources: candidate.anchors.map(displaySource)
     });

@@ -3,7 +3,7 @@ import type { Edition } from "../src/contracts";
 import { DEFAULT_PROFILE } from "../src/contracts";
 import { anchorsToMarkdown, parseLatestRss } from "../src/rss";
 import { validateEdition, ValidationError } from "../src/validation";
-import { compactIssueForModel, compactIssueInventory, editorialMessages, extractGeneratedEdition, generationInput, materializeCandidateStories } from "../src/editorial";
+import { compactIssueForModel, compactIssueInventory, editorialMessages, extractGeneratedEdition, generationInput, isPermissionDesignSignal, materializeCandidateStories } from "../src/editorial";
 import { normalizeEditionStories } from "../src/story-normalization";
 
 function edition(): Edition {
@@ -19,6 +19,11 @@ function edition(): Edition {
 }
 
 describe("editorial contracts", () => {
+  it("distinguishes permission design from a generic mention of approvals", () => {
+    expect(isPermissionDesignSignal("Practical gains are coming from harness engineering, memory, approvals, evals, and tools.")).toBe(false);
+    expect(isPermissionDesignSignal("The agent requires human approval before executing a shell command.")).toBe(true);
+    expect(isPermissionDesignSignal("The release adds explicit tool permission scopes and revocation controls.")).toBe(true);
+  });
   it("rejects a generated source that AInews did not supply", () => {
     expect(() => validateEdition(edition(), DEFAULT_PROFILE, new Set(["https://example.com/other"]))).toThrow(ValidationError);
   });

@@ -101,6 +101,13 @@ function reasonClass(item, profile) {
   return reason ? ` is-${reason.tone}` : "";
 }
 
+function markerLegend(profile) {
+  const markers = [];
+  if (profile.safeguards.watchPermissions || profile.safeguards.watchGeography) markers.push(`<span><i class="legend-mark watched" aria-hidden="true"></i><strong>Green</strong> · watched topic</span>`);
+  if (profile.exceptionalStoryOverride) markers.push(`<span><i class="legend-mark exceptional" aria-hidden="true"></i><strong>Orange</strong> · exceptional signal</span>`);
+  return markers.length ? `<aside class="marker-legend" aria-label="Editorial marker legend"><span class="legend-title">Markers</span>${markers.join("")}</aside>` : "";
+}
+
 function issueHeader(edition, profile, visibleCount) {
   const personalState = state.previewOverride ? "Shared tuning preview" : state.override ? "Personalised in this browser" : "";
   return `<header class="issue-header"><div><p class="view-label">Daily AI brief</p><h1><a href="${escape(edition.issue.url)}" target="_blank" rel="noreferrer">${escape(edition.issue.publicationDate)}</a></h1><p>AInews coverage: ${escape(edition.issue.coverage)}</p></div><div class="issue-meta"><span>${escape(profileNotice(edition, profile, visibleCount))}</span>${personalState ? `<span class="personal-state">${escape(personalState)}</span>` : ""}</div></header>`;
@@ -121,8 +128,8 @@ function renderEdition(edition, profile, view = "hot") {
     const kicker = normalizedDisplayText(section.kicker) === normalizedDisplayText(section.title) ? "" : `<p class="kicker">${escape(section.kicker)}</p>`;
     return `<section class="section"><p class="section-index">${String(index + 1).padStart(2, "0")}</p><h3>${escape(section.title)}</h3>${kicker}<p>${escape(section.body)}</p>${sourceLinks(section.sources)}</section>`;
   }).join("");
-  const hotView = `${viewIntro("Hot topics", edition.presentation.hotTitle, edition.presentation.hotIntro)}<div class="hot-list">${hot}</div>`;
-  const allView = `${viewIntro("All signals", edition.presentation.allTitle, edition.presentation.allIntro)}<div class="signals-list">${signals}</div>`;
+  const hotView = `${viewIntro("Hot topics", edition.presentation.hotTitle, edition.presentation.hotIntro)}${markerLegend(profile)}<div class="hot-list">${hot}</div>`;
+  const allView = `${viewIntro("All signals", edition.presentation.allTitle, edition.presentation.allIntro)}${markerLegend(profile)}<div class="signals-list">${signals}</div>`;
   const synthesisView = `${viewIntro("Synthesis", edition.presentation.synthesisTitle, edition.presentation.synthesisIntro)}<article class="synthesis-layout"><div class="synthesis-main"><p class="lead">${escape(edition.synthesis.lead)}</p><div class="big">${escape(edition.synthesis.bigPicture)}</div><div>${sections}</div></div><aside class="synthesis-rail"><p class="rail-label">Reading time</p><p class="time">${edition.presentation.sourceReadMinutes} min source → ${edition.presentation.briefReadMinutes} min brief</p>${sourceLinks(edition.synthesis.sources, "Brief sources")}</aside></article>`;
   const content = view === "synthesis" ? synthesisView : view === "all" ? allView : hotView;
   app.innerHTML = `${issueHeader(edition, profile, visibleSignals.length)}${collectionNotice(edition)}<div class="reader-toolbar">${tabs(view)}</div><section class="view-panel" id="reader-panel" role="tabpanel" aria-labelledby="reader-tab-${view}" tabindex="0">${content}</section>`;

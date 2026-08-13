@@ -4,6 +4,19 @@ export const VIEWER_OVERRIDE_STORAGE_KEY = "ai-signal.viewer-overrides.v1";
 const WEIGHT_LABELS = ["Demote", "Background", "Balanced", "Prioritize", "Lead"];
 const SAFE_OVERRIDE_KEYS = new Set(["version", "storyBudget", "weights", "exceptionalStoryOverride", "safeguards"]);
 const SAFE_SAFEGUARD_KEYS = new Set(["watchPermissions", "watchGeography"]);
+const PERMISSION_DESIGN_TERMS = [
+  /\b(?:agent|tool|runtime|command|action|file|network|browser|terminal|shell|system|user) permission(?:s)?\b/i,
+  /\bpermission(?:s)? (?:design|model|scope|scopes|boundary|boundaries|policy|policies|prompt|prompts|gate|gates|control|controls|system|systems|setting|settings)\b/i,
+  /\b(?:grant|grants|granted|granting|deny|denies|denied|denying|revoke|revokes|revoked|revoking|request|requests|requested|requesting|require|requires|required|requiring|bypass|bypasses|bypassed|bypassing|check|checks|checked|checking|enforce|enforces|enforced|enforcing) (?:a |the |user )?permission(?:s)?\b/i,
+  /\b(?:human|manual|user|operator|admin|administrator|reviewer) approval(?:s)?\b/i,
+  /\bapproval(?:s)? (?:gate|gates|flow|flows|workflow|workflows|policy|policies|prompt|prompts|requirement|requirements|request|requests|queue|queues|step|steps|checkpoint|checkpoints|control|controls|mode|modes)\b/i,
+  /\b(?:require|requires|required|requiring|request|requests|requested|requesting|seek|seeks|seeking|await|awaits|awaiting|bypass|bypasses|bypassed|bypassing|grant|grants|granted|granting) (?:human |user |manual )?approval(?:s)?\b/i,
+  /\bapprove(?:d|s|ing)? (?:or deny|before|commands?|actions?|tool calls?)\b/i,
+  /\bapproval(?:s)? (?:for|before|to) (?:run|execute|access|use|call|modify|delete|write|deploy)\b/i,
+  /access control/i,
+  /agent security/i,
+  /sandbox(?:ing|ed)?/i
+];
 
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -11,6 +24,15 @@ function isObject(value) {
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
+}
+
+function hasPermissionDesignLanguage(item) {
+  const text = `${item.title ?? ""} ${item.summary ?? ""}`;
+  return PERMISSION_DESIGN_TERMS.some((pattern) => pattern.test(text));
+}
+
+function activePermissionWatch(item, profile) {
+  return Boolean(item.watchPermission && profile.safeguards.watchPermissions && hasPermissionDesignLanguage(item));
 }
 
 export function baseProfileForEdition(sharedProfile, editionProfile, isHistoricalEdition) {
@@ -106,7 +128,7 @@ export function rankItems(items, profile) {
   const score = (item) => Number(item.base ?? 0)
     + (weights.get(item.category) ?? 0) * 10
     + (item.exceptional && profile.exceptionalStoryOverride ? 45 : 0)
-    + (item.watchPermission && profile.safeguards.watchPermissions ? 20 : 0)
+    + (activePermissionWatch(item, profile) ? 20 : 0)
     + (item.watchGeography && profile.safeguards.watchGeography ? 20 : 0);
   return [...items].map((item, index) => ({ item, index, score: score(item) }))
     .sort((left, right) => right.score - left.score || left.index - right.index)
@@ -120,7 +142,7 @@ export function rankItems(items, profile) {
  */
 export function rankingReason(item, profile) {
   if (item.exceptional && profile.exceptionalStoryOverride) return { label: "Exceptional signal", tone: "exceptional" };
-  if (item.watchPermission && profile.safeguards.watchPermissions) return { label: "Watching · agent permission design", tone: "watched" };
+  if (activePermissionWatch(item, profile)) return { label: "Watching · agent permission design", tone: "watched" };
   if (item.watchGeography && profile.safeguards.watchGeography) return { label: "Watching · AI cluster geography", tone: "watched" };
   const weight = (profile.weights ?? []).find((candidate) => candidate.id === item.category);
   if (!weight) return null;

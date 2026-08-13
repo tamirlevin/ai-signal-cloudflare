@@ -25,7 +25,8 @@ describe("reader profile selection", () => {
     };
     expect(rankingReason({ category: "codex" }, profile)).toEqual({ label: "Codex & agent craft · Lead", tone: "priority" });
     expect(rankingReason({ category: "harness" }, profile)).toEqual({ label: "Pinned · Model–harness co-design", tone: "pinned" });
-    expect(rankingReason({ category: "codex", watchPermission: true }, profile)).toEqual({ label: "Watching · agent permission design", tone: "watched" });
+    expect(rankingReason({ category: "codex", title: "Agent approval controls", summary: "The agent requires human approval before executing a shell command.", watchPermission: true }, profile)).toEqual({ label: "Watching · agent permission design", tone: "watched" });
+    expect(rankingReason({ category: "harness", title: "Harness engineering", summary: "Practical gains are coming from memory, approvals, evals, and tools.", watchPermission: true }, profile)).toEqual({ label: "Pinned · Model–harness co-design", tone: "pinned" });
     expect(rankingReason({ category: "codex", exceptional: true }, profile)).toEqual({ label: "Exceptional signal", tone: "exceptional" });
   });
 });
