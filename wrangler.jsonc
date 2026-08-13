@@ -1,0 +1,35 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "ai-signal-cloudflare",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-11",
+  "workers_dev": true,
+  "observability": {
+    "enabled": true,
+    "logs": { "head_sampling_rate": 1 },
+    "traces": { "enabled": true, "head_sampling_rate": 0.1 }
+  },
+  "vars": {
+    "ENVIRONMENT": "production",
+    "AI_MODEL": "@cf/meta/llama-3.1-8b-instruct-fast",
+    "AI_FALLBACK_MODEL": "@cf/zai-org/glm-4.7-flash",
+    "AI_GATEWAY_ID": "",
+    "RSS_URL": "https://news.smol.ai/rss.xml"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "ai-signal",
+      "database_id": "376a852a-26db-4d2d-983c-b872b3361372",
+      "migrations_dir": "./migrations"
+    }
+  ],
+  "ai": { "binding": "AI" },
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/__scheduled"]
+  },
+  "triggers": { "crons": ["15 22 * * *"] }
+}

@@ -1,0 +1,45 @@
+.personalisation {
+  background: var(--bluewash);
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  color: var(--blue);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 10px;
+}
+
+.topbar .personalisation { margin-left: auto; }
+
+.personalisation.preview {
+  background: var(--orangewash);
+  border-color: #fed7aa;
+  color: #9a3412;
+}
+
+.tune-notice {
+  background: var(--orangewash);
+  border: 1px solid #fed7aa;
+  border-radius: 10px;
+  color: #9a3412;
+  padding: 11px 13px;
+}
+
+.tune-actions { flex-wrap: wrap; }
+.admin { margin: 0 auto; max-width: 920px; }
+.admin-panel {
+  border: 1px solid var(--rule);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  padding: clamp(20px, 4vw, 34px);
+}
+.admin-panel > label { display: grid; gap: 7px; }
+.admin-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 24px; }
+.admin input[type="password"] { max-width: 520px; width: 100%; }
+[hidden] { display: none !important; }
+
+@media (max-width: 620px) {
+  .tune-actions { justify-content: stretch; }
+  .tune-actions .button { flex: 1 1 44%; }
+  .admin-actions .button { width: 100%; }
+}

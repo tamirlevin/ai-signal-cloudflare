@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="AI Signal: a concise, source-linked AInews reader.">
+    <title>AI Signal</title>
+    <script>
+      if (location.protocol === "file:") location.replace("https://ai-signal-cloudflare.tamirlevin.workers.dev/");
+    </script>
+    <link rel="stylesheet" href="/styles.css">
+    <link rel="stylesheet" href="/personalization.css">
+    <link rel="stylesheet" href="/status.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/">AI Signal</a>
+      <nav aria-label="Primary navigation"><a href="/">Latest</a><a href="/history">History</a></nav>
+      <button class="personalisation" id="open-tune" type="button">Personalise</button>
+    </header>
+    <main id="app" aria-live="polite"></main>
+    <dialog id="tune-dialog" aria-labelledby="tune-title">
+      <form method="dialog" id="tune-form">
+        <div class="dialog-head"><div><p class="eyebrow">Browser-only preference</p><h2 id="tune-title">Tune AI Signal for me</h2></div><button class="plain-button" value="cancel" aria-label="Close">Close</button></div>
+        <p class="muted">These controls re-rank the AInews candidates in this browser. They do not alter the shared edition, your profile, or future generation.</p>
+        <p class="tune-notice" id="tune-notice" hidden></p>
+        <label class="range-row">Stories <output id="budget-value">7</output><input id="story-budget" type="range" min="5" max="14" value="7"></label>
+        <div id="weights" class="weights"></div>
+        <fieldset><legend>Editorial safeguards</legend><label><input id="exceptional" type="checkbox"> Exceptional-story override</label><label><input id="watch-permissions" type="checkbox"> Watch agent permission design</label><label><input id="watch-geography" type="checkbox"> Watch AI cluster geography</label></fieldset>
+        <menu class="tune-actions"><button class="button secondary" id="reset-tune" type="button">Reset to default</button><button class="button secondary" id="copy-tune" type="button">Copy tuning link</button><button class="button secondary" value="cancel">Cancel</button><button class="button" id="apply-tune" value="default">Save in this browser</button></menu>
+        <p class="status" id="tune-status"></p>
+      </form>
+    </dialog>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

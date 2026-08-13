@@ -1,0 +1,2 @@
+# Never commit a real token. Set the deployed value with: wrangler secret put ADMIN_TOKEN
+ADMIN_TOKEN=replace-with-a-long-random-token

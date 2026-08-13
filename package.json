@@ -1,0 +1,20 @@
+{
+  "name": "ai-signal-cloudflare",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "types": "wrangler types ./worker-configuration.d.ts",
+    "check": "npm run types && npm run typecheck && npm test",
+    "dry-run": "wrangler deploy --dry-run"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.0",
+    "wrangler": "^4.121.0"
+  }
+}
