@@ -3,7 +3,7 @@ import { getActiveProfile, getEdition, latestEdition, latestRunStatus, listEditi
 import { ValidationError } from "./validation";
 
 const SECURITY_HEADERS: Record<string, string> = {
-  "Content-Security-Policy": "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; img-src 'none'; connect-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'",
+  "Content-Security-Policy": "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; img-src 'self'; connect-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'",
   "Referrer-Policy": "no-referrer",
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",

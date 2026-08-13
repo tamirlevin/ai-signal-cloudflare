@@ -113,6 +113,22 @@ export function rankItems(items, profile) {
     .map(({ item }) => item);
 }
 
+/**
+ * Returns one plain-language explanation for why an item is prominent.
+ * Raw ranking scores are deliberately not exposed: they are implementation
+ * details, while these reasons map to controls a reader can understand.
+ */
+export function rankingReason(item, profile) {
+  if (item.exceptional && profile.exceptionalStoryOverride) return { label: "Exceptional signal", tone: "exceptional" };
+  if (item.watchPermission && profile.safeguards.watchPermissions) return { label: "Watching · agent permission design", tone: "watched" };
+  if (item.watchGeography && profile.safeguards.watchGeography) return { label: "Watching · AI cluster geography", tone: "watched" };
+  const weight = (profile.weights ?? []).find((candidate) => candidate.id === item.category);
+  if (!weight) return null;
+  if ((profile.pinnedCategories ?? []).includes(weight.label)) return { label: `Pinned · ${weight.label}`, tone: "pinned" };
+  const tone = weight.value >= 3 ? "priority" : weight.value <= 1 ? "background" : "balanced";
+  return { label: `${weight.label} · ${weightLabel(weight.value)}`, tone };
+}
+
 export function weightLabel(value) {
   return WEIGHT_LABELS[value] ?? "Balanced";
 }

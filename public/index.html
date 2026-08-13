@@ -3,11 +3,20 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
     <meta name="description" content="AI Signal: a concise, source-linked AInews reader.">
+    <meta property="og:title" content="AI Signal">
+    <meta property="og:description" content="A concise, personalised and source-linked daily AI briefing.">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="AI Signal">
+    <meta name="twitter:card" content="summary">
+    <meta name="theme-color" content="#fbfaf7" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#151613" media="(prefers-color-scheme: dark)">
     <title>AI Signal</title>
     <script>
       if (location.protocol === "file:") location.replace("https://ai-signal-cloudflare.tamirlevin.workers.dev/");
     </script>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="/styles.css">
     <link rel="stylesheet" href="/personalization.css">
     <link rel="stylesheet" href="/status.css">
@@ -16,9 +25,10 @@
     <header class="topbar">
       <a class="brand" href="/">AI Signal</a>
       <nav aria-label="Primary navigation"><a href="/">Latest</a><a href="/history">History</a></nav>
-      <button class="personalisation" id="open-tune" type="button">Personalise</button>
+      <button class="personalisation" id="open-tune" type="button" aria-haspopup="dialog">Personalise</button>
     </header>
-    <main id="app" aria-live="polite"></main>
+    <main id="app"></main>
+    <p class="sr-only" id="reader-status" aria-live="polite"></p>
     <dialog id="tune-dialog" aria-labelledby="tune-title">
       <form method="dialog" id="tune-form">
         <div class="dialog-head"><div><p class="eyebrow">Browser-only preference</p><h2 id="tune-title">Tune AI Signal for me</h2></div><button class="plain-button" value="cancel" aria-label="Close">Close</button></div>

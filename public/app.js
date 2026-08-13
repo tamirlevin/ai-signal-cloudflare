@@ -5,6 +5,7 @@ import {
   mergeViewerOverride,
   persistViewerOverride,
   rankItems,
+  rankingReason,
   readStoredViewerOverride,
   readTuningFragment,
   tuningFragment,
@@ -14,14 +15,20 @@ import {
 const app = document.querySelector("#app");
 const dialog = document.querySelector("#tune-dialog");
 const openTune = document.querySelector("#open-tune");
-const state = { baseProfile: null, override: null, previewOverride: null, edition: null, historyEditions: null, adminProfile: null, collectionStatus: null, isHistoricalEdition: false };
+const readerStatus = document.querySelector("#reader-status");
+const state = { baseProfile: null, override: null, previewOverride: null, edition: null, historyEditions: null, adminProfile: null, collectionStatus: null, isHistoricalEdition: false, readerView: "hot" };
+const READER_VIEWS = [
+  { id: "synthesis", label: "Synthesis" },
+  { id: "hot", label: "Hot topics" },
+  { id: "all", label: "All signals" }
+];
 
 function escape(value) {
   return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
 }
 
-function sourceLinks(sources) {
-  return `<div class="sources">${sources.map((source) => `<a href="${escape(source.url)}" target="_blank" rel="noreferrer">${escape(source.label)}</a>`).join("")}</div>`;
+function sourceLinks(sources, label = "Sources") {
+  return `<div class="sources"><span>${escape(label)}</span>${sources.map((source) => `<a href="${escape(source.url)}" target="_blank" rel="noreferrer">${escape(source.label)}</a>`).join("")}</div>`;
 }
 
 function sourceLabel(value) {
@@ -47,19 +54,19 @@ function scheduledTimeLabel(value) {
 
 function collectionNotice(edition) {
   const lastRun = state.collectionStatus?.lastRun;
-  if (!lastRun) return `<p class="refresh-status">Brief generated ${escape(localDateTime(edition.publishedAt))}.</p>`;
+  if (!lastRun) return `<p class="refresh-status">Updated ${escape(localDateTime(edition.publishedAt))}.</p>`;
   const outcome = lastRun.status === "failed" ? `failed${lastRun.errorCode ? ` (${escape(lastRun.errorCode)})` : ""}${lastRun.failureDetail ? `: ${escape(lastRun.failureDetail)}` : ""}` : lastRun.status === "skipped" ? "found no newer issue" : "published a new brief";
-  return `<p class="refresh-status"><strong>Collector last checked ${escape(localDateTime(lastRun.finishedAt))}</strong> and ${outcome}. This brief was generated ${escape(localDateTime(edition.publishedAt))}. Automatic check: daily at ${escape(scheduledTimeLabel(state.collectionStatus.scheduledDailyAtUtc))}.</p>`;
+  const stateLabel = lastRun.status === "failed" ? "Check failed" : lastRun.status === "skipped" ? "Current" : "Published";
+  return `<details class="refresh-status"><summary><span>Updated ${escape(localDateTime(edition.publishedAt))} · source checked ${escape(localDateTime(lastRun.finishedAt))}</span><span class="refresh-state ${lastRun.status === "failed" ? "failed" : ""}">${stateLabel}</span></summary><p>The collector ${outcome}. Automatic check: daily at ${escape(scheduledTimeLabel(state.collectionStatus.scheduledDailyAtUtc))}.</p></details>`;
 }
 
 function profileNotice(edition, profile, visibleCount) {
   const generatedVersion = edition.profile?.version;
-  const versionText = generatedVersion && generatedVersion !== profile.version
-    ? `Generated with Profile v${generatedVersion} · viewing with ${state.isHistoricalEdition ? "Profile" : "global Profile"} v${profile.version}`
-    : `Profile v${profile.version}`;
+  const profileLabel = state.isHistoricalEdition ? "Profile" : "Current profile";
+  const versionText = generatedVersion && generatedVersion !== profile.version ? `${profileLabel} v${profile.version} · generated with v${generatedVersion}` : `${profileLabel} v${profile.version}`;
   const countText = edition.signals.length < profile.storyBudget
     ? `${visibleCount} available · target ${profile.storyBudget}`
-    : `${visibleCount} stories · ${edition.signals.length} qualified candidates`;
+    : `${visibleCount}/${edition.signals.length} signals`;
   return `${versionText} · ${countText}`;
 }
 
@@ -69,35 +76,82 @@ function syncPersonaliseControl() {
   openTune.setAttribute("aria-label", state.previewOverride ? "Personalise: shared preview available" : state.override ? "Personalise: browser preferences active" : "Personalise AI Signal");
 }
 
-function tabs(mode, detail) {
-  return `<div class="tabs" role="tablist" aria-label="Reader view"><button data-mode="synthesis" aria-selected="${mode === "synthesis"}">Synthesis</button><button data-mode="detailed" aria-selected="${mode === "detailed"}">Detailed</button></div>${mode === "detailed" ? `<div class="tabs" role="tablist" aria-label="Detailed view"><button data-detail="hot" aria-selected="${detail === "hot"}">Hot Topics</button><button data-detail="all" aria-selected="${detail === "all"}">All Signals</button></div>` : ""}`;
+function normalizedDisplayText(value) {
+  return String(value ?? "").toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, " ").trim();
 }
 
-function renderEdition(edition, profile, mode = "detailed", detail = "hot") {
+function tabs(view) {
+  return `<div class="reader-tabs" role="tablist" aria-label="Reader view">${READER_VIEWS.map((candidate) => `<button id="reader-tab-${candidate.id}" type="button" role="tab" aria-controls="reader-panel" aria-selected="${candidate.id === view}" tabindex="${candidate.id === view ? "0" : "-1"}" data-view="${candidate.id}">${candidate.label}</button>`).join("")}</div>`;
+}
+
+function viewIntro(label, title, intro) {
+  const normalizedLabel = normalizedDisplayText(label);
+  const normalizedTitle = normalizedDisplayText(title);
+  const distinctLabel = normalizedLabel !== normalizedTitle && !normalizedTitle.startsWith(`${normalizedLabel} `);
+  return `<header class="view-intro">${distinctLabel ? `<p class="view-label">${escape(label)}</p>` : ""}<h2>${escape(title)}</h2><p>${escape(intro)}</p></header>`;
+}
+
+function reasonMarkup(item, profile) {
+  const reason = rankingReason(item, profile);
+  return reason ? `<span class="ranking-reason ${escape(reason.tone)}">${escape(reason.label)}</span>` : "";
+}
+
+function reasonClass(item, profile) {
+  const reason = rankingReason(item, profile);
+  return reason ? ` is-${reason.tone}` : "";
+}
+
+function issueHeader(edition, profile, visibleCount) {
+  const personalState = state.previewOverride ? "Shared tuning preview" : state.override ? "Personalised in this browser" : "";
+  return `<header class="issue-header"><div><p class="view-label">Daily AI brief</p><h1><a href="${escape(edition.issue.url)}" target="_blank" rel="noreferrer">${escape(edition.issue.publicationDate)}</a></h1><p>AInews coverage: ${escape(edition.issue.coverage)}</p></div><div class="issue-meta"><span>${escape(profileNotice(edition, profile, visibleCount))}</span>${personalState ? `<span class="personal-state">${escape(personalState)}</span>` : ""}</div></header>`;
+}
+
+function renderEdition(edition, profile, view = "hot") {
+  state.readerView = view;
   const visibleSignals = rankItems(edition.signals, profile).slice(0, profile.storyBudget);
-  const hot = rankItems(edition.hotTopics, profile).map((topic) => {
+  const hot = rankItems(edition.hotTopics, profile).map((topic, index) => {
     const primary = topic.sources[0];
     const title = primary
       ? `<a href="${escape(primary.url)}" target="_blank" rel="noreferrer">${escape(topic.title)}</a>`
       : escape(topic.title);
-    return `<article class="topic"><h2>${title}</h2><p>${escape(topic.summary)}</p>${sourceLinks(topic.sources)}</article>`;
+    return `<article class="topic${reasonClass(topic, profile)}"><span class="story-index" aria-hidden="true">${String(index + 1).padStart(2, "0")}</span><div><h3>${title}</h3><p>${escape(topic.summary)}</p><div class="story-footer">${sourceLinks(topic.sources)}${reasonMarkup(topic, profile)}</div></div></article>`;
   }).join("");
-  const cards = visibleSignals.map((signal) => `<article class="card"><span class="category">${escape(signal.categoryLabel)}</span><h2><a href="${escape(signal.url)}" target="_blank" rel="noreferrer">${escape(signal.title)}</a></h2><p>${escape(signal.summary)}</p><p class="meta">${escape([sourceLabel(signal.source), signal.date].filter(Boolean).join(" · "))}</p></article>`).join("");
-  const sections = edition.synthesis.sections.map((section, index) => `<section class="section"><p class="eyebrow">${String(index + 1).padStart(2, "0")}</p><h2>${escape(section.title)}</h2><p class="kicker">${escape(section.kicker)}</p><p>${escape(section.body)}</p>${sourceLinks(section.sources)}</section>`).join("");
-  const detailed = detail === "hot"
-    ? `<section><div class="banner"><h1>${escape(edition.presentation.hotTitle)}</h1><p>${escape(edition.presentation.hotIntro)}</p></div><div class="hot-list">${hot}</div></section>`
-    : `<section><div class="banner"><h1>All Signals</h1><p>${escape(edition.presentation.allIntro)}</p></div><p class="caption"><strong>${escape(profileNotice(edition, profile, visibleSignals.length))}</strong></p><div class="cards">${cards}</div></section>`;
-  const synthesis = `<section><div class="banner"><h1>${escape(edition.presentation.synthesisTitle)}</h1><p>${escape(edition.presentation.synthesisIntro)}</p></div><article class="synthesis"><p class="time">${edition.presentation.sourceReadMinutes} min source → ${edition.presentation.briefReadMinutes} min brief</p><p class="lead">${escape(edition.synthesis.lead)}</p><div class="big">${escape(edition.synthesis.bigPicture)}</div>${sourceLinks(edition.synthesis.sources)}<div>${sections}</div></article></section>`;
-  app.innerHTML = `<div class="utility"><p class="edition"><strong>AI Signal</strong> · <a href="${escape(edition.issue.url)}" target="_blank" rel="noreferrer">${escape(edition.issue.publicationDate)}</a></p></div>${collectionNotice(edition)}${tabs(mode, detail)}<p class="caption">AInews for ${escape(edition.issue.coverage)} · ${state.previewOverride ? "shared tuning preview" : state.override ? "personalised in this browser" : profileNotice(edition, profile, visibleSignals.length)}</p>${mode === "synthesis" ? synthesis : detailed}`;
-  app.querySelectorAll("[data-mode]").forEach((button) => button.addEventListener("click", () => renderEdition(edition, profile, button.dataset.mode, detail)));
-  app.querySelectorAll("[data-detail]").forEach((button) => button.addEventListener("click", () => renderEdition(edition, profile, "detailed", button.dataset.detail)));
+  const signals = visibleSignals.map((signal, index) => `<article class="signal-row${index === 0 ? " signal-lead" : ""}${reasonClass(signal, profile)}"><span class="story-index" aria-hidden="true">${String(index + 1).padStart(2, "0")}</span><div><h3><a href="${escape(signal.url)}" target="_blank" rel="noreferrer">${escape(signal.title)}</a></h3><p>${escape(signal.summary)}</p><div class="story-footer"><span class="signal-source">${escape([sourceLabel(signal.source), signal.date].filter(Boolean).join(" · "))}</span>${reasonMarkup(signal, profile)}</div></div></article>`).join("");
+  const sections = edition.synthesis.sections.map((section, index) => {
+    const kicker = normalizedDisplayText(section.kicker) === normalizedDisplayText(section.title) ? "" : `<p class="kicker">${escape(section.kicker)}</p>`;
+    return `<section class="section"><p class="section-index">${String(index + 1).padStart(2, "0")}</p><h3>${escape(section.title)}</h3>${kicker}<p>${escape(section.body)}</p>${sourceLinks(section.sources)}</section>`;
+  }).join("");
+  const hotView = `${viewIntro("Hot topics", edition.presentation.hotTitle, edition.presentation.hotIntro)}<div class="hot-list">${hot}</div>`;
+  const allView = `${viewIntro("All signals", edition.presentation.allTitle, edition.presentation.allIntro)}<div class="signals-list">${signals}</div>`;
+  const synthesisView = `${viewIntro("Synthesis", edition.presentation.synthesisTitle, edition.presentation.synthesisIntro)}<article class="synthesis-layout"><div class="synthesis-main"><p class="lead">${escape(edition.synthesis.lead)}</p><div class="big">${escape(edition.synthesis.bigPicture)}</div><div>${sections}</div></div><aside class="synthesis-rail"><p class="rail-label">Reading time</p><p class="time">${edition.presentation.sourceReadMinutes} min source → ${edition.presentation.briefReadMinutes} min brief</p>${sourceLinks(edition.synthesis.sources, "Brief sources")}</aside></article>`;
+  const content = view === "synthesis" ? synthesisView : view === "all" ? allView : hotView;
+  app.innerHTML = `${issueHeader(edition, profile, visibleSignals.length)}${collectionNotice(edition)}<div class="reader-toolbar">${tabs(view)}</div><section class="view-panel" id="reader-panel" role="tabpanel" aria-labelledby="reader-tab-${view}" tabindex="0">${content}</section>`;
+  const buttons = [...app.querySelectorAll("[data-view]")];
+  const activate = (nextView, focus = false) => {
+    renderEdition(edition, profile, nextView);
+    if (focus) app.querySelector(`[data-view="${nextView}"]`)?.focus();
+    readerStatus.textContent = `Showing ${READER_VIEWS.find((candidate) => candidate.id === nextView)?.label ?? nextView}.`;
+  };
+  buttons.forEach((button, index) => {
+    button.addEventListener("click", () => activate(button.dataset.view, true));
+    button.addEventListener("keydown", (event) => {
+      let nextIndex = index;
+      if (event.key === "ArrowRight") nextIndex = (index + 1) % buttons.length;
+      else if (event.key === "ArrowLeft") nextIndex = (index - 1 + buttons.length) % buttons.length;
+      else if (event.key === "Home") nextIndex = 0;
+      else if (event.key === "End") nextIndex = buttons.length - 1;
+      else return;
+      event.preventDefault();
+      activate(buttons[nextIndex].dataset.view, true);
+    });
+  });
   syncPersonaliseControl();
 }
 
 function renderHistory(editions) {
   state.historyEditions = editions;
   const fragment = state.previewOverride ? location.hash : "";
-  app.innerHTML = `<div class="utility"><p class="edition"><strong>Edition history</strong> · the latest 15 successfully published AInews editions</p></div><div class="history-list">${editions.map((edition) => `<a class="history-item" href="/?edition=${encodeURIComponent(edition.issueDate)}${fragment}"><span><strong>${escape(edition.issue.publicationDate)}</strong><br><small>${escape(edition.issue.coverage)}</small></span><span>Open</span></a>`).join("")}</div>`;
+  app.innerHTML = `<header class="history-header"><p class="view-label">Archive</p><h1>Edition history</h1><p>The latest 15 successfully published AInews editions.</p></header><div class="history-list">${editions.map((edition) => `<a class="history-item" href="/?edition=${encodeURIComponent(edition.issueDate)}${fragment}"><span><strong>${escape(edition.issue.publicationDate)}</strong><small>${escape(edition.issue.coverage)}</small></span><span>Open</span></a>`).join("")}</div>`;
   syncPersonaliseControl();
 }
 
@@ -136,7 +190,7 @@ function clearFragment() {
 }
 
 function renderCurrentEdition() {
-  if (state.edition) renderEdition(state.edition, activeProfile(), "detailed", "all");
+  if (state.edition) renderEdition(state.edition, activeProfile(), state.readerView);
   else if (state.historyEditions) renderHistory(state.historyEditions);
 }
 
@@ -220,7 +274,12 @@ async function runRefresh() {
 async function boot() {
   try {
     const route = location.pathname.replace(/\/+$/, "") || "/";
-    openTune.hidden = route === "/admin";
+    document.querySelectorAll(".topbar nav a").forEach((link) => {
+      const linkRoute = new URL(link.href).pathname.replace(/\/+$/, "") || "/";
+      if (linkRoute === route) link.setAttribute("aria-current", "page");
+      else link.removeAttribute("aria-current");
+    });
+    openTune.hidden = route === "/admin" || route === "/history";
     if (route === "/admin") { renderAdmin((await request("/api/profile")).profile); return; }
     const [profileData, collectionStatus] = await Promise.all([request("/api/profile"), request("/api/status")]);
     const sharedProfile = profileData.profile;

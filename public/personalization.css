@@ -1,38 +1,33 @@
 .personalisation {
-  background: var(--bluewash);
-  border: 1px solid #bfdbfe;
-  border-radius: 999px;
-  color: var(--blue);
+  background: var(--soft);
+  border: 1px solid var(--rule);
+  border-radius: 7px;
+  color: var(--body);
   cursor: pointer;
-  font: inherit;
-  font-size: 13px;
-  padding: 6px 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 6px 9px;
 }
 
 .topbar .personalisation { margin-left: auto; }
+.personalisation:hover { border-color: var(--faint); color: var(--ink); }
 
 .personalisation.preview {
-  background: var(--orangewash);
-  border-color: #fed7aa;
-  color: #9a3412;
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--rule));
+  color: var(--accent);
 }
 
 .tune-notice {
-  background: var(--orangewash);
-  border: 1px solid #fed7aa;
-  border-radius: 10px;
-  color: #9a3412;
-  padding: 11px 13px;
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 36%, var(--rule));
+  border-radius: 8px;
+  color: var(--accent);
+  padding: 10px 12px;
 }
 
 .tune-actions { flex-wrap: wrap; }
-.admin { margin: 0 auto; max-width: 920px; }
-.admin-panel {
-  border: 1px solid var(--rule);
-  border-radius: 14px;
-  box-shadow: var(--shadow);
-  padding: clamp(20px, 4vw, 34px);
-}
+.admin-panel { border-top: 2px solid var(--ink); padding-top: 20px; }
 .admin-panel > label { display: grid; gap: 7px; }
 .admin-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 24px; }
 .admin input[type="password"] { max-width: 520px; width: 100%; }
