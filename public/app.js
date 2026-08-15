@@ -5,6 +5,7 @@ import {
   mergeViewerOverride,
   persistViewerOverride,
   rankItems,
+  rankingExplanation,
   rankingReason,
   readStoredViewerOverride,
   readTuningFragment,
@@ -16,7 +17,12 @@ const app = document.querySelector("#app");
 const dialog = document.querySelector("#tune-dialog");
 const openTune = document.querySelector("#open-tune");
 const readerStatus = document.querySelector("#reader-status");
-const state = { baseProfile: null, override: null, previewOverride: null, edition: null, historyEditions: null, adminProfile: null, collectionStatus: null, isHistoricalEdition: false, readerView: "hot" };
+const rankingDialog = document.querySelector("#ranking-dialog");
+const rankingTitle = document.querySelector("#ranking-title");
+const rankingContent = document.querySelector("#ranking-content");
+const closeRanking = document.querySelector("#close-ranking");
+const rankingPersonalise = document.querySelector("#ranking-personalise");
+const state = { baseProfile: null, override: null, previewOverride: null, edition: null, historyEditions: null, adminProfile: null, collectionStatus: null, isHistoricalEdition: false, readerView: "hot", rankingItems: new Map() };
 const READER_VIEWS = [
   { id: "synthesis", label: "Synthesis" },
   { id: "hot", label: "Hot topics" },
@@ -91,9 +97,11 @@ function viewIntro(label, title, intro) {
   return `<header class="view-intro">${distinctLabel ? `<p class="view-label">${escape(label)}</p>` : ""}<h2>${escape(title)}</h2><p>${escape(intro)}</p></header>`;
 }
 
-function reasonMarkup(item, profile) {
+function reasonMarkup(item, profile, key, rank, group, items) {
   const reason = rankingReason(item, profile);
-  return reason ? `<span class="ranking-reason ${escape(reason.tone)}">${escape(reason.label)}</span>` : "";
+  if (!reason) return "";
+  state.rankingItems.set(key, { item, profile, rank, group, items });
+  return `<button class="ranking-trigger ${escape(reason.tone)}" type="button" data-ranking-key="${escape(key)}" aria-haspopup="dialog" aria-label="Explain why ${escape(item.title)} is ranked ${rank}"><span class="ranking-trigger-label">Why it surfaced</span><strong>${escape(reason.label)}</strong><span class="ranking-trigger-action">Explain</span></button>`;
 }
 
 function reasonClass(item, profile) {
@@ -108,6 +116,30 @@ function markerLegend(profile) {
   return markers.length ? `<aside class="marker-legend" aria-label="Editorial marker legend"><span class="legend-title">Markers</span>${markers.join("")}</aside>` : "";
 }
 
+function rankingDriversMarkup(items, profile) {
+  const categories = new Set(items.map((item) => item.category));
+  const drivers = (profile.weights ?? [])
+    .filter((weight) => categories.has(weight.id))
+    .sort((left, right) => right.value - left.value)
+    .slice(0, 4);
+  if (!drivers.length) return "";
+  return `<section class="ranking-drivers"><h3>Today’s active category drivers</h3>${drivers.map((weight) => `<div class="ranking-driver"><span><strong>${escape(weight.label)}</strong><small>${escape(weightLabel(weight.value))}</small></span><span class="ranking-driver-bars" aria-label="${escape(weight.label)}: ${escape(weightLabel(weight.value))}">${[1, 2, 3, 4].map((step) => `<i class="${step <= weight.value ? "active" : ""}" aria-hidden="true"></i>`).join("")}</span></div>`).join("")}</section>`;
+}
+
+function openRankingInspector(key) {
+  const record = state.rankingItems.get(key);
+  if (!record) return;
+  const explanation = rankingExplanation(record.item, record.profile);
+  const sourceUrl = record.item.url ?? record.item.sources?.[0]?.url;
+  const titleMarkup = sourceUrl
+    ? `<a href="${escape(sourceUrl)}" target="_blank" rel="noreferrer">${escape(record.item.title)}</a>`
+    : escape(record.item.title);
+  rankingTitle.textContent = `Why #${String(record.rank).padStart(2, "0")} surfaced`;
+  rankingContent.innerHTML = `<p class="ranking-group">${escape(record.group)} ranking</p><h3 class="ranking-story-title">${titleMarkup}</h3>${explanation.primary ? `<p class="ranking-primary ${escape(explanation.primary.tone)}">${escape(explanation.primary.label)}</p>` : ""}<div class="ranking-factors">${explanation.factors.map((factor) => `<div class="ranking-factor ${escape(factor.tone)}"><span>${escape(factor.label)}</span><strong>${escape(factor.value)}</strong><em>${escape(factor.state)}</em></div>`).join("")}</div>${rankingDriversMarkup(record.items, record.profile)}`;
+  if (!rankingDialog.open) rankingDialog.showModal();
+  readerStatus.textContent = `Showing the ranking explanation for ${record.item.title}.`;
+}
+
 function issueHeader(edition, profile, visibleCount) {
   const personalState = state.previewOverride ? "Shared tuning preview" : state.override ? "Personalised in this browser" : "";
   return `<header class="issue-header"><div><p class="view-label">Daily AI brief</p><h1><a href="${escape(edition.issue.url)}" target="_blank" rel="noreferrer">${escape(edition.issue.publicationDate)}</a></h1><p>AInews coverage: ${escape(edition.issue.coverage)}</p></div><div class="issue-meta"><span>${escape(profileNotice(edition, profile, visibleCount))}</span>${personalState ? `<span class="personal-state">${escape(personalState)}</span>` : ""}</div></header>`;
@@ -115,15 +147,17 @@ function issueHeader(edition, profile, visibleCount) {
 
 function renderEdition(edition, profile, view = "hot") {
   state.readerView = view;
+  state.rankingItems = new Map();
   const visibleSignals = rankItems(edition.signals, profile).slice(0, profile.storyBudget);
-  const hot = rankItems(edition.hotTopics, profile).map((topic, index) => {
+  const rankedHotTopics = rankItems(edition.hotTopics, profile);
+  const hot = rankedHotTopics.map((topic, index) => {
     const primary = topic.sources[0];
     const title = primary
       ? `<a href="${escape(primary.url)}" target="_blank" rel="noreferrer">${escape(topic.title)}</a>`
       : escape(topic.title);
-    return `<article class="topic${reasonClass(topic, profile)}"><span class="story-index" aria-hidden="true">${String(index + 1).padStart(2, "0")}</span><div><h3>${title}</h3><p>${escape(topic.summary)}</p><div class="story-footer">${sourceLinks(topic.sources)}${reasonMarkup(topic, profile)}</div></div></article>`;
+    return `<article class="topic${reasonClass(topic, profile)}"><span class="story-index" aria-hidden="true">${String(index + 1).padStart(2, "0")}</span><div><h3>${title}</h3><p>${escape(topic.summary)}</p><div class="story-footer">${sourceLinks(topic.sources)}</div></div>${reasonMarkup(topic, profile, `hot-${index}`, index + 1, "Hot topics", rankedHotTopics)}</article>`;
   }).join("");
-  const signals = visibleSignals.map((signal, index) => `<article class="signal-row${index === 0 ? " signal-lead" : ""}${reasonClass(signal, profile)}"><span class="story-index" aria-hidden="true">${String(index + 1).padStart(2, "0")}</span><div><h3><a href="${escape(signal.url)}" target="_blank" rel="noreferrer">${escape(signal.title)}</a></h3><p>${escape(signal.summary)}</p><div class="story-footer"><span class="signal-source">${escape([sourceLabel(signal.source), signal.date].filter(Boolean).join(" · "))}</span>${reasonMarkup(signal, profile)}</div></div></article>`).join("");
+  const signals = visibleSignals.map((signal, index) => `<article class="signal-row${index === 0 ? " signal-lead" : ""}${reasonClass(signal, profile)}"><span class="story-index" aria-hidden="true">${String(index + 1).padStart(2, "0")}</span><div><h3><a href="${escape(signal.url)}" target="_blank" rel="noreferrer">${escape(signal.title)}</a></h3><p>${escape(signal.summary)}</p><div class="story-footer"><span class="signal-source">${escape([sourceLabel(signal.source), signal.date].filter(Boolean).join(" · "))}</span>${reasonMarkup(signal, profile, `signal-${index}`, index + 1, "All signals", visibleSignals)}</div></div></article>`).join("");
   const sections = edition.synthesis.sections.map((section, index) => {
     const kicker = normalizedDisplayText(section.kicker) === normalizedDisplayText(section.title) ? "" : `<p class="kicker">${escape(section.kicker)}</p>`;
     return `<section class="section"><p class="section-index">${String(index + 1).padStart(2, "0")}</p><h3>${escape(section.title)}</h3>${kicker}<p>${escape(section.body)}</p>${sourceLinks(section.sources)}</section>`;
@@ -152,6 +186,7 @@ function renderEdition(edition, profile, view = "hot") {
       activate(buttons[nextIndex].dataset.view, true);
     });
   });
+  app.querySelectorAll("[data-ranking-key]").forEach((button) => button.addEventListener("click", () => openRankingInspector(button.dataset.rankingKey)));
   syncPersonaliseControl();
 }
 
@@ -312,6 +347,14 @@ async function boot() {
 }
 
 openTune.addEventListener("click", openTuneDialog);
+closeRanking.addEventListener("click", () => rankingDialog.close());
+rankingPersonalise.addEventListener("click", () => {
+  rankingDialog.close();
+  openTuneDialog();
+});
+rankingDialog.addEventListener("click", (event) => {
+  if (event.target === rankingDialog) rankingDialog.close();
+});
 document.querySelector("#apply-tune").addEventListener("click", () => {
   state.override = persistViewerOverride(createViewerOverride(state.baseProfile, tuneCandidate()), state.baseProfile);
   state.previewOverride = null;

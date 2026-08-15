@@ -11,7 +11,7 @@
   },
   "vars": {
     "ENVIRONMENT": "production",
-    "AI_MODEL": "@cf/meta/llama-3.1-8b-instruct-fast",
+    "AI_MODEL": "@cf/openai/gpt-oss-120b",
     "AI_FALLBACK_MODEL": "@cf/zai-org/glm-4.7-flash",
     "AI_GATEWAY_ID": "",
     "RSS_URL": "https://news.smol.ai/rss.xml"

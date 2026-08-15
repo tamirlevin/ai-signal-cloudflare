@@ -1,7 +1,7 @@
 import type { Edition, Profile, RunStatus, StoredEdition } from "./contracts";
 import { DEFAULT_PROFILE } from "./contracts";
 import { normalizeEditionStories } from "./story-normalization";
-import { ValidationError, validateEdition, validateProfile } from "./validation";
+import { synthesisNeedsRepair, ValidationError, validateEdition, validateProfile } from "./validation";
 
 type EditionRow = {
   id: string;
@@ -40,7 +40,7 @@ export async function publishedEditionState(db: D1Database, issueUrl: string, is
   const raw = JSON.parse(row.edition_json) as Edition;
   const profile = raw.profile ? validateProfile(raw.profile) : DEFAULT_PROFILE;
   const normalized = normalizeEditionStories(validateEdition(raw, profile), profile);
-  return { exists: true, needsStoryRepair: normalized.duplicateSignalsRemoved > 0 || normalized.titlesRewritten > 0 };
+  return { exists: true, needsStoryRepair: normalized.duplicateSignalsRemoved > 0 || normalized.titlesRewritten > 0 || synthesisNeedsRepair(normalized.edition) };
 }
 
 export async function latestEdition(db: D1Database): Promise<StoredEdition | null> {

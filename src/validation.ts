@@ -46,6 +46,98 @@ function sources(value: unknown, path: string, permittedUrls?: Set<string>): Sou
   });
 }
 
+function normalizedPhrase(value: string): string {
+  return value.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+const SYNTHESIS_STOP_WORDS = new Set([
+  "about", "after", "also", "another", "are", "been", "being", "but", "for", "from", "has", "have", "into", "its", "more", "new", "not", "now", "over", "than", "that", "the", "their", "then", "there", "these", "they", "this", "through", "under", "was", "were", "which", "while", "with"
+]);
+
+function distinctiveWords(value: string): Set<string> {
+  return new Set(normalizedPhrase(value).split(" ").filter((word) => word.length > 2 && !SYNTHESIS_STOP_WORDS.has(word)));
+}
+
+function overlapCoefficient(left: string, right: string): number {
+  const leftWords = distinctiveWords(left);
+  const rightWords = distinctiveWords(right);
+  const denominator = Math.min(leftWords.size, rightWords.size);
+  if (!denominator) return 0;
+  let intersection = 0;
+  for (const word of leftWords) if (rightWords.has(word)) intersection += 1;
+  return intersection / denominator;
+}
+
+function repeatedPhrase(left: string, right: string, minimumWords: number, threshold: number): boolean {
+  const normalizedLeft = normalizedPhrase(left);
+  const normalizedRight = normalizedPhrase(right);
+  if (normalizedLeft === normalizedRight) return true;
+  const smallest = Math.min(distinctiveWords(left).size, distinctiveWords(right).size);
+  return smallest >= minimumWords && overlapCoefficient(left, right) >= threshold;
+}
+
+function firstSentence(value: string): string {
+  return value.split(/[.!?](?:\s|$)/, 1)[0]?.trim() ?? value.trim();
+}
+
+/** Keeps new view labels useful without making historical editions unreadable. */
+export function validatePresentationDiversity(presentation: Edition["presentation"]): void {
+  const fields: Array<[string, string]> = [
+    ["hotTitle", presentation.hotTitle],
+    ["hotIntro", presentation.hotIntro],
+    ["allTitle", presentation.allTitle],
+    ["allIntro", presentation.allIntro],
+    ["synthesisTitle", presentation.synthesisTitle],
+    ["synthesisIntro", presentation.synthesisIntro]
+  ];
+  for (const [field, value] of fields) {
+    if (/^\(?(?:none|null|n\/a|not applicable|tbd)\)?$/i.test(value.trim())) {
+      throw new ValidationError(`edition.presentation.${field} must not be a placeholder`);
+    }
+  }
+  const viewTitles = [presentation.hotTitle, presentation.allTitle, presentation.synthesisTitle].map(normalizedPhrase);
+  if (new Set(viewTitles).size !== viewTitles.length) throw new ValidationError("edition.presentation view titles must be distinct");
+}
+
+/** Prevents structurally valid model output from publishing the same synthesis angle repeatedly. */
+export function validateSynthesisDiversity(synthesis: Edition["synthesis"]): void {
+  if (repeatedPhrase(synthesis.lead, synthesis.bigPicture, 8, 0.82)) {
+    throw new ValidationError("edition.synthesis.bigPicture repeats the synthesis lead");
+  }
+  const sections = synthesis.sections;
+  for (let right = 1; right < sections.length; right += 1) {
+    const current = sections[right]!;
+    for (let left = 0; left < right; left += 1) {
+      const previous = sections[left]!;
+      if (repeatedPhrase(previous.title, current.title, 3, 0.8)) {
+        throw new ValidationError(`edition.synthesis.sections[${right}].title repeats section ${left}`);
+      }
+      if (repeatedPhrase(previous.kicker, current.kicker, 4, 0.82)) {
+        throw new ValidationError(`edition.synthesis.sections[${right}].kicker repeats section ${left}`);
+      }
+      if (repeatedPhrase(firstSentence(previous.body), firstSentence(current.body), 8, 0.86)) {
+        throw new ValidationError(`edition.synthesis.sections[${right}].body repeats the opening of section ${left}`);
+      }
+      const previousUrls = new Set(previous.sources.map((source) => source.url));
+      const currentUrls = new Set(current.sources.map((source) => source.url));
+      if (previousUrls.size === currentUrls.size && [...previousUrls].every((url) => currentUrls.has(url))) {
+        throw new ValidationError(`edition.synthesis.sections[${right}].sources repeat section ${left}`);
+      }
+    }
+  }
+}
+
+export function synthesisNeedsRepair(edition: Edition): boolean {
+  try {
+    validatePresentationDiversity(edition.presentation);
+    validateSynthesisDiversity(edition.synthesis);
+    return false;
+  } catch (error) {
+    if (error instanceof ValidationError) return true;
+    throw error;
+  }
+}
+
 function flag(value: Record<string, unknown>, key: "exceptional" | "watchPermission" | "watchGeography", path: string): boolean | undefined {
   return value[key] === undefined ? undefined : bool(value[key], `${path}.${key}`);
 }
@@ -88,6 +180,16 @@ export function validateEdition(raw: unknown, profile: Profile, permittedUrls?: 
   const presentation = object(edition.presentation, "edition.presentation");
   const sourceReadMinutes = integer(presentation.sourceReadMinutes, "edition.presentation.sourceReadMinutes", 1, 999);
   const briefReadMinutes = integer(presentation.briefReadMinutes, "edition.presentation.briefReadMinutes", 1, sourceReadMinutes);
+  const presentationCopy = {
+    hotTitle: text(presentation.hotTitle, "edition.presentation.hotTitle"),
+    hotIntro: text(presentation.hotIntro, "edition.presentation.hotIntro"),
+    allTitle: text(presentation.allTitle, "edition.presentation.allTitle"),
+    allIntro: text(presentation.allIntro, "edition.presentation.allIntro"),
+    synthesisTitle: text(presentation.synthesisTitle, "edition.presentation.synthesisTitle"),
+    synthesisIntro: text(presentation.synthesisIntro, "edition.presentation.synthesisIntro"),
+    sourceReadMinutes,
+    briefReadMinutes
+  };
   const categoryIds = new Set(profile.weights.map((weight) => weight.id));
   const synthesis = object(edition.synthesis, "edition.synthesis");
   const sections = list(synthesis.sections, "edition.synthesis.sections", 2, 4).map((rawSection, index) => {
@@ -120,7 +222,7 @@ export function validateEdition(raw: unknown, profile: Profile, permittedUrls?: 
   return {
     schemaVersion: 1,
     issue: { publicationDate: text(issue.publicationDate, "edition.issue.publicationDate"), coverage: text(issue.coverage, "edition.issue.coverage"), url: issueUrl, quiet },
-    presentation: { hotTitle: text(presentation.hotTitle, "edition.presentation.hotTitle"), hotIntro: text(presentation.hotIntro, "edition.presentation.hotIntro"), allTitle: text(presentation.allTitle, "edition.presentation.allTitle"), allIntro: text(presentation.allIntro, "edition.presentation.allIntro"), synthesisTitle: text(presentation.synthesisTitle, "edition.presentation.synthesisTitle"), synthesisIntro: text(presentation.synthesisIntro, "edition.presentation.synthesisIntro"), sourceReadMinutes, briefReadMinutes },
+    presentation: presentationCopy,
     synthesis: { lead: text(synthesis.lead, "edition.synthesis.lead"), bigPicture: text(synthesis.bigPicture, "edition.synthesis.bigPicture"), sources: sources(synthesis.sources, "edition.synthesis.sources", permittedUrls), sections },
     hotTopics: hotTopics as Edition["hotTopics"],
     signals: signals as Edition["signals"]

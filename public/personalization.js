@@ -151,6 +151,40 @@ export function rankingReason(item, profile) {
   return { label: `${weight.label} · ${weightLabel(weight.value)}`, tone };
 }
 
+function editorialStrengthLabel(value) {
+  const strength = Number(value ?? 0);
+  if (strength >= 80) return "Strong editorial signal";
+  if (strength >= 60) return "Useful editorial signal";
+  return "Supporting context";
+}
+
+/**
+ * Explains the factors that actually influence ranking without exposing the
+ * internal integer score or inventing a normalized rating.
+ */
+export function rankingExplanation(item, profile) {
+  const weight = (profile.weights ?? []).find((candidate) => candidate.id === item.category);
+  const factors = [];
+  if (item.exceptional && profile.exceptionalStoryOverride) {
+    factors.push({ label: "Editorial override", value: "Exceptional-story rule", state: "Applied", tone: "exceptional" });
+  }
+  if (activePermissionWatch(item, profile)) {
+    factors.push({ label: "Watched topic", value: "Agent permission design", state: "Applied", tone: "watched" });
+  }
+  if (item.watchGeography && profile.safeguards.watchGeography) {
+    factors.push({ label: "Watched topic", value: "AI cluster geography", state: "Applied", tone: "watched" });
+  }
+  if (weight) {
+    const tone = weight.value >= 3 ? "priority" : weight.value <= 1 ? "background" : "balanced";
+    factors.push({ label: "Category", value: weight.label, state: weightLabel(weight.value), tone });
+    if ((profile.pinnedCategories ?? []).includes(weight.label)) {
+      factors.push({ label: "Editorial marker", value: `Pinned · ${weight.label}`, state: "Label only", tone: "pinned" });
+    }
+  }
+  factors.push({ label: "Editorial strength", value: editorialStrengthLabel(item.base), state: "Underlying", tone: "neutral" });
+  return { primary: rankingReason(item, profile), factors };
+}
+
 export function weightLabel(value) {
   return WEIGHT_LABELS[value] ?? "Balanced";
 }

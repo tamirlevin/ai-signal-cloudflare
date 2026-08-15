@@ -3,7 +3,7 @@ import { compactIssueInventory, editorialMessages, extractGeneratedEdition, gene
 import { fetchLatestRss } from "./rss";
 import { errorCode, getActiveProfile, insertEdition, publishedEditionState, recordRun, replaceEdition } from "./repository";
 import { normalizeEditionStories } from "./story-normalization";
-import { ValidationError, validateEdition } from "./validation";
+import { ValidationError, validateEdition, validatePresentationDiversity, validateSynthesisDiversity } from "./validation";
 
 type Trigger = "cron" | "manual" | "local-scheduled";
 
@@ -24,7 +24,12 @@ export function isModelTimeout(error: unknown): boolean {
 }
 
 export function supportsStructuredOutput(model: string): boolean {
-  return model === "@cf/meta/llama-3.1-8b-instruct-fast";
+  return new Set([
+    "@cf/meta/llama-3.1-8b-instruct-fast",
+    "@cf/openai/gpt-oss-20b",
+    "@cf/openai/gpt-oss-120b",
+    "@cf/moonshotai/kimi-k2.6"
+  ]).has(model);
 }
 
 function canRepairModelOutput(error: unknown): boolean {
@@ -59,7 +64,7 @@ export async function generateLatestEdition(env: Env, trigger: Trigger): Promise
     let usedFallback = false;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
-        const raw = await askModel(env, modelUsed, generationInput(modelIssue, profile, repair, supportsStructuredOutput(modelUsed)));
+        const raw = await askModel(env, modelUsed, generationInput(modelIssue, profile, repair, supportsStructuredOutput(modelUsed), modelUsed));
         const generated = extractGeneratedEdition(raw);
         const stories = materializeCandidateStories(inventory.candidates, profile, issue.publicationDate);
         // Source metadata and every story card are collector-derived, not model-authored.
@@ -76,6 +81,8 @@ export async function generateLatestEdition(env: Env, trigger: Trigger): Promise
           console.warn(JSON.stringify({ message: "ai-signal model stories normalized", issueUrl, duplicatesRemoved: normalized.duplicateSignalsRemoved, invalidCandidatesRemoved: normalized.invalidCandidateSignalsRemoved, titlesRewritten: normalized.titlesRewritten, remaining: normalized.edition.signals.length }));
         }
         const edition = validateEdition(normalized.edition, profile, allowedStoryUrls);
+        validatePresentationDiversity(edition.presentation);
+        validateSynthesisDiversity(edition.synthesis);
         edition.profile = profile;
         const sourceBodyHash = await hash(issue.body);
         const stored = replacingExistingEdition ? await replaceEdition(env.DB, edition, issue.issueDate, sourceBodyHash) : await insertEdition(env.DB, edition, issue.issueDate, sourceBodyHash);

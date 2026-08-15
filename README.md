@@ -13,7 +13,7 @@ The compatibility date is pinned to `2026-08-11`. Move it forward with a tested 
 - Rejects an edition if any story or source URL was not supplied by AInews. The RSS issue URL and publication date are source-derived.
 - Compacts each long issue into an 18-block, profile-aware candidate inventory, retaining priority material plus a diversity sample.
 - Builds Hot Topics and individual signal cards deterministically from that inventory, so one candidate becomes at most one source-bound card. Workers AI writes only the cross-story synthesis.
-- Uses `@cf/meta/llama-3.1-8b-instruct-fast` normally and switches once to `@cf/zai-org/glm-4.7-flash` only when the primary model times out.
+- Uses `@cf/openai/gpt-oss-120b` normally and switches once to `@cf/zai-org/glm-4.7-flash` only when the primary model times out.
 - Ships with AI Signal Profile v2 as its empty-database default: up to 14 qualified candidates without padding, seven stories shown by default, category weights, watched topics, and rare exceptional-story override. Saved D1 profiles advance independently.
 - Stores a validated edition JSON plus its profile snapshot in D1. The last 15 successfully published editions are retained; failed runs only create a run record and cannot replace the last good edition.
 - Persists sparse personal overrides in the viewer's browser only and applies them to current and historical editions. No name, email, click history, or account is stored.
@@ -51,7 +51,7 @@ npx wrangler d1 create ai-signal
 npx wrangler d1 migrations apply ai-signal --local
 ```
 
-`AI_MODEL` defaults to `@cf/meta/llama-3.1-8b-instruct-fast`, with `@cf/zai-org/glm-4.7-flash` as a one-time timeout fallback. Before inference, the collector deterministically ranks and compacts the issue to 18 profile-aware candidates while retaining exact source links. It also materializes the story inventory itself; the model receives the ranked candidates only to produce synthesis and presentation copy. Output is capped at 3,200 tokens. Llama uses Workers AI structured JSON mode; GLM receives the same strict JSON contract in the prompt. Set `AI_GATEWAY_ID` to an existing gateway ID to route the Workers AI binding through that gateway; leave it empty to call the binding directly. No provider API key is used or stored.
+`AI_MODEL` defaults to `@cf/openai/gpt-oss-120b`, with `@cf/zai-org/glm-4.7-flash` as a one-time timeout fallback. Before inference, the collector deterministically ranks and compacts the issue to 18 profile-aware candidates while retaining exact source links. It also materializes the story inventory itself; the model receives the ranked candidates only to produce synthesis and presentation copy. Output is capped at 3,200 tokens. GPT-OSS uses Workers AI structured JSON mode; GLM receives the same strict JSON contract in the prompt. Set `AI_GATEWAY_ID` to an existing gateway ID to route the Workers AI binding through that gateway; leave it empty to call the binding directly. No provider API key is used or stored.
 
 ## Deploy runbook
 

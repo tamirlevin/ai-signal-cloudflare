@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Edition } from "../src/contracts";
 import { DEFAULT_PROFILE } from "../src/contracts";
 import { anchorsToMarkdown, parseLatestRss } from "../src/rss";
-import { validateEdition, ValidationError } from "../src/validation";
+import { validateEdition, validatePresentationDiversity, validateSynthesisDiversity, ValidationError } from "../src/validation";
 import { compactIssueForModel, compactIssueInventory, editorialMessages, extractGeneratedEdition, generationInput, isPermissionDesignSignal, materializeCandidateStories } from "../src/editorial";
 import { normalizeEditionStories } from "../src/story-normalization";
 
@@ -31,6 +31,24 @@ describe("editorial contracts", () => {
     const value = edition();
     value.signals.push({ title: "Different framing", summary: "Summary", source: "Source", url: "https://example.com/story", category: "agents", categoryLabel: "Agents in practice", base: 80 });
     expect(() => validateEdition(value, DEFAULT_PROFILE, new Set(["https://example.com/story"]))).toThrow("duplicate story URL");
+  });
+  it("rejects repeated synthesis framing even when the underlying sources differ", () => {
+    const value = edition();
+    value.synthesis.sections[0] = { title: "Harnesses and long-running autonomy", kicker: "Harnesses and long-running autonomy", body: "Cursor made cloud agents more resilient for long-running work.", sources: [{ label: "Cursor", url: "https://example.com/cursor" }] };
+    value.synthesis.sections[1] = { title: "Harnesses and long-running autonomy", kicker: "Harnesses and long-running autonomy", body: "DeepSeek released a composable harness for autonomous systems.", sources: [{ label: "DeepSeek", url: "https://example.com/deepseek" }] };
+    expect(() => validateSynthesisDiversity(value.synthesis)).toThrow("title repeats section 0");
+  });
+  it("rejects synthesis sections that repeat the same source cluster", () => {
+    const value = edition();
+    value.synthesis.sections[0] = { title: "Cloud agents get sturdier", kicker: "Cursor focuses on recovery", body: "Cursor made cloud agents more resilient for long-running work.", sources: [{ label: "Cursor", url: "https://example.com/cursor" }] };
+    value.synthesis.sections[1] = { title: "Managed runtimes mature", kicker: "Schedulers become product surfaces", body: "Managed runtimes are exposing schedules and memory as governed controls.", sources: [{ label: "Cursor", url: "https://example.com/cursor" }] };
+    expect(() => validateSynthesisDiversity(value.synthesis)).toThrow("sources repeat section 0");
+  });
+  it("rejects a big picture that simply repeats the synthesis lead", () => {
+    const value = edition();
+    value.synthesis.lead = "Agent runtimes are becoming governed product surfaces with explicit memory schedules permissions and recovery controls.";
+    value.synthesis.bigPicture = value.synthesis.lead;
+    expect(() => validateSynthesisDiversity(value.synthesis)).toThrow("bigPicture repeats the synthesis lead");
   });
   it("keeps the stronger occurrence when normalizing duplicate model signals", () => {
     const value = edition();
@@ -98,6 +116,17 @@ describe("editorial contracts", () => {
     expect(generationInput(issue, DEFAULT_PROFILE, undefined, false)).not.toHaveProperty("response_format");
     expect(generationInput(issue, DEFAULT_PROFILE, undefined, true)).toHaveProperty("response_format");
     expect(generationInput(issue, DEFAULT_PROFILE, undefined, true)).toHaveProperty("max_completion_tokens", 3200);
+    expect(generationInput(issue, DEFAULT_PROFILE, undefined, true, "@cf/openai/gpt-oss-120b")).not.toHaveProperty("chat_template_kwargs");
+  });
+  it("rejects placeholder presentation copy", () => {
+    const value = edition();
+    value.presentation.synthesisTitle = "(none)";
+    expect(() => validatePresentationDiversity(value.presentation)).toThrow("must not be a placeholder");
+  });
+  it("rejects duplicate view titles", () => {
+    const value = edition();
+    value.presentation.hotTitle = value.presentation.synthesisTitle;
+    expect(() => validatePresentationDiversity(value.presentation)).toThrow("view titles must be distinct");
   });
   it("materializes one source-bound card per distinct candidate without model help", () => {
     const anchors = [
@@ -126,5 +155,7 @@ describe("editorial contracts", () => {
     const prompt = editorialMessages(issue, DEFAULT_PROFILE).find((message) => message.role === "user")!.content;
     expect(prompt).toContain("collector—not you—will create Hot Topics and individual signal cards");
     expect(prompt).toContain("Do not return hotTopics or signals");
+    expect(prompt).toContain("return two rather than padding to three");
+    expect(prompt).toContain("Every section must have a unique concrete title");
   });
 });
