@@ -1,0 +1,3 @@
+ALTER TABLE visits ADD COLUMN country TEXT;
+ALTER TABLE visits ADD COLUMN region TEXT;
+ALTER TABLE visits ADD COLUMN city TEXT;

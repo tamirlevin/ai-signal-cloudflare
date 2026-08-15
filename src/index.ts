@@ -2,7 +2,7 @@ import { generateLatestEdition } from "./generation";
 import { getActiveProfile, getEdition, latestEdition, latestRunStatus, latestSupplementalShadowRun, listEditions, updateProfile } from "./repository";
 import { runSupplementalShadow } from "./supplemental";
 import { ValidationError } from "./validation";
-import { listVisits, recordVisit, visitorIdentity, visitorSetCookie } from "./visits";
+import { listVisits, recordVisit, requestLocation, visitorIdentity, visitorSetCookie } from "./visits";
 
 const SECURITY_HEADERS: Record<string, string> = {
   "Content-Security-Policy": "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; img-src 'self'; connect-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'",
@@ -45,7 +45,7 @@ function addResponseCookie(response: Response, cookie: string): Response {
 function trackDocumentVisit(request: Request, response: Response, env: Env, url: URL, ctx: ExecutionContext): Response {
   if (!shouldTrackDocument(request, url)) return response;
   const identity = visitorIdentity(request);
-  ctx.waitUntil(recordVisit(env.DB, { visitorKey: identity.key, path: url.pathname }).catch((caught) => {
+  ctx.waitUntil(recordVisit(env.DB, { visitorKey: identity.key, path: url.pathname, location: requestLocation(request) }).catch((caught) => {
     console.error(JSON.stringify({ message: "ai-signal visit recording failed", error: caught instanceof Error ? caught.message : String(caught) }));
   }));
   return identity.setCookie ? addResponseCookie(response, visitorSetCookie(identity.key)) : response;

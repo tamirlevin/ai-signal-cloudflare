@@ -2,7 +2,7 @@
 
 A standalone Cloudflare Worker and D1-backed reader for AI Signal. It presents a static, wide desktop-first reader at `/`, a distinct `/history` route, an unlinked owner surface at `/admin`, and keeps editorial data as one JSON edition instead of generating HTML per issue.
 
-Live reader: [signal.tamirlevin.dev](https://signal.tamirlevin.dev/) (fallback: [ai-signal-cloudflare.tamirlevin.workers.dev](https://ai-signal-cloudflare.tamirlevin.workers.dev/))
+Live reader: [signal.tamirlevin.dev](https://signal.tamirlevin.dev/)
 
 The compatibility date is pinned to `2026-08-11`. Move it forward with a tested Wrangler/workerd update.
 
@@ -18,7 +18,7 @@ The compatibility date is pinned to `2026-08-11`. Move it forward with a tested 
 - Ships with AI Signal Profile v2 as its empty-database default: up to 14 qualified candidates without padding, seven stories shown by default, category weights, watched topics, and rare exceptional-story override. Saved D1 profiles advance independently.
 - Stores a validated edition JSON plus its profile snapshot in D1. The last 15 successfully published editions are retained; failed runs only create a run record and cannot replace the last good edition.
 - Persists sparse personal overrides in the viewer's browser only and applies them to current and historical editions. No name, email, click history, or account is stored.
-- Records one anonymous browser/day visit for the public reader routes in D1. The ledger stores an opaque visitor key, UTC day, path, and timestamp; it does not store names, IP addresses, clicks, or reading time. Entries are retained for 30 days and are available only to the owner through `/api/visits` or the admin panel.
+- Records one anonymous browser/day visit for the public reader routes in D1. The ledger stores an opaque visitor key, UTC day, path, timestamp, and Cloudflare-provided country/region/city when available; it does not store raw IP addresses, names, clicks, or reading time. Entries are retained for 30 days and are available only to the owner through `/api/visits` or the admin panel, including distinct-browser counts.
 - Supports portable tuning links in the URL fragment. Imported settings remain a preview until the recipient explicitly accepts them.
 - Keeps global profile updates and manual refresh under `/admin`; both mutations still require the owner token, which is used for one request and never persisted by the browser.
 
@@ -99,13 +99,13 @@ Owner-only endpoints (use `Authorization: Bearer <ADMIN_TOKEN>`):
 
 - `POST /api/refresh`
 - `PUT /api/profile`
-- `GET /api/visits?limit=50`
+- `GET /api/visits?limit=50` (entries, distinct-browser totals, today's totals, and country/region grouping)
 
 All API responses use security headers and do not set cross-origin CORS permissions. The admin token is never returned or persisted by the UI. The public tuning workflow never sends personal preferences to the Worker.
 
 ## Custom domain and rollback
 
-The Worker is attached to `signal.tamirlevin.dev` as a Cloudflare Custom Domain. The original `workers.dev` hostname remains enabled as a fallback. Before each production deployment, record the current version with `npx wrangler deployments list`. If a release is unhealthy, restore the prior version with `npx wrangler rollback <version-id> -y`; the D1 migration is additive and does not require rolling back data.
+The Worker is attached to `signal.tamirlevin.dev` as a Cloudflare Custom Domain. The public `workers.dev` hostname is disabled; this repository intentionally has one canonical reader URL. Before each production deployment, record the current version with `npx wrangler deployments list`. If a release is unhealthy, restore the prior version with `npx wrangler rollback <version-id> -y`; the D1 migrations are additive and do not require rolling back data.
 
 ## Tests
 

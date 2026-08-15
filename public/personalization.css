@@ -34,6 +34,11 @@
 .visit-panel { border-top: 1px solid var(--rule); margin-top: 28px; padding-top: 20px; }
 .visit-panel h2 { font-family: "Iowan Old Style", Georgia, serif; font-size: 20px; margin: 0 0 6px; }
 .visit-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+.visit-summary { background: var(--soft); border: 1px solid var(--rule); border-radius: 7px; color: var(--body); font-size: 12px; line-height: 1.5; margin-top: 16px; padding: 10px 12px; }
+.visit-summary strong { color: var(--ink); }
+.visit-locations { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 5px; }
+.visit-locations span { color: var(--muted); }
+.visit-locations strong { color: var(--body); font-weight: 650; margin-left: 4px; }
 .visit-list { border-top: 1px solid var(--rule); margin: 16px 0 0; }
 .visit-entry { align-items: baseline; border-bottom: 1px solid var(--rule); display: grid; gap: 12px; grid-template-columns: 170px 1fr auto; padding: 9px 0; }
 .visit-entry time, .visit-entry code { color: var(--muted); font-size: 11px; }

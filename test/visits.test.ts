@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import worker from "../src/index";
-import { visitorIdentity, visitorSetCookie } from "../src/visits";
+import { requestLocation, visitorIdentity, visitorSetCookie } from "../src/visits";
 
 function fakeContext() {
   const pending: Promise<unknown>[] = [];
@@ -16,8 +16,12 @@ function fakeDb() {
   const statement = (sql: string) => {
     const bound = {
       bind: (..._values: unknown[]) => bound,
-      all: async () => sql.includes("FROM visits") ? { results: [{ id: "visit-1", visitor_key: "visitor-key-123", visit_day: "2026-08-15", path: "/", visited_at: "2026-08-15T08:00:00.000Z" }] } : { results: [] },
-      first: async () => sql.includes("COUNT(*)") ? { total: 1 } : null,
+      all: async () => sql.includes("unique_visitors")
+        ? { results: [{ country: "AU", region: "Victoria", unique_visitors: 1 }] }
+        : sql.includes("FROM visits")
+          ? { results: [{ id: "visit-1", visitor_key: "visitor-key-123", visit_day: "2026-08-15", path: "/", visited_at: "2026-08-15T08:00:00.000Z", country: "AU", region: "Victoria", city: "Melbourne" }] }
+          : { results: [] },
+      first: async () => sql.includes("COUNT") ? { total: 1 } : null,
       run: async () => ({ meta: { changes: 1 } })
     };
     return bound;
@@ -56,6 +60,10 @@ describe("anonymous visit ledger", () => {
     expect(visitorSetCookie(fresh.key)).toContain("SameSite=Lax");
 
     expect(visitorIdentity(new Request("https://app.test/", { headers: { Cookie: "ai_signal_visitor=%E0%A4%A" } })).setCookie).toBe(true);
+
+    const located = new Request("https://app.test/");
+    Object.defineProperty(located, "cf", { value: { country: " AU ", region: "Victoria", city: "Melbourne" } });
+    expect(requestLocation(located)).toEqual({ country: "AU", region: "Victoria", city: "Melbourne" });
   });
 
   it("records a public HTML visit without exposing the ledger", async () => {
@@ -74,8 +82,13 @@ describe("anonymous visit ledger", () => {
     const authorized = await worker.fetch(new Request("https://app.test/api/visits?limit=10", { headers: { Authorization: "Bearer secret" } }), fakeEnv("secret"), fakeContext());
     expect(authorized.status).toBe(200);
     await expect(authorized.json()).resolves.toEqual({
-      visits: [{ id: "visit-1", visitorKey: "visitor-key-123", visitDay: "2026-08-15", path: "/", visitedAt: "2026-08-15T08:00:00.000Z" }],
-      total: 1
+      visits: [{ id: "visit-1", visitorKey: "visitor-key-123", visitDay: "2026-08-15", path: "/", visitedAt: "2026-08-15T08:00:00.000Z", country: "AU", region: "Victoria", city: "Melbourne" }],
+      total: 1,
+      totalEntries: 1,
+      uniqueVisitors: 1,
+      todayEntries: 1,
+      todayUniqueVisitors: 1,
+      byLocation: [{ country: "AU", region: "Victoria", uniqueVisitors: 1 }]
     });
   });
 });

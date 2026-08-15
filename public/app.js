@@ -267,8 +267,12 @@ function adminControls(profile) {
   return `<label class="range-row">Default stories <output id="admin-budget-value">${profile.storyBudget}</output><input id="admin-story-budget" type="range" min="${profile.storyBudgetRange[0]}" max="${profile.storyBudgetRange[1]}" value="${profile.storyBudget}"></label><div id="admin-weights" class="weights">${profile.weights.map((weight) => `<div class="weight"><label>${escape(weight.label)} <output>${weightLabel(weight.value)}</output></label><input data-admin-weight="${escape(weight.id)}" type="range" min="0" max="4" value="${weight.value}"></div>`).join("")}</div><fieldset><legend>Editorial safeguards</legend><label><input id="admin-exceptional" type="checkbox" ${profile.exceptionalStoryOverride ? "checked" : ""}> Exceptional-story override</label><label><input id="admin-watch-permissions" type="checkbox" ${profile.safeguards.watchPermissions ? "checked" : ""}> Watch agent permission design</label><label><input id="admin-watch-geography" type="checkbox" ${profile.safeguards.watchGeography ? "checked" : ""}> Watch AI cluster geography</label></fieldset>`;
 }
 
+function visitLocationLabel(visit) {
+  return [visit.city, visit.region, visit.country].filter(Boolean).join(", ") || "Unknown";
+}
+
 function visitPanel() {
-  return `<section class="visit-panel"><h2>Anonymous visit entries</h2><p class="muted">One entry per anonymous browser per UTC day. No names, IP addresses, clicks, or reading time are stored.</p><div class="visit-actions"><button class="button secondary" id="load-visits" type="button">Load recent visits</button><p class="visit-total" id="visit-status" aria-live="polite"></p></div><div class="visit-list" id="visit-list" hidden></div></section>`;
+  return `<section class="visit-panel"><h2>Anonymous visit entries</h2><p class="muted">One entry per anonymous browser per UTC day. Country, region and city are recorded when Cloudflare can provide them. No names, IP addresses, clicks, or reading time are stored.</p><div class="visit-actions"><button class="button secondary" id="load-visits" type="button">Load recent visits</button><p class="visit-total" id="visit-status" aria-live="polite"></p></div><div class="visit-summary" id="visit-summary" hidden></div><div class="visit-list" id="visit-list" hidden></div></section>`;
 }
 
 function renderAdmin(profile) {
@@ -303,12 +307,16 @@ async function loadVisits() {
   setVisitStatus("Loading visit entries…");
   try {
     const data = await request("/api/visits?limit=50", { headers: { Authorization: `Bearer ${token}` } });
+    const summary = app.querySelector("#visit-summary");
+    const locations = (data.byLocation ?? []).slice(0, 6).map((location) => `<span>${escape([location.country, location.region].filter(Boolean).join(" · ") || "Unknown")} <strong>${escape(location.uniqueVisitors)}</strong></span>`).join("");
+    summary.innerHTML = `<strong>${escape(data.uniqueVisitors)} unique browsers</strong> over 30 days · <strong>${escape(data.todayUniqueVisitors)} today</strong> · ${escape(data.totalEntries)} daily entries${locations ? `<div class="visit-locations">${locations}</div>` : ""}`;
+    summary.hidden = false;
     const list = app.querySelector("#visit-list");
     list.innerHTML = data.visits.length
-      ? data.visits.map((visit) => `<div class="visit-entry"><time datetime="${escape(visit.visitedAt)}">${escape(localDateTime(visit.visitedAt))}</time><span>${escape(visit.path)}</span><code title="Opaque browser key">${escape(visit.visitorKey.slice(0, 12))}…</code></div>`).join("")
+      ? data.visits.map((visit) => `<div class="visit-entry"><time datetime="${escape(visit.visitedAt)}">${escape(localDateTime(visit.visitedAt))}</time><span>${escape(visit.path)} · ${escape(visitLocationLabel(visit))}</span><code title="Opaque browser key">${escape(visit.visitorKey.slice(0, 12))}…</code></div>`).join("")
       : `<p class="muted">No visit entries yet.</p>`;
     list.hidden = false;
-    setVisitStatus(`${data.total} total anonymous daily entries · showing ${data.visits.length}`);
+    setVisitStatus(`${data.totalEntries} total anonymous daily entries · showing ${data.visits.length}`);
   } catch (caught) { setVisitStatus(caught.message); } finally { clearAdminToken(); }
 }
 
