@@ -56,9 +56,9 @@ export function parseLatestRss(xml: string): RssIssue {
   return { url, issueDate, publicationDate, body: markdown, anchors };
 }
 
-export async function fetchLatestRss(url: string): Promise<RssIssue> {
+export async function fetchLatestRss(url: string, fetcher: typeof fetch = fetch): Promise<RssIssue> {
   const timeout = AbortSignal.timeout(15_000);
-  const response = await fetch(url, { signal: timeout, headers: { Accept: "application/rss+xml, application/xml;q=0.9" } });
+  const response = await fetcher(url, { signal: timeout, headers: { Accept: "application/rss+xml, application/xml;q=0.9" } });
   if (!response.ok) throw new ValidationError(`RSS returned ${response.status}`);
   const size = Number(response.headers.get("content-length") ?? "0");
   if (Number.isFinite(size) && size > MAX_RSS_BYTES) throw new ValidationError("RSS response is too large");

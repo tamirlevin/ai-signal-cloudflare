@@ -1,5 +1,6 @@
 import { generateLatestEdition } from "./generation";
-import { getActiveProfile, getEdition, latestEdition, latestRunStatus, listEditions, updateProfile } from "./repository";
+import { getActiveProfile, getEdition, latestEdition, latestRunStatus, latestSupplementalShadowRun, listEditions, updateProfile } from "./repository";
+import { runSupplementalShadow } from "./supplemental";
 import { ValidationError } from "./validation";
 
 const SECURITY_HEADERS: Record<string, string> = {
@@ -58,7 +59,11 @@ async function readJson(request: Request): Promise<unknown> {
   try { return JSON.parse(body); } catch { throw new ValidationError("request body must be valid JSON"); }
 }
 
-async function api(request: Request, env: Env, url: URL): Promise<Response | null> {
+function supplementalShadowEnabled(env: Env): boolean {
+  return env.SUPPLEMENTAL_SHADOW_ENABLED === "true";
+}
+
+async function api(request: Request, env: Env, url: URL, ctx: ExecutionContext): Promise<Response | null> {
   if (!url.pathname.startsWith("/api/")) return null;
   if (!sameOrigin(request)) return error("cross-origin requests are not allowed", 403);
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: SECURITY_HEADERS });
@@ -68,6 +73,10 @@ async function api(request: Request, env: Env, url: URL): Promise<Response | nul
   }
   if (request.method === "GET" && url.pathname === "/api/status") {
     return json({ lastRun: await latestRunStatus(env.DB), scheduledDailyAtUtc: "22:15" });
+  }
+  if (request.method === "GET" && url.pathname === "/api/shadow/latest") {
+    const shadow = await latestSupplementalShadowRun(env.DB);
+    return shadow ? json({ shadow }) : error("no supplemental shadow run has completed yet", 404);
   }
   if (request.method === "GET" && url.pathname === "/api/editions") return json({ editions: await listEditions(env.DB) });
   if (request.method === "GET" && url.pathname === "/api/editions/latest") {
@@ -83,6 +92,7 @@ async function api(request: Request, env: Env, url: URL): Promise<Response | nul
   if (request.method === "POST" && url.pathname === "/api/refresh") {
     if (!(await isAdmin(request, env))) return error("unauthorized", 401);
     const result = await generateLatestEdition(env, "manual");
+    if (supplementalShadowEnabled(env)) ctx.waitUntil(runSupplementalShadow(env, "manual").then(() => undefined));
     return json(result, result.status === "failed" ? 502 : 200);
   }
   if (request.method === "PUT" && url.pathname === "/api/profile") {
@@ -94,15 +104,18 @@ async function api(request: Request, env: Env, url: URL): Promise<Response | nul
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
-    if (url.pathname === "/__scheduled" && env.ENVIRONMENT === "production") return error("not found", 404);
+    if ((url.pathname === "/__scheduled" || url.pathname === "/__shadow") && env.ENVIRONMENT === "production") return error("not found", 404);
     try {
       if (url.pathname === "/__scheduled" && env.ENVIRONMENT !== "production") {
         if (!(await isAdmin(request, env))) return error("unauthorized", 401);
         return json(await generateLatestEdition(env, "local-scheduled"));
       }
-      const response = await api(request, env, url);
+      if (url.pathname === "/__shadow" && env.ENVIRONMENT !== "production") {
+        return json(await runSupplementalShadow(env, "local-scheduled"));
+      }
+      const response = await api(request, env, url, ctx);
       return response ?? secure(await env.ASSETS.fetch(request));
     } catch (caught) {
       const status = caught instanceof ValidationError ? 400 : 500;
@@ -112,5 +125,6 @@ export default {
   },
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
     await generateLatestEdition(env, "cron");
+    if (supplementalShadowEnabled(env)) await runSupplementalShadow(env, "cron");
   }
 } satisfies ExportedHandler<Env>;

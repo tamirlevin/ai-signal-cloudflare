@@ -63,6 +63,10 @@ function blockScore(text: string, profile: Profile, linkCount: number): number {
   return score - matches(DEPRIORITIZED_TERMS, text) * 6;
 }
 
+export function scoreCandidateForProfile(text: string, profile: Profile, linkCount = 1): number {
+  return blockScore(text, profile, linkCount);
+}
+
 function distinctAnchors(line: string, anchorsByUrl: Map<string, RssIssue["anchors"][number]>): RssIssue["anchors"] {
   const found: RssIssue["anchors"] = [];
   const seen = new Set<string>();
@@ -126,6 +130,10 @@ function categoryFor(textValue: string, profile: Profile): { id: string; label: 
   }
   const fallback = weights.get("newly") ?? profile.weights[0]!;
   return selected ? { id: selected.id, label: selected.label } : { id: fallback.id, label: fallback.label };
+}
+
+export function categoryForProfile(textValue: string, profile: Profile): { id: string; label: string } {
+  return categoryFor(textValue, profile);
 }
 
 function productVersionKey(title: string): string | undefined {

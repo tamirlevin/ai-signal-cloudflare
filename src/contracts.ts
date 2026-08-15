@@ -120,3 +120,66 @@ export type RunStatus = {
   finishedAt: string;
   durationMs: number;
 };
+
+export type SupplementalSourceId = "tldr-ai" | "alphasignal" | "cloudflare-agents";
+export type SupplementalSourceHealth = {
+  id: SupplementalSourceId;
+  name: string;
+  status: "healthy" | "degraded" | "failed";
+  requests: number;
+  fetchedItems: number;
+  acceptedCandidates: number;
+  errors: string[];
+};
+export type SupplementalAttribution = {
+  sourceId: SupplementalSourceId;
+  sourceName: string;
+  kind: "discovery" | "primary";
+  sourceUrl: string;
+};
+export type SupplementalCandidate = {
+  title: string;
+  summary: string;
+  url: string;
+  publishedAt: string;
+  category: string;
+  categoryLabel: string;
+  score: number;
+  exceptional: boolean;
+  sourceAttributions: SupplementalAttribution[];
+};
+export type ShadowCandidate = Pick<SupplementalCandidate, "title" | "summary" | "url" | "publishedAt" | "category" | "categoryLabel" | "score"> & {
+  sourceIds: SupplementalSourceId[];
+  sourceNames: string[];
+};
+export type SupplementalShadowReport = {
+  schemaVersion: 1;
+  mode: "shadow";
+  generatedAt: string;
+  baseIssue: { url: string; issueDate: string; publicationDate: string };
+  limits: { modelCandidates: 18; publishedStories: 14; tldr: 3; alphaSignal: 2; cloudflare: 1 };
+  sources: SupplementalSourceHealth[];
+  totals: {
+    aiNewsCandidates: number;
+    supplementalCandidates: number;
+    supplementalAfterDeduplication: number;
+    overlapsWithAiNews: number;
+    novelQualifiedCandidates: number;
+    wouldAdd: number;
+  };
+  overlaps: Array<{ supplementalTitle: string; aiNewsTitle: string; preferredUrl: string; sourceIds: SupplementalSourceId[] }>;
+  wouldAdd: ShadowCandidate[];
+};
+export type SupplementalShadowRun = {
+  id: string;
+  trigger: "cron" | "manual" | "local-scheduled";
+  status: "healthy" | "degraded" | "failed";
+  baseIssueUrl?: string;
+  baseIssueDate?: string;
+  startedAt: string;
+  finishedAt: string;
+  durationMs: number;
+  report?: SupplementalShadowReport;
+  errorCode?: string;
+  errorMessage?: string;
+};

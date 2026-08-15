@@ -1,4 +1,4 @@
-import type { Edition, Profile, RunStatus, StoredEdition } from "./contracts";
+import type { Edition, Profile, RunStatus, StoredEdition, SupplementalShadowReport, SupplementalShadowRun } from "./contracts";
 import { DEFAULT_PROFILE } from "./contracts";
 import { normalizeEditionStories } from "./story-normalization";
 import { synthesisNeedsRepair, ValidationError, validateEdition, validateProfile } from "./validation";
@@ -126,6 +126,68 @@ export async function recordRun(
   await db.prepare("INSERT INTO runs (id, trigger, issue_url, issue_date, status, model, edition_id, error_code, error_message, started_at, finished_at, duration_ms) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)")
     .bind(crypto.randomUUID(), run.trigger, run.issueUrl ?? null, run.issueDate ?? null, run.status, run.model ?? null, run.editionId ?? null, run.errorCode ?? null, run.errorMessage?.slice(0, 500) ?? null, run.startedAt, finishedAt, run.durationMs)
     .run();
+}
+
+export async function recordSupplementalShadowRun(
+  db: D1Database,
+  run: {
+    trigger: SupplementalShadowRun["trigger"];
+    status: SupplementalShadowRun["status"];
+    startedAt: string;
+    durationMs: number;
+    report?: SupplementalShadowReport;
+    errorCode?: string;
+    errorMessage?: string;
+  }
+): Promise<void> {
+  const finishedAt = new Date().toISOString();
+  await db.batch([
+    db.prepare("INSERT INTO supplemental_shadow_runs (id, trigger, status, base_issue_url, base_issue_date, report_json, error_code, error_message, started_at, finished_at, duration_ms) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)")
+      .bind(
+        crypto.randomUUID(),
+        run.trigger,
+        run.status,
+        run.report?.baseIssue.url ?? null,
+        run.report?.baseIssue.issueDate ?? null,
+        run.report ? JSON.stringify(run.report) : null,
+        run.errorCode ?? null,
+        run.errorMessage?.slice(0, 500) ?? null,
+        run.startedAt,
+        finishedAt,
+        run.durationMs
+      ),
+    db.prepare("DELETE FROM supplemental_shadow_runs WHERE id IN (SELECT id FROM supplemental_shadow_runs ORDER BY started_at DESC LIMIT -1 OFFSET 15)")
+  ]);
+}
+
+export async function latestSupplementalShadowRun(db: D1Database): Promise<SupplementalShadowRun | null> {
+  const row = await db.prepare("SELECT id, trigger, status, base_issue_url, base_issue_date, report_json, error_code, error_message, started_at, finished_at, duration_ms FROM supplemental_shadow_runs ORDER BY started_at DESC LIMIT 1").first<{
+    id: string;
+    trigger: SupplementalShadowRun["trigger"];
+    status: SupplementalShadowRun["status"];
+    base_issue_url: string | null;
+    base_issue_date: string | null;
+    report_json: string | null;
+    error_code: string | null;
+    error_message: string | null;
+    started_at: string;
+    finished_at: string;
+    duration_ms: number;
+  }>();
+  if (!row) return null;
+  return {
+    id: row.id,
+    trigger: row.trigger,
+    status: row.status,
+    ...(row.base_issue_url ? { baseIssueUrl: row.base_issue_url } : {}),
+    ...(row.base_issue_date ? { baseIssueDate: row.base_issue_date } : {}),
+    ...(row.report_json ? { report: JSON.parse(row.report_json) as SupplementalShadowReport } : {}),
+    ...(row.error_code ? { errorCode: row.error_code } : {}),
+    ...(row.error_message ? { errorMessage: row.error_message } : {}),
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+    durationMs: row.duration_ms
+  };
 }
 
 export function errorCode(error: unknown): string {

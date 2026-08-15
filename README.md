@@ -9,6 +9,7 @@ The compatibility date is pinned to `2026-08-11`. Move it forward with a tested 
 ## What it does
 
 - Fetches only the newest item in `https://news.smol.ai/rss.xml` for a standard run.
+- In non-publishing shadow mode, also samples the newest TLDR AI issue, up to five AlphaSignal items from the preceding 24 hours, and recent Cloudflare Agents posts. These sources are measured against AInews but cannot alter the public edition.
 - Decodes the issue HTML, captures its exact direct `href` values, and gives those links to one structured Workers AI synthesis call.
 - Rejects an edition if any story or source URL was not supplied by AInews. The RSS issue URL and publication date are source-derived.
 - Compacts each long issue into an 18-block, profile-aware candidate inventory, retaining priority material plus a diversity sample.
@@ -27,6 +28,18 @@ The compatibility date is pinned to `2026-08-11`. Move it forward with a tested 
 `/admin` is deliberately absent from public navigation. Knowing its URL does not grant authority: `PUT /api/profile` and `POST /api/refresh` require `ADMIN_TOKEN`. A saved global profile is used by future generation runs; it does not rewrite stored editions.
 
 The reader shows the latest collector check, the brief generation time, and the daily scheduled check time. `GET /api/status` exposes only that non-sensitive operational summary.
+
+## Supplemental-source shadow mode
+
+`SUPPLEMENTAL_SHADOW_ENABLED=true` runs a parallel source experiment without changing generation. It retains AInews as the sole publishing input while testing whether TLDR AI, AlphaSignal, and Cloudflare Agents would add useful coverage. The experiment:
+
+- canonicalizes URLs, strips tracking parameters, and merges exact-URL, fuzzy-title, and product-version duplicates;
+- combines source attribution and prefers a direct or official story URL over an aggregator URL;
+- enriches at most five AlphaSignal discoveries, then permits at most three TLDR, two AlphaSignal, and one Cloudflare candidate into the shadow result;
+- preserves the existing ceilings of 18 model candidates and 14 published stories; and
+- stores only the latest 15 shadow reports in D1.
+
+`GET /api/shadow/latest` returns the latest report, including source health, overlaps with AInews, and the candidates that would have been added. The endpoint is observational: shadow candidates are never passed to the model or written into an edition. A source failure degrades its shadow report but cannot fail or delay publication of the AInews edition.
 
 ## Local setup
 
@@ -68,7 +81,7 @@ The project deliberately has no automatic resource provisioning or deployment co
 
 The configured Cloudflare cron is `15 22 * * *` (UTC). It fires at 08:15 in Melbourne during AEST (UTC+10), and at 09:15 during AEDT (UTC+11). Cloudflare cron has no Melbourne timezone setting. D1 idempotency means a manually triggered or repeated run for the same AInews issue is safely skipped.
 
-The scheduled handler directly awaits generation. In non-production local development only, `/__scheduled` is protected by `ADMIN_TOKEN`; production returns 404 for that route.
+The scheduled handler completes publication first, then runs the isolated supplemental shadow collector. In non-production local development only, `/__scheduled` is protected by `ADMIN_TOKEN`, and `/__shadow` runs the source experiment without model generation. Production returns 404 for both diagnostic routes.
 
 ## API
 
@@ -79,6 +92,7 @@ Public same-origin endpoints:
 - `GET /api/editions/latest`
 - `GET /api/editions/:YYYY-MM-DD`
 - `GET /api/profile`
+- `GET /api/shadow/latest`
 
 Owner-only endpoints (use `Authorization: Bearer <ADMIN_TOKEN>`):
 
@@ -89,4 +103,4 @@ All API responses use security headers and do not set cross-origin CORS permissi
 
 ## Tests
 
-`npm test` covers structured-edition validation, trusted-link enforcement, duplicate-link rejection, first-item RSS parsing, API authentication, and production scheduled-route blocking. `npm run types` generates the Worker binding type definition from `wrangler.jsonc`; do not hand-write `Env`.
+`npm test` covers structured-edition validation, trusted-link enforcement, duplicate-link rejection, first-item RSS parsing, API authentication, production diagnostic-route blocking, supplemental parser behavior, canonical and fuzzy deduplication, source caps, and publication isolation. `npm run types` generates the Worker binding type definition from `wrangler.jsonc`; do not hand-write `Env`.

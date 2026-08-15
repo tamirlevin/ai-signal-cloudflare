@@ -14,6 +14,7 @@
     "AI_MODEL": "@cf/openai/gpt-oss-120b",
     "AI_FALLBACK_MODEL": "@cf/zai-org/glm-4.7-flash",
     "AI_GATEWAY_ID": "",
+    "SUPPLEMENTAL_SHADOW_ENABLED": "true",
     "RSS_URL": "https://news.smol.ai/rss.xml"
   },
   "d1_databases": [
@@ -29,7 +30,7 @@
     "directory": "./public",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/__scheduled"]
+    "run_worker_first": ["/api/*", "/__scheduled", "/__shadow"]
   },
   "triggers": { "crons": ["15 22 * * *"] }
 }
