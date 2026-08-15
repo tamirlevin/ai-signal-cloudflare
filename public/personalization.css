@@ -31,10 +31,19 @@
 .admin-panel > label { display: grid; gap: 7px; }
 .admin-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 24px; }
 .admin input[type="password"] { max-width: 520px; width: 100%; }
+.visit-panel { border-top: 1px solid var(--rule); margin-top: 28px; padding-top: 20px; }
+.visit-panel h2 { font-family: "Iowan Old Style", Georgia, serif; font-size: 20px; margin: 0 0 6px; }
+.visit-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+.visit-list { border-top: 1px solid var(--rule); margin: 16px 0 0; }
+.visit-entry { align-items: baseline; border-bottom: 1px solid var(--rule); display: grid; gap: 12px; grid-template-columns: 170px 1fr auto; padding: 9px 0; }
+.visit-entry time, .visit-entry code { color: var(--muted); font-size: 11px; }
+.visit-entry code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.visit-total { color: var(--muted); font-size: 12px; margin: 0; }
 [hidden] { display: none !important; }
 
 @media (max-width: 620px) {
   .tune-actions { justify-content: stretch; }
   .tune-actions .button { flex: 1 1 44%; }
   .admin-actions .button { width: 100%; }
+  .visit-entry { gap: 4px; grid-template-columns: 1fr; }
 }

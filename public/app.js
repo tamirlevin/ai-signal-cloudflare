@@ -267,13 +267,18 @@ function adminControls(profile) {
   return `<label class="range-row">Default stories <output id="admin-budget-value">${profile.storyBudget}</output><input id="admin-story-budget" type="range" min="${profile.storyBudgetRange[0]}" max="${profile.storyBudgetRange[1]}" value="${profile.storyBudget}"></label><div id="admin-weights" class="weights">${profile.weights.map((weight) => `<div class="weight"><label>${escape(weight.label)} <output>${weightLabel(weight.value)}</output></label><input data-admin-weight="${escape(weight.id)}" type="range" min="0" max="4" value="${weight.value}"></div>`).join("")}</div><fieldset><legend>Editorial safeguards</legend><label><input id="admin-exceptional" type="checkbox" ${profile.exceptionalStoryOverride ? "checked" : ""}> Exceptional-story override</label><label><input id="admin-watch-permissions" type="checkbox" ${profile.safeguards.watchPermissions ? "checked" : ""}> Watch agent permission design</label><label><input id="admin-watch-geography" type="checkbox" ${profile.safeguards.watchGeography ? "checked" : ""}> Watch AI cluster geography</label></fieldset>`;
 }
 
+function visitPanel() {
+  return `<section class="visit-panel"><h2>Anonymous visit entries</h2><p class="muted">One entry per anonymous browser per UTC day. No names, IP addresses, clicks, or reading time are stored.</p><div class="visit-actions"><button class="button secondary" id="load-visits" type="button">Load recent visits</button><p class="visit-total" id="visit-status" aria-live="polite"></p></div><div class="visit-list" id="visit-list" hidden></div></section>`;
+}
+
 function renderAdmin(profile) {
   state.adminProfile = profile;
-  app.innerHTML = `<section class="admin"><div class="banner"><p class="eyebrow">Owner controls</p><h1>AI Signal administration</h1><p>Global profile changes affect future generation only. Browser personalisation remains local and is not shown here.</p></div><div class="admin-panel"><label>Admin token <input id="admin-token" type="password" autocomplete="off"></label><p class="muted">Used only for the request you submit below; it is not stored in the browser.</p>${adminControls(profile)}<div class="admin-actions"><button class="button" id="save-global-profile" type="button">Save global Profile v${profile.version + 1}</button><button class="button secondary" id="run-refresh" type="button">Run latest issue now</button></div><p class="status" id="admin-status" aria-live="polite"></p></div></section>`;
+  app.innerHTML = `<section class="admin"><div class="banner"><p class="eyebrow">Owner controls</p><h1>AI Signal administration</h1><p>Global profile changes affect future generation only. Browser personalisation remains local and is not shown here.</p></div><div class="admin-panel"><label>Admin token <input id="admin-token" type="password" autocomplete="off"></label><p class="muted">Used only for the request you submit below; it is not stored in the browser.</p>${adminControls(profile)}<div class="admin-actions"><button class="button" id="save-global-profile" type="button">Save global Profile v${profile.version + 1}</button><button class="button secondary" id="run-refresh" type="button">Run latest issue now</button></div><p class="status" id="admin-status" aria-live="polite"></p></div>${visitPanel()}</section>`;
   app.querySelectorAll("[data-admin-weight]").forEach((input) => input.addEventListener("input", () => { input.previousElementSibling.querySelector("output").textContent = weightLabel(Number(input.value)); }));
   app.querySelector("#admin-story-budget").addEventListener("input", (event) => { app.querySelector("#admin-budget-value").textContent = event.target.value; });
   app.querySelector("#save-global-profile").addEventListener("click", saveGlobalProfile);
   app.querySelector("#run-refresh").addEventListener("click", runRefresh);
+  app.querySelector("#load-visits").addEventListener("click", loadVisits);
 }
 
 function globalProfileCandidate() {
@@ -290,6 +295,22 @@ function globalProfileCandidate() {
 function adminToken() { return app.querySelector("#admin-token").value; }
 function setAdminStatus(message) { app.querySelector("#admin-status").textContent = message; }
 function clearAdminToken() { app.querySelector("#admin-token").value = ""; }
+function setVisitStatus(message) { app.querySelector("#visit-status").textContent = message; }
+
+async function loadVisits() {
+  const token = adminToken();
+  if (!token) { setVisitStatus("Enter the admin token first."); return; }
+  setVisitStatus("Loading visit entries…");
+  try {
+    const data = await request("/api/visits?limit=50", { headers: { Authorization: `Bearer ${token}` } });
+    const list = app.querySelector("#visit-list");
+    list.innerHTML = data.visits.length
+      ? data.visits.map((visit) => `<div class="visit-entry"><time datetime="${escape(visit.visitedAt)}">${escape(localDateTime(visit.visitedAt))}</time><span>${escape(visit.path)}</span><code title="Opaque browser key">${escape(visit.visitorKey.slice(0, 12))}…</code></div>`).join("")
+      : `<p class="muted">No visit entries yet.</p>`;
+    list.hidden = false;
+    setVisitStatus(`${data.total} total anonymous daily entries · showing ${data.visits.length}`);
+  } catch (caught) { setVisitStatus(caught.message); } finally { clearAdminToken(); }
+}
 
 async function saveGlobalProfile() {
   const token = adminToken();

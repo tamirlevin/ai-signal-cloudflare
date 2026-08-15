@@ -476,6 +476,7 @@ main {
 
 .error { border-color: color-mix(in srgb, var(--danger) 45%, var(--rule)); color: var(--danger); }
 .loading { color: var(--muted); padding: 28px; text-align: center; }
+.site-footer { border-top: 1px solid var(--rule); color: var(--muted); font-size: 11px; line-height: 1.45; margin: 0 auto; max-width: 1160px; padding: 16px 24px 28px; }
 
 dialog {
   background: var(--surface);
