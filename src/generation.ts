@@ -1,4 +1,4 @@
-import type { RunResult } from "./contracts";
+import type { Edition, RssIssue, RunResult, Source } from "./contracts";
 import { compactIssueInventory, editorialMessages, extractGeneratedEdition, generationInput, materializeCandidateStories } from "./editorial";
 import { fetchLatestRss } from "./rss";
 import { errorCode, getActiveProfile, insertEdition, publishedEditionState, recordRun, replaceEdition } from "./repository";
@@ -6,6 +6,103 @@ import { normalizeEditionStories } from "./story-normalization";
 import { ValidationError, validateEdition, validatePresentationDiversity, validateSynthesisDiversity } from "./validation";
 
 type Trigger = "cron" | "manual" | "local-scheduled";
+
+const TRACKING_KEYS = /^(?:utm_[^=]+|fbclid|gclid|ref|source|campaign|medium)$/i;
+
+function canonicalizeSourceUrl(raw: string, baseUrl: string): string | undefined {
+  const trimmed = raw.trim().replace(/^[`"'(<{\[]+|^\s+/, "").replace(/[`"'.,;:!?[\]})>]+$/g, "");
+  if (!trimmed) return undefined;
+  const withScheme = trimmed.startsWith("//") ? `https:${trimmed}` : trimmed;
+  try {
+    const parsed = new URL(withScheme, baseUrl);
+    if (parsed.protocol === "http:") parsed.protocol = "https:";
+    if (parsed.protocol !== "https:") return undefined;
+    parsed.hash = "";
+    for (const key of [...parsed.searchParams.keys()]) {
+      if (TRACKING_KEYS.test(key)) parsed.searchParams.delete(key);
+    }
+    return parsed.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function buildPermittedSourceCatalog(issue: RssIssue): { permittedUrls: Set<string>; labelByUrl: Map<string, string>; orderedUrls: string[] } {
+  const permittedUrls = new Set<string>();
+  const labelByUrl = new Map<string, string>();
+  const orderedUrls: string[] = [];
+  for (const source of issue.anchors) {
+    const canonical = canonicalizeSourceUrl(source.url, issue.url);
+    const candidateUrls = [source.url];
+    if (canonical && canonical !== source.url) candidateUrls.push(canonical);
+    for (const url of candidateUrls) {
+      if (!permittedUrls.has(url)) {
+        permittedUrls.add(url);
+        labelByUrl.set(url, source.label);
+        orderedUrls.push(url);
+      }
+    }
+  }
+  return { permittedUrls, labelByUrl, orderedUrls };
+}
+
+function repairSourceList(
+  sources: Source[] | undefined,
+  issueUrl: string,
+  catalog: ReturnType<typeof buildPermittedSourceCatalog>,
+  opts: { maxItems: number; reserveAcrossList?: boolean; reserved?: Set<string> }
+): Source[] {
+  const reserved = opts.reserveAcrossList ? opts.reserved ?? new Set<string>() : undefined;
+  const repaired: Source[] = [];
+  const seen = new Set<string>();
+
+  for (const source of sources ?? []) {
+    const normalized = canonicalizeSourceUrl(source.url, issueUrl);
+    if (!normalized) continue;
+    if (!catalog.permittedUrls.has(normalized)) continue;
+    if (reserved?.has(normalized)) continue;
+    if (seen.has(normalized)) continue;
+    repaired.push({ label: source.label || catalog.labelByUrl.get(normalized) || "Source", url: normalized });
+    seen.add(normalized);
+    reserved?.add(normalized);
+    if (repaired.length >= opts.maxItems) break;
+  }
+
+  if (repaired.length === 0) {
+    for (const candidateUrl of catalog.orderedUrls) {
+      if (reserved?.has(candidateUrl)) continue;
+      const label = catalog.labelByUrl.get(candidateUrl);
+      if (!label) continue;
+      repaired.push({ label, url: candidateUrl });
+      reserved?.add(candidateUrl);
+      break;
+    }
+  }
+
+  return repaired.slice(0, opts.maxItems);
+}
+
+function repairEditionSources(edition: Edition, issueUrl: string, catalog: ReturnType<typeof buildPermittedSourceCatalog>): Edition {
+  const sectionReserved = new Set<string>();
+  const synthesis = {
+    sources: Array.isArray(edition.synthesis?.sources) ? edition.synthesis.sources : [],
+    sections: Array.isArray(edition.synthesis?.sections) ? edition.synthesis.sections : []
+  };
+  return {
+    ...edition,
+    hotTopics: Array.isArray(edition.hotTopics)
+      ? edition.hotTopics.map((topic) => ({ ...topic, sources: repairSourceList(topic.sources, issueUrl, catalog, { maxItems: 3 }) }))
+      : [],
+    synthesis: {
+      ...synthesis,
+      sources: repairSourceList(synthesis.sources, issueUrl, catalog, { maxItems: 6, reserveAcrossList: true }),
+      sections: synthesis.sections.map((section) => ({
+        ...section,
+        sources: repairSourceList(section.sources, issueUrl, catalog, { maxItems: 3, reserveAcrossList: true, reserved: sectionReserved })
+      }))
+    }
+  };
+}
 
 async function hash(value: string): Promise<string> {
   const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)));
@@ -49,6 +146,7 @@ export async function generateLatestEdition(env: Env, trigger: Trigger): Promise
     issueUrl = issue.url;
     issueDate = issue.issueDate;
     const publication = await publishedEditionState(env.DB, issue.url, issue.issueDate);
+    const sourceCatalog = buildPermittedSourceCatalog(issue);
     const replacingExistingEdition = trigger === "manual" && publication.exists && publication.needsStoryRepair;
     if (publication.exists && !replacingExistingEdition) {
       await recordRun(env.DB, { trigger, status: "skipped", issueUrl, issueDate, model: env.AI_MODEL, startedAt, durationMs: Date.now() - started });
@@ -58,7 +156,7 @@ export async function generateLatestEdition(env: Env, trigger: Trigger): Promise
     const inventory = compactIssueInventory(issue, profile);
     const modelIssue = inventory.issue;
     console.log(JSON.stringify({ message: "ai-signal candidate inventory compacted", issueUrl, sourceChars: issue.body.length, candidateChars: modelIssue.body.length, sourceLinks: issue.anchors.length, candidateLinks: modelIssue.anchors.length }));
-    const allowedStoryUrls = new Set(issue.anchors.map((anchor) => anchor.url));
+    const allowedStoryUrls = sourceCatalog.permittedUrls;
     let lastError: unknown;
     let repair: string | undefined;
     let usedFallback = false;
@@ -76,7 +174,8 @@ export async function generateLatestEdition(env: Env, trigger: Trigger): Promise
         };
         generated.signals = stories.signals;
         generated.hotTopics = stories.hotTopics;
-        const normalized = normalizeEditionStories(generated, profile, inventory.candidates);
+        const repaired = repairEditionSources(generated, issue.url, sourceCatalog);
+        const normalized = normalizeEditionStories(repaired, profile, inventory.candidates);
         if (normalized.duplicateSignalsRemoved || normalized.invalidCandidateSignalsRemoved || normalized.titlesRewritten) {
           console.warn(JSON.stringify({ message: "ai-signal model stories normalized", issueUrl, duplicatesRemoved: normalized.duplicateSignalsRemoved, invalidCandidatesRemoved: normalized.invalidCandidateSignalsRemoved, titlesRewritten: normalized.titlesRewritten, remaining: normalized.edition.signals.length }));
         }
