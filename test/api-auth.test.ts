@@ -11,6 +11,7 @@ const fakeEnv = (adminToken?: string) => ({
   AI_FALLBACK_MODEL: "@cf/zai-org/glm-4.7-flash" as const,
   AI_GATEWAY_ID: "" as const,
   SUPPLEMENTAL_SHADOW_ENABLED: "true" as const,
+  SUPPLEMENTAL_BLEND_ENABLED: "true" as const,
   RSS_URL: "https://news.smol.ai/rss.xml" as const
 });
 

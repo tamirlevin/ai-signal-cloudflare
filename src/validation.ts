@@ -1,4 +1,4 @@
-import type { Edition, Profile, Source } from "./contracts";
+import type { Edition, Profile, Source, StoryEvidence, StoryProvenance, StorySourceAttribution } from "./contracts";
 
 const HTTPS = /^https:\/\/[^\s]+$/i;
 const ID = /^[a-z][A-Za-z0-9]*$/;
@@ -41,9 +41,61 @@ function sources(value: unknown, path: string, permittedUrls?: Set<string>): Sou
   return list(value, path, 1).map((raw, index) => {
     const source = object(raw, `${path}[${index}]`);
     const url = https(source.url, `${path}[${index}].url`);
-    if (permittedUrls && !permittedUrls.has(url)) throw new ValidationError(`${path}[${index}].url was not supplied by AInews`);
+    if (permittedUrls && !permittedUrls.has(url)) throw new ValidationError(`${path}[${index}].url was not supplied by the collector`);
     return { label: text(source.label, `${path}[${index}].label`), url };
   });
+}
+
+function storySource(value: unknown, path: string): StorySourceAttribution {
+  const source = object(value, path);
+  const id = text(source.id, `${path}.id`);
+  if (!new Set(["ainews", "tldr-ai", "alphasignal", "cloudflare-agents"]).has(id)) throw new ValidationError(`${path}.id is not a recognized source`);
+  const layer = text(source.layer, `${path}.layer`);
+  if (layer !== "editorial" && layer !== "primary") throw new ValidationError(`${path}.layer is invalid`);
+  return { id: id as StorySourceAttribution["id"], name: text(source.name, `${path}.name`), layer };
+}
+
+function storyProvenance(value: unknown, path: string, permittedUrls?: Set<string>): StoryProvenance {
+  const provenance = object(value, path);
+  const evidence = list(provenance.evidence, `${path}.evidence`, 1, 6).map((raw, index): StoryEvidence => {
+    const item = object(raw, `${path}.evidence[${index}]`);
+    const url = https(item.url, `${path}.evidence[${index}].url`);
+    if (permittedUrls && !permittedUrls.has(url)) throw new ValidationError(`${path}.evidence[${index}].url was not supplied by the collector`);
+    const kind = text(item.kind, `${path}.evidence[${index}].kind`);
+    if (kind !== "direct" && kind !== "primary") throw new ValidationError(`${path}.evidence[${index}].kind is invalid`);
+    return { label: text(item.label, `${path}.evidence[${index}].label`), url, kind };
+  });
+  const selection = object(provenance.selection, `${path}.selection`);
+  const reason = text(selection.reason, `${path}.selection.reason`);
+  if (!new Set(["ainews-base", "cross-source", "strong-fit-supplemental"]).has(reason)) throw new ValidationError(`${path}.selection.reason is invalid`);
+  return {
+    clusterId: text(provenance.clusterId, `${path}.clusterId`),
+    lead: storySource(provenance.lead, `${path}.lead`),
+    editorialCorroboration: list(provenance.editorialCorroboration, `${path}.editorialCorroboration`, 0, 3).map((raw, index) => {
+      const source = storySource(raw, `${path}.editorialCorroboration[${index}]`);
+      if (source.layer !== "editorial") throw new ValidationError(`${path}.editorialCorroboration[${index}] must be editorial`);
+      return source;
+    }),
+    evidence,
+    selection: { score: integer(selection.score, `${path}.selection.score`, 0, 999), reason: reason as StoryProvenance["selection"]["reason"] }
+  };
+}
+
+function collectionMetadata(value: unknown): NonNullable<Edition["collection"]> {
+  const collection = object(value, "edition.collection");
+  const mode = text(collection.mode, "edition.collection.mode");
+  if (mode !== "ainews-only" && mode !== "blended") throw new ValidationError("edition.collection.mode is invalid");
+  if (text(collection.baseSource, "edition.collection.baseSource") !== "AInews") throw new ValidationError("edition.collection.baseSource must be AInews");
+  const supplementalCap = integer(collection.supplementalCap, "edition.collection.supplementalCap", 0, 14);
+  const selectedSupplemental = integer(collection.selectedSupplemental, "edition.collection.selectedSupplemental", 0, supplementalCap);
+  return {
+    mode,
+    baseSource: "AInews",
+    editorialDiscovery: list(collection.editorialDiscovery, "edition.collection.editorialDiscovery", 0, 4).map((item, index) => text(item, `edition.collection.editorialDiscovery[${index}]`)),
+    primaryEvidenceFeeds: list(collection.primaryEvidenceFeeds, "edition.collection.primaryEvidenceFeeds", 0, 4).map((item, index) => text(item, `edition.collection.primaryEvidenceFeeds[${index}]`)),
+    selectedSupplemental,
+    supplementalCap
+  };
 }
 
 function normalizedPhrase(value: string): string {
@@ -200,10 +252,10 @@ export function validateEdition(raw: unknown, profile: Profile, permittedUrls?: 
     const item = object(rawItem, path);
     const category = text(item.category, `${path}.category`);
     if (!categoryIds.has(category)) throw new ValidationError(`${path}.category is not in the active profile`);
-    const common = { title: text(item.title, `${path}.title`), summary: text(item.summary, `${path}.summary`), category, base: integer(item.base, `${path}.base`, 0, 100), exceptional: flag(item, "exceptional", path), watchPermission: flag(item, "watchPermission", path), watchGeography: flag(item, "watchGeography", path) };
+    const common = { title: text(item.title, `${path}.title`), summary: text(item.summary, `${path}.summary`), category, base: integer(item.base, `${path}.base`, 0, 100), exceptional: flag(item, "exceptional", path), watchPermission: flag(item, "watchPermission", path), watchGeography: flag(item, "watchGeography", path), ...(item.provenance === undefined ? {} : { provenance: storyProvenance(item.provenance, `${path}.provenance`, permittedUrls) }) };
     if (isSignal) {
       const url = https(item.url, `${path}.url`);
-      if (permittedUrls && !permittedUrls.has(url)) throw new ValidationError(`${path}.url was not supplied by AInews`);
+      if (permittedUrls && !permittedUrls.has(url)) throw new ValidationError(`${path}.url was not supplied by the collector`);
       return { ...common, ...(item.candidateId === undefined ? {} : { candidateId: integer(item.candidateId, `${path}.candidateId`, 1, 999) }), source: text(item.source, `${path}.source`), ...(item.date === undefined ? {} : { date: text(item.date, `${path}.date`) }), url, categoryLabel: text(item.categoryLabel, `${path}.categoryLabel`) };
     }
     return { ...common, sources: sources(item.sources, `${path}.sources`, permittedUrls) };
@@ -222,6 +274,7 @@ export function validateEdition(raw: unknown, profile: Profile, permittedUrls?: 
   return {
     schemaVersion: 1,
     issue: { publicationDate: text(issue.publicationDate, "edition.issue.publicationDate"), coverage: text(issue.coverage, "edition.issue.coverage"), url: issueUrl, quiet },
+    ...(edition.collection === undefined ? {} : { collection: collectionMetadata(edition.collection) }),
     presentation: presentationCopy,
     synthesis: { lead: text(synthesis.lead, "edition.synthesis.lead"), bigPicture: text(synthesis.bigPicture, "edition.synthesis.bigPicture"), sources: sources(synthesis.sources, "edition.synthesis.sources", permittedUrls), sections },
     hotTopics: hotTopics as Edition["hotTopics"],

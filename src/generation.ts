@@ -1,8 +1,9 @@
 import type { Edition, RssIssue, RunResult, Source } from "./contracts";
-import { compactIssueInventory, editorialMessages, extractGeneratedEdition, generationInput, materializeCandidateStories } from "./editorial";
+import { compactIssueInventory, editorialMessages, extractGeneratedEdition, generationInput, issueFromCandidateInventory, materializeCandidateStories } from "./editorial";
 import { fetchLatestRss } from "./rss";
-import { errorCode, getActiveProfile, insertEdition, publishedEditionState, recordRun, replaceEdition } from "./repository";
+import { errorCode, getActiveProfile, insertEdition, publishedEditionState, recordRun, recordSupplementalShadowRun, replaceEdition } from "./repository";
 import { normalizeEditionStories } from "./story-normalization";
+import { buildBlendedCandidateInventory, buildSupplementalShadowReport, collectSupplementalSources } from "./supplemental";
 import { ValidationError, validateEdition, validatePresentationDiversity, validateSynthesisDiversity } from "./validation";
 
 type Trigger = "cron" | "manual" | "local-scheduled";
@@ -18,9 +19,9 @@ function canonicalizeSourceUrl(raw: string, baseUrl: string): string | undefined
     if (parsed.protocol === "http:") parsed.protocol = "https:";
     if (parsed.protocol !== "https:") return undefined;
     parsed.hash = "";
-    for (const key of [...parsed.searchParams.keys()]) {
-      if (TRACKING_KEYS.test(key)) parsed.searchParams.delete(key);
-    }
+    const trackingKeys: string[] = [];
+    parsed.searchParams.forEach((_value, key) => { if (TRACKING_KEYS.test(key)) trackingKeys.push(key); });
+    for (const key of trackingKeys) parsed.searchParams.delete(key);
     return parsed.toString();
   } catch {
     return undefined;
@@ -85,6 +86,7 @@ function repairSourceList(
 function repairEditionSources(edition: Edition, issueUrl: string, catalog: ReturnType<typeof buildPermittedSourceCatalog>): Edition {
   const sectionReserved = new Set<string>();
   const synthesis = {
+    ...edition.synthesis,
     sources: Array.isArray(edition.synthesis?.sources) ? edition.synthesis.sources : [],
     sections: Array.isArray(edition.synthesis?.sections) ? edition.synthesis.sections : []
   };
@@ -129,6 +131,10 @@ export function supportsStructuredOutput(model: string): boolean {
   ]).has(model);
 }
 
+export function supplementalBlendEnabled(env: { SUPPLEMENTAL_BLEND_ENABLED?: string }): boolean {
+  return env.SUPPLEMENTAL_BLEND_ENABLED === "true";
+}
+
 function canRepairModelOutput(error: unknown): boolean {
   if (error instanceof ValidationError || error instanceof SyntaxError) return true;
   return error instanceof Error && error.message === "Model did not return a JSON edition";
@@ -146,7 +152,6 @@ export async function generateLatestEdition(env: Env, trigger: Trigger): Promise
     issueUrl = issue.url;
     issueDate = issue.issueDate;
     const publication = await publishedEditionState(env.DB, issue.url, issue.issueDate);
-    const sourceCatalog = buildPermittedSourceCatalog(issue);
     const replacingExistingEdition = trigger === "manual" && publication.exists && publication.needsStoryRepair;
     if (publication.exists && !replacingExistingEdition) {
       await recordRun(env.DB, { trigger, status: "skipped", issueUrl, issueDate, model: env.AI_MODEL, startedAt, durationMs: Date.now() - started });
@@ -154,8 +159,36 @@ export async function generateLatestEdition(env: Env, trigger: Trigger): Promise
     }
     const profile = await getActiveProfile(env.DB);
     const inventory = compactIssueInventory(issue, profile);
-    const modelIssue = inventory.issue;
-    console.log(JSON.stringify({ message: "ai-signal candidate inventory compacted", issueUrl, sourceChars: issue.body.length, candidateChars: modelIssue.body.length, sourceLinks: issue.anchors.length, candidateLinks: modelIssue.anchors.length }));
+    const blending = supplementalBlendEnabled(env);
+    const supplementalStartedAt = new Date().toISOString();
+    const supplementalStarted = Date.now();
+    const sourceResults = blending ? await collectSupplementalSources({ profile }) : [];
+    const blended = buildBlendedCandidateInventory({ aiNewsCandidates: inventory.candidates, sourceResults, profile, mode: blending ? "blended" : "ainews-only" });
+    const modelIssue = issueFromCandidateInventory(issue, blended.candidates);
+    const sourceIssue = {
+      ...issue,
+      anchors: [...issue.anchors, ...blended.candidates.flatMap((candidate) => candidate.sources)]
+    };
+    const sourceCatalog = buildPermittedSourceCatalog(sourceIssue);
+    if (blending) {
+      const report = buildSupplementalShadowReport({
+        issue,
+        aiNewsCandidates: inventory.candidates,
+        sourceResults,
+        generatedAt: new Date().toISOString(),
+        mode: "blend",
+        selectedForBlend: blended.selectedSupplemental
+      });
+      const failedSources = report.sources.filter((source) => source.status === "failed").length;
+      const degradedSources = report.sources.filter((source) => source.status === "degraded").length;
+      const status = failedSources === report.sources.length ? "failed" : failedSources || degradedSources ? "degraded" : "healthy";
+      try {
+        await recordSupplementalShadowRun(env.DB, { trigger, status, startedAt: supplementalStartedAt, durationMs: Date.now() - supplementalStarted, report });
+      } catch (reportError) {
+        console.warn(JSON.stringify({ message: "ai-signal blended source report could not be stored; publication continues", issueUrl, error: reportError instanceof Error ? reportError.message : String(reportError) }));
+      }
+    }
+    console.log(JSON.stringify({ message: "ai-signal candidate inventory compacted", issueUrl, sourceChars: issue.body.length, candidateChars: modelIssue.body.length, sourceLinks: issue.anchors.length, candidateLinks: modelIssue.anchors.length, blendMode: blended.collection.mode, overlaps: blended.overlaps, selectedSupplemental: blended.selectedSupplemental.length, candidates: blended.candidates.length }));
     const allowedStoryUrls = sourceCatalog.permittedUrls;
     let lastError: unknown;
     let repair: string | undefined;
@@ -164,7 +197,7 @@ export async function generateLatestEdition(env: Env, trigger: Trigger): Promise
       try {
         const raw = await askModel(env, modelUsed, generationInput(modelIssue, profile, repair, supportsStructuredOutput(modelUsed), modelUsed));
         const generated = extractGeneratedEdition(raw);
-        const stories = materializeCandidateStories(inventory.candidates, profile, issue.publicationDate);
+        const stories = materializeCandidateStories(blended.candidates, profile, issue.publicationDate);
         // Source metadata and every story card are collector-derived, not model-authored.
         generated.issue = {
           ...(generated.issue ?? {}),
@@ -174,8 +207,9 @@ export async function generateLatestEdition(env: Env, trigger: Trigger): Promise
         };
         generated.signals = stories.signals;
         generated.hotTopics = stories.hotTopics;
+        generated.collection = blended.collection;
         const repaired = repairEditionSources(generated, issue.url, sourceCatalog);
-        const normalized = normalizeEditionStories(repaired, profile, inventory.candidates);
+        const normalized = normalizeEditionStories(repaired, profile, blended.candidates);
         if (normalized.duplicateSignalsRemoved || normalized.invalidCandidateSignalsRemoved || normalized.titlesRewritten) {
           console.warn(JSON.stringify({ message: "ai-signal model stories normalized", issueUrl, duplicatesRemoved: normalized.duplicateSignalsRemoved, invalidCandidatesRemoved: normalized.invalidCandidateSignalsRemoved, titlesRewritten: normalized.titlesRewritten, remaining: normalized.edition.signals.length }));
         }

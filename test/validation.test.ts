@@ -3,7 +3,7 @@ import type { Edition } from "../src/contracts";
 import { DEFAULT_PROFILE } from "../src/contracts";
 import { anchorsToMarkdown, parseLatestRss } from "../src/rss";
 import { validateEdition, validatePresentationDiversity, validateSynthesisDiversity, ValidationError } from "../src/validation";
-import { compactIssueForModel, compactIssueInventory, editorialMessages, extractGeneratedEdition, generationInput, isPermissionDesignSignal, materializeCandidateStories } from "../src/editorial";
+import { compactIssueForModel, compactIssueInventory, editorialMessages, extractGeneratedEdition, generationInput, isPermissionDesignSignal, issueFromCandidateInventory, materializeCandidateStories } from "../src/editorial";
 import { normalizeEditionStories } from "../src/story-normalization";
 
 function edition(): Edition {
@@ -24,8 +24,22 @@ describe("editorial contracts", () => {
     expect(isPermissionDesignSignal("The agent requires human approval before executing a shell command.")).toBe(true);
     expect(isPermissionDesignSignal("The release adds explicit tool permission scopes and revocation controls.")).toBe(true);
   });
-  it("rejects a generated source that AInews did not supply", () => {
+  it("rejects a generated source that the collector did not supply", () => {
     expect(() => validateEdition(edition(), DEFAULT_PROFILE, new Set(["https://example.com/other"]))).toThrow(ValidationError);
+  });
+  it("validates and retains blended collection provenance", () => {
+    const value = edition();
+    value.collection = { mode: "blended", baseSource: "AInews", editorialDiscovery: ["AlphaSignal", "TLDR AI"], primaryEvidenceFeeds: ["Cloudflare Agents"], selectedSupplemental: 1, supplementalCap: 2 };
+    value.signals[0]!.provenance = {
+      clusterId: "story-example",
+      lead: { id: "alphasignal", name: "AlphaSignal", layer: "editorial" },
+      editorialCorroboration: [{ id: "ainews", name: "AInews", layer: "editorial" }],
+      evidence: [{ label: "Official", url: "https://example.com/story", kind: "primary" }],
+      selection: { score: 84, reason: "cross-source" }
+    };
+    const validated = validateEdition(value, DEFAULT_PROFILE, new Set(["https://example.com/story"]));
+    expect(validated.collection).toEqual(value.collection);
+    expect(validated.signals[0]?.provenance).toEqual(value.signals[0]?.provenance);
   });
   it("rejects repeated underlying story URLs", () => {
     const value = edition();
@@ -157,5 +171,30 @@ describe("editorial contracts", () => {
     expect(prompt).toContain("Do not return hotTopics or signals");
     expect(prompt).toContain("return two rather than padding to three");
     expect(prompt).toContain("Every section must have a unique concrete title");
+    expect(prompt).toContain("Do not describe agreement between newsletters as verification or proof");
+  });
+  it("labels editorial corroboration as discovery context in model input", () => {
+    const issue = { url: "https://news.smol.ai/issues/test", issueDate: "2026-08-12", publicationDate: "12 August 2026", body: "Issue", anchors: [] };
+    const modelIssue = issueFromCandidateInventory(issue, [{
+      id: 1,
+      title: "Codex agent runtime",
+      summary: "A new governed runtime.",
+      category: "codex",
+      categoryLabel: "Codex & agent craft",
+      score: 20,
+      exceptional: false,
+      watchPermission: true,
+      watchGeography: false,
+      sources: [{ label: "OpenAI", url: "https://openai.com/codex" }],
+      provenance: {
+        clusterId: "story-codex",
+        lead: { id: "tldr-ai", name: "TLDR AI", layer: "editorial" },
+        editorialCorroboration: [{ id: "ainews", name: "AInews", layer: "editorial" }],
+        evidence: [{ label: "OpenAI", url: "https://openai.com/codex", kind: "primary" }],
+        selection: { score: 90, reason: "cross-source" }
+      }
+    }]);
+    expect(modelIssue.body).toContain("Editorial corroboration (discovery context, not proof): AInews");
+    expect(modelIssue.body).toContain("Evidence links: primary: OpenAI");
   });
 });

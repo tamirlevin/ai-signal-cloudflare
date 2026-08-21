@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import type { CandidateStory, RssIssue, SupplementalCandidate, SupplementalSourceId } from "../src/contracts";
 import { DEFAULT_PROFILE } from "../src/contracts";
 import {
+  buildBlendedCandidateInventory,
   buildSupplementalShadowReport,
   canonicalizeSupplementalUrl,
+  collectSupplementalSources,
   deduplicateSupplemental,
   parseAlphaArticle,
   parseAlphaSitemap,
@@ -27,6 +29,7 @@ function supplemental(sourceId: SupplementalSourceId, title: string, url: string
     categoryLabel: "Agents in practice",
     score,
     exceptional: false,
+    leadSourceId: sourceId,
     sourceAttributions: [{ sourceId, sourceName, kind: sourceId === "cloudflare-agents" ? "primary" : "discovery", sourceUrl: `https://${sourceId}.example/issue` }]
   };
 }
@@ -92,6 +95,14 @@ describe("supplemental source parsing", () => {
     const candidates = parseCloudflareFeed(feed, new Date("2026-08-15T02:00:00Z"), DEFAULT_PROFILE);
     expect(candidates.map((item) => item.title)).toEqual(["Workers AI adds agent tool contracts"]);
   });
+
+  it("does not label an unexpected external Cloudflare feed link as primary", () => {
+    const feed = `<rss><channel>
+      <item><title>Cloudflare links to an external announcement</title><link>https://example.com/external-announcement</link><pubDate>Fri, 14 Aug 2026 01:00:00 GMT</pubDate><description>External link.</description></item>
+    </channel></rss>`;
+    const candidates = parseCloudflareFeed(feed, new Date("2026-08-15T02:00:00Z"), DEFAULT_PROFILE);
+    expect(candidates[0]?.sourceAttributions[0]).toMatchObject({ sourceId: "cloudflare-agents", kind: "discovery" });
+  });
 });
 
 describe("cross-source deduplication and shadow selection", () => {
@@ -100,11 +111,154 @@ describe("cross-source deduplication and shadow selection", () => {
     const fuzzy = supplemental("alphasignal", "OpenAI launches the new Codex runtime", "https://openai.com/index/codex-runtime");
     const version = supplemental("cloudflare-agents", "Codex 6.2 arrives for agent teams", "https://blog.cloudflare.com/codex-62");
     const versionAgain = supplemental("tldr-ai", "Testing Codex 6.2 in production", "https://tldr.tech/codex-62");
-    const merged = deduplicateSupplemental([exact, { ...exact, sourceAttributions: fuzzy.sourceAttributions }, version, versionAgain]);
+    const merged = deduplicateSupplemental([exact, fuzzy, version, versionAgain]);
     expect(merged).toHaveLength(2);
     expect(merged[0]?.sourceAttributions.map((item) => item.sourceId).sort()).toEqual(["alphasignal", "tldr-ai"]);
+    expect(merged[0]).toMatchObject({ title: fuzzy.title, leadSourceId: "alphasignal" });
     expect(merged[1]?.sourceAttributions).toHaveLength(2);
     expect(titleSimilarity(exact.title, fuzzy.title)).toBeGreaterThanOrEqual(0.62);
+  });
+
+  it("keeps editorial corroboration separate from direct evidence and records the lead", () => {
+    const base: CandidateStory[] = [{
+      id: 1,
+      title: "OpenAI launches Codex runtime 6.2 for teams",
+      summary: "AInews coverage.",
+      category: "agents",
+      categoryLabel: "Agents in practice",
+      score: 6,
+      exceptional: false,
+      watchPermission: false,
+      watchGeography: false,
+      sources: [{ label: "AInews link", url: "https://x.com/openai/status/123" }]
+    }];
+    const tldr = supplemental("tldr-ai", "Codex runtime 6.2 launches for agent teams", "https://openai.com/index/codex-runtime-6-2", 10);
+    const blended = buildBlendedCandidateInventory({ aiNewsCandidates: base, sourceResults: [sourceResult("tldr-ai", [tldr])], profile: DEFAULT_PROFILE });
+    const story = blended.candidates[0]!;
+
+    expect(blended.overlaps).toBe(1);
+    expect(story.provenance?.lead).toMatchObject({ id: "tldr-ai", layer: "editorial" });
+    expect(story.provenance?.editorialCorroboration).toEqual([expect.objectContaining({ id: "ainews", layer: "editorial" })]);
+    expect(story.provenance?.evidence[0]).toEqual({ label: "openai.com", url: "https://openai.com/index/codex-runtime-6-2", kind: "direct" });
+    expect(story.sources[0]?.url).toBe("https://openai.com/index/codex-runtime-6-2");
+  });
+
+  it("preserves an AInews-provided URL byte-for-byte when it remains the preferred evidence", () => {
+    const exactUrl = "https://openai.com/index/codex/?utm_source=ainews&keep=yes";
+    const base: CandidateStory[] = [{ id: 1, title: "Codex workflow controls", summary: "AInews coverage.", category: "codex", categoryLabel: "Codex & agent craft", score: 12, exceptional: false, watchPermission: false, watchGeography: false, sources: [{ label: "OpenAI", url: exactUrl }] }];
+    const tldr = supplemental("tldr-ai", "Codex workflow controls explained", "https://openai.com/index/codex?keep=yes", 8);
+    const blended = buildBlendedCandidateInventory({ aiNewsCandidates: base, sourceResults: [sourceResult("tldr-ai", [tldr])], profile: DEFAULT_PROFILE });
+    expect(blended.candidates[0]?.sources[0]?.url).toBe(exactUrl);
+  });
+
+  it("prefers known primary evidence over a secondary AInews link", () => {
+    const base: CandidateStory[] = [{
+      id: 1,
+      title: "Cloudflare agent sessions 4.1 arrive",
+      summary: "AInews coverage.",
+      category: "agents",
+      categoryLabel: "Agents in practice",
+      score: 8,
+      exceptional: false,
+      watchPermission: false,
+      watchGeography: false,
+      sources: [{ label: "Discussion", url: "https://www.reddit.com/r/agents/comments/cloudflare" }]
+    }];
+    const primary = supplemental("cloudflare-agents", "Cloudflare agent sessions 4.1 arrive", "https://blog.cloudflare.com/agent-sessions-4-1", 8);
+    const blended = buildBlendedCandidateInventory({ aiNewsCandidates: base, sourceResults: [sourceResult("cloudflare-agents", [primary])], profile: DEFAULT_PROFILE });
+
+    expect(blended.candidates[0]?.sources[0]?.url).toBe("https://blog.cloudflare.com/agent-sessions-4-1");
+    expect(blended.candidates[0]?.provenance?.evidence[0]?.kind).toBe("primary");
+  });
+
+  it("matches a supplemental story against every AInews source URL, not only the first", () => {
+    const base: CandidateStory[] = [{
+      id: 1,
+      title: "Unrelated AInews discussion item",
+      summary: "AInews coverage.",
+      category: "agents",
+      categoryLabel: "Agents in practice",
+      score: 8,
+      exceptional: false,
+      watchPermission: false,
+      watchGeography: false,
+      sources: [
+        { label: "Discussion", url: "https://www.reddit.com/r/agents/comments/unrelated" },
+        { label: "Cloudflare", url: "https://blog.cloudflare.com/agent-sessions-4-1" }
+      ]
+    }];
+    const supplementalStory = supplemental("tldr-ai", "Cloudflare releases governed sessions v4.1", "https://blog.cloudflare.com/agent-sessions-4-1", 8);
+    const blended = buildBlendedCandidateInventory({ aiNewsCandidates: base, sourceResults: [sourceResult("tldr-ai", [supplementalStory])], profile: DEFAULT_PROFILE });
+
+    expect(blended.overlaps).toBe(1);
+    expect(blended.selectedSupplemental).toHaveLength(0);
+    expect(blended.candidates).toHaveLength(1);
+  });
+
+  it("caps novel supplemental publication at two, one per lead source, without padding", () => {
+    const base = Array.from({ length: 18 }, (_, index): CandidateStory => ({
+      id: index + 1,
+      title: `AInews base integration ${index}`,
+      summary: "A practical integration for agent workflows.",
+      category: "integration",
+      categoryLabel: "Integration & platforms",
+      score: 7 - index / 10,
+      exceptional: false,
+      watchPermission: false,
+      watchGeography: false,
+      sources: [{ label: "Base", url: `https://base.example/story-${index}` }]
+    }));
+    const sources = [
+      sourceResult("tldr-ai", [
+        supplemental("tldr-ai", "Codex gains replayable team handoffs", "https://openai.com/codex-handoffs", 12),
+        supplemental("tldr-ai", "Agents gain durable review queues", "https://github.com/features/review-agents", 11)
+      ]),
+      sourceResult("alphasignal", [supplemental("alphasignal", "Enterprise agent memory becomes auditable", "https://example.org/auditable-memory", 10)]),
+      sourceResult("cloudflare-agents", [supplemental("cloudflare-agents", "Workers adds agent workflow state", "https://blog.cloudflare.com/agent-state", 9)])
+    ];
+    const blended = buildBlendedCandidateInventory({ aiNewsCandidates: base, sourceResults: sources, profile: DEFAULT_PROFILE });
+
+    expect(blended.candidates).toHaveLength(18);
+    expect(blended.selectedSupplemental).toHaveLength(2);
+    expect(blended.candidates.filter((candidate) => candidate.provenance?.selection.reason === "strong-fit-supplemental")).toHaveLength(2);
+    expect(new Set(blended.selectedSupplemental.map((candidate) => candidate.sourceAttributions[0]?.sourceId)).size).toBe(2);
+
+    const quiet = buildBlendedCandidateInventory({
+      aiNewsCandidates: base.slice(0, 1),
+      sourceResults: [sourceResult("tldr-ai", [supplemental("tldr-ai", "Routine GPU pricing", "https://vendor.example/pricing", -4)])],
+      profile: DEFAULT_PROFILE
+    });
+    expect(quiet.candidates).toHaveLength(1);
+    expect(quiet.selectedSupplemental).toHaveLength(0);
+
+    const exceptional = { ...supplemental("tldr-ai", "An unprecedented agent capability appears", "https://example.com/exceptional", -4), category: "research", categoryLabel: "AI research & science", exceptional: true };
+    const override = buildBlendedCandidateInventory({ aiNewsCandidates: [], sourceResults: [sourceResult("tldr-ai", [exceptional])], profile: DEFAULT_PROFILE });
+    expect(override.selectedSupplemental).toHaveLength(1);
+    expect(override.candidates[0]?.exceptional).toBe(true);
+  });
+
+  it("keeps the AInews publication inventory intact when every supplemental source fails", async () => {
+    const fetcher = (async () => new Response("unavailable", { status: 503 })) as typeof fetch;
+    const sourceResults = await collectSupplementalSources({ profile: DEFAULT_PROFILE, now: new Date("2026-08-15T02:00:00Z"), fetcher });
+    const base: CandidateStory[] = [{
+      id: 1,
+      title: "AInews agent workflow",
+      summary: "A practical agent workflow.",
+      category: "agents",
+      categoryLabel: "Agents in practice",
+      score: 8,
+      exceptional: false,
+      watchPermission: false,
+      watchGeography: false,
+      sources: [{ label: "Primary", url: "https://example.com/ainews-story" }]
+    }];
+    const blended = buildBlendedCandidateInventory({ aiNewsCandidates: base, sourceResults, profile: DEFAULT_PROFILE });
+
+    expect(sourceResults).toHaveLength(3);
+    expect(sourceResults.every((result) => result.health.status === "failed")).toBe(true);
+    expect(blended.candidates).toHaveLength(1);
+    expect(blended.candidates[0]).toMatchObject({ title: base[0]?.title, sources: base[0]?.sources });
+    expect(blended.selectedSupplemental).toHaveLength(0);
   });
 
   it("reports overlaps while enforcing the 3/2/1 source caps and preserving the 18/14 limits", () => {
@@ -154,5 +308,15 @@ describe("cross-source deduplication and shadow selection", () => {
     expect(report.wouldAdd.filter((item) => item.sourceIds.includes("cloudflare-agents"))).toHaveLength(1);
     expect(base).toHaveLength(1);
     expect(base[0]?.title).toBe("Google launches Gemini 3.7 for agent workflows");
+
+    const blendReport = buildSupplementalShadowReport({
+      issue,
+      aiNewsCandidates: base,
+      sourceResults: [sourceResult("tldr-ai", tldr)],
+      generatedAt: "2026-08-15T02:00:00.000Z",
+      mode: "blend",
+      selectedForBlend: tldr.slice(1, 2)
+    });
+    expect(blendReport).toMatchObject({ mode: "blend", totals: { selectedForBlend: 1 }, selectedForBlend: [{ title: "Codex gains replayable edit sessions" }] });
   });
 });

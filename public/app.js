@@ -41,6 +41,23 @@ function sourceLabel(value) {
   try { return new URL(value).hostname.replace(/^www\./, ""); } catch { return value; }
 }
 
+function provenanceMarkup(item) {
+  const provenance = item?.provenance;
+  if (!provenance) return "";
+  const crossChecks = (provenance.editorialCorroboration ?? []).map((source) => source.name).join(", ");
+  const evidenceKinds = [...new Set((provenance.evidence ?? []).map((source) => source.kind === "primary" ? "Primary evidence" : "Linked source"))].join(" + ");
+  const leadLabel = provenance.lead.layer === "primary" ? "Primary-source lead" : "Editorial lead";
+  return `<div class="source-context" aria-label="Story source context"><span>${leadLabel} · ${escape(provenance.lead.name)}</span>${crossChecks ? `<span>Editorial cross-check · ${escape(crossChecks)}</span>` : ""}${evidenceKinds ? `<span>${escape(evidenceKinds)}</span>` : ""}</div>`;
+}
+
+function collectionLabel(edition) {
+  const collection = edition.collection;
+  if (!collection || collection.mode !== "blended") return "AInews source inventory";
+  const discovery = collection.editorialDiscovery.join(" + ");
+  const additions = collection.selectedSupplemental === 1 ? "1 novel supplemental story" : `${collection.selectedSupplemental} novel supplemental stories`;
+  return `AInews base · ${discovery} discovery policy · ${additions}`;
+}
+
 function activeOverride() { return state.previewOverride ?? state.override; }
 function activeProfile() { return mergeViewerOverride(state.baseProfile, activeOverride()); }
 
@@ -142,7 +159,7 @@ function openRankingInspector(key) {
 
 function issueHeader(edition, profile, visibleCount) {
   const personalState = state.previewOverride ? "Shared tuning preview" : state.override ? "Personalised in this browser" : "";
-  return `<header class="issue-header"><div><p class="view-label">Daily AI brief</p><h1><a href="${escape(edition.issue.url)}" target="_blank" rel="noreferrer">${escape(edition.issue.publicationDate)}</a></h1><p>AInews coverage: ${escape(edition.issue.coverage)}</p></div><div class="issue-meta"><span>${escape(profileNotice(edition, profile, visibleCount))}</span>${personalState ? `<span class="personal-state">${escape(personalState)}</span>` : ""}</div></header>`;
+  return `<header class="issue-header"><div><p class="view-label">Daily AI brief</p><h1><a href="${escape(edition.issue.url)}" target="_blank" rel="noreferrer">${escape(edition.issue.publicationDate)}</a></h1><p>AInews base coverage: ${escape(edition.issue.coverage)}</p><p class="collection-source">${escape(collectionLabel(edition))}</p></div><div class="issue-meta"><span>${escape(profileNotice(edition, profile, visibleCount))}</span>${personalState ? `<span class="personal-state">${escape(personalState)}</span>` : ""}</div></header>`;
 }
 
 function renderEdition(edition, profile, view = "hot") {
@@ -155,9 +172,9 @@ function renderEdition(edition, profile, view = "hot") {
     const title = primary
       ? `<a href="${escape(primary.url)}" target="_blank" rel="noreferrer">${escape(topic.title)}</a>`
       : escape(topic.title);
-    return `<article class="topic${reasonClass(topic, profile)}"><span class="story-index" aria-hidden="true">${String(index + 1).padStart(2, "0")}</span><div><h3>${title}</h3><p>${escape(topic.summary)}</p><div class="story-footer">${sourceLinks(topic.sources)}</div></div>${reasonMarkup(topic, profile, `hot-${index}`, index + 1, "Hot topics", rankedHotTopics)}</article>`;
+    return `<article class="topic${reasonClass(topic, profile)}"><span class="story-index" aria-hidden="true">${String(index + 1).padStart(2, "0")}</span><div><h3>${title}</h3><p>${escape(topic.summary)}</p><div class="story-footer">${sourceLinks(topic.sources)}${provenanceMarkup(topic)}</div></div>${reasonMarkup(topic, profile, `hot-${index}`, index + 1, "Hot topics", rankedHotTopics)}</article>`;
   }).join("");
-  const signals = visibleSignals.map((signal, index) => `<article class="signal-row${index === 0 ? " signal-lead" : ""}${reasonClass(signal, profile)}"><span class="story-index" aria-hidden="true">${String(index + 1).padStart(2, "0")}</span><div><h3><a href="${escape(signal.url)}" target="_blank" rel="noreferrer">${escape(signal.title)}</a></h3><p>${escape(signal.summary)}</p><div class="story-footer"><span class="signal-source">${escape([sourceLabel(signal.source), signal.date].filter(Boolean).join(" · "))}</span>${reasonMarkup(signal, profile, `signal-${index}`, index + 1, "All signals", visibleSignals)}</div></div></article>`).join("");
+  const signals = visibleSignals.map((signal, index) => `<article class="signal-row${index === 0 ? " signal-lead" : ""}${reasonClass(signal, profile)}"><span class="story-index" aria-hidden="true">${String(index + 1).padStart(2, "0")}</span><div><h3><a href="${escape(signal.url)}" target="_blank" rel="noreferrer">${escape(signal.title)}</a></h3><p>${escape(signal.summary)}</p><div class="story-footer"><span class="signal-source">${escape([sourceLabel(signal.source), signal.date].filter(Boolean).join(" · "))}</span>${provenanceMarkup(signal)}${reasonMarkup(signal, profile, `signal-${index}`, index + 1, "All signals", visibleSignals)}</div></div></article>`).join("");
   const sections = edition.synthesis.sections.map((section, index) => {
     const kicker = normalizedDisplayText(section.kicker) === normalizedDisplayText(section.title) ? "" : `<p class="kicker">${escape(section.kicker)}</p>`;
     return `<section class="section"><p class="section-index">${String(index + 1).padStart(2, "0")}</p><h3>${escape(section.title)}</h3>${kicker}<p>${escape(section.body)}</p>${sourceLinks(section.sources)}</section>`;
@@ -193,7 +210,7 @@ function renderEdition(edition, profile, view = "hot") {
 function renderHistory(editions) {
   state.historyEditions = editions;
   const fragment = state.previewOverride ? location.hash : "";
-  app.innerHTML = `<header class="history-header"><p class="view-label">Archive</p><h1>Edition history</h1><p>The latest 15 successfully published AInews editions.</p></header><div class="history-list">${editions.map((edition) => `<a class="history-item" href="/?edition=${encodeURIComponent(edition.issueDate)}${fragment}"><span><strong>${escape(edition.issue.publicationDate)}</strong><small>${escape(edition.issue.coverage)}</small></span><span>Open</span></a>`).join("")}</div>`;
+  app.innerHTML = `<header class="history-header"><p class="view-label">Archive</p><h1>Edition history</h1><p>The latest 15 successfully published AI Signal editions.</p></header><div class="history-list">${editions.map((edition) => `<a class="history-item" href="/?edition=${encodeURIComponent(edition.issueDate)}${fragment}"><span><strong>${escape(edition.issue.publicationDate)}</strong><small>${escape(edition.issue.coverage)}</small></span><span>Open</span></a>`).join("")}</div>`;
   syncPersonaliseControl();
 }
 

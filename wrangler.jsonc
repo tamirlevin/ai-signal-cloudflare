@@ -15,6 +15,7 @@
     "AI_FALLBACK_MODEL": "@cf/zai-org/glm-4.7-flash",
     "AI_GATEWAY_ID": "",
     "SUPPLEMENTAL_SHADOW_ENABLED": "true",
+    "SUPPLEMENTAL_BLEND_ENABLED": "true",
     "RSS_URL": "https://news.smol.ai/rss.xml"
   },
   "d1_databases": [

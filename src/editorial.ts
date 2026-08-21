@@ -148,11 +148,11 @@ function distinctCandidates(candidates: CandidateStory[]): CandidateStory[] {
   const seenTitles = new Set<string>();
   const seenProducts = new Set<string>();
   return candidates.filter((candidate) => {
-    const url = candidate.sources[0]?.url;
+    const urls = candidate.sources.map((source) => source.url).filter(Boolean);
     const title = candidate.title.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, " ").trim();
     const product = productVersionKey(candidate.title);
-    if ((url && seenUrls.has(url)) || seenTitles.has(title) || (product && seenProducts.has(product))) return false;
-    if (url) seenUrls.add(url);
+    if (urls.some((url) => seenUrls.has(url)) || seenTitles.has(title) || (product && seenProducts.has(product))) return false;
+    for (const url of urls) seenUrls.add(url);
     seenTitles.add(title);
     if (product) seenProducts.add(product);
     return true;
@@ -177,7 +177,8 @@ export function materializeCandidateStories(candidates: CandidateStory[], profil
       base: Math.max(48, 100 - index * 4),
       exceptional: candidate.exceptional,
       watchPermission: candidate.watchPermission,
-      watchGeography: candidate.watchGeography
+      watchGeography: candidate.watchGeography,
+      ...(candidate.provenance ? { provenance: candidate.provenance } : {})
     };
   });
   const hotTopics = selected.slice(0, Math.min(3, selected.length)).map((candidate, index): HotTopic => ({
@@ -188,7 +189,8 @@ export function materializeCandidateStories(candidates: CandidateStory[], profil
     exceptional: candidate.exceptional,
     watchPermission: candidate.watchPermission,
     watchGeography: candidate.watchGeography,
-    sources: candidate.sources.slice(0, 3).map(displaySource)
+    sources: candidate.sources.slice(0, 3).map(displaySource),
+    ...(candidate.provenance ? { provenance: candidate.provenance } : {})
   }));
   return { signals, hotTopics };
 }
@@ -245,7 +247,8 @@ export function compactIssueInventory(issue: RssIssue, profile: Profile): ModelI
       exceptional: matches(EXCEPTIONAL_TERMS, candidate.text) > 0,
       watchPermission: isPermissionDesignSignal(candidate.text),
       watchGeography: matches(GEOGRAPHY_TERMS, candidate.text) > 0,
-      sources: candidate.anchors.map(displaySource)
+      sources: candidate.anchors.map(displaySource),
+      modelText: candidate.text
     });
     const sources = candidate.anchors.map((source) => `[${source.label}](${source.url})`).join(" | ");
     return `Candidate ${id}\nStory: ${title}${candidate.heading ? `\nSection: ${candidate.heading}` : ""}\nEvidence: ${candidate.text}\nAllowed links for this candidate: ${sources}`;
@@ -255,6 +258,27 @@ export function compactIssueInventory(issue: RssIssue, profile: Profile): ModelI
 
 export function compactIssueForModel(issue: RssIssue, profile: Profile): RssIssue {
   return compactIssueInventory(issue, profile).issue;
+}
+
+/** Rebuilds model context from the exact deterministic inventory selected for publication. */
+export function issueFromCandidateInventory(issue: RssIssue, candidates: CandidateStory[]): RssIssue {
+  const anchors: RssIssue["anchors"] = [];
+  const seen = new Set<string>();
+  for (const candidate of candidates) {
+    for (const source of candidate.sources) {
+      if (seen.has(source.url)) continue;
+      seen.add(source.url);
+      anchors.push(source);
+    }
+  }
+  const body = candidates.map((candidate) => {
+    const provenance = candidate.provenance;
+    const corroboration = provenance?.editorialCorroboration.map((source) => source.name).join(", ") || "none";
+    const evidence = provenance?.evidence.map((source) => `${source.kind === "primary" ? "primary" : "linked"}: ${source.label}`).join(", ") || "linked sources below";
+    const sources = candidate.sources.map((source) => `[${source.label}](${source.url})`).join(" | ");
+    return `Candidate ${candidate.id}\nStory: ${candidate.title}\nEvidence summary: ${candidate.modelText ?? candidate.summary}\nLead source (${provenance?.lead.layer ?? "editorial"}): ${provenance?.lead.name ?? "AInews"}\nEditorial corroboration (discovery context, not proof): ${corroboration}\nEvidence links: ${evidence}\nAllowed links for this candidate: ${sources}`;
+  }).join("\n\n");
+  return { ...issue, body, anchors };
 }
 
 const TEXT_SCHEMA = { type: "string", minLength: 1 } as const;
@@ -333,7 +357,7 @@ export function editorialMessages(issue: RssIssue, profile: Profile, repair?: st
   return [
     {
       role: "system",
-      content: "You are AI Signal's editorial engine. Produce one JSON object only; no Markdown or commentary. This is a standard run: AInews is the trusted inventory. Do not browse, verify, add sources, invent claims, canonicalize URLs, or use complementary feeds. Preserve uncertainty from the issue with phrases such as 'AInews reports' or 'the announcement claims'."
+      content: "You are AI Signal's editorial engine. Produce one JSON object only; no Markdown or commentary. The collector supplies a trusted, source-aware inventory with AInews as its base and may include tightly gated AlphaSignal, TLDR AI, or primary-source discoveries. Do not browse, verify, add sources, invent claims, canonicalize URLs, or use any feed outside the supplied inventory. Editorial corroboration means two editorial sources covered the same story; it is not primary proof. Preserve uncertainty with phrases such as 'the source reports' or 'the announcement claims'."
     },
     {
       role: "system",
@@ -341,7 +365,7 @@ export function editorialMessages(issue: RssIssue, profile: Profile, repair?: st
     },
     {
       role: "user",
-      content: `Create only the editorial framing and cross-story synthesis for AI Signal Profile v${profile.version}. The collector—not you—will create Hot Topics and individual signal cards directly from the candidate inventory. Return exactly these top-level fields: schemaVersion, issue, presentation, synthesis. Do not return hotTopics or signals.\n\nUse plain text, not HTML or Markdown, in every title, lead, kicker and body. Every presentation title and intro must be meaningful editorial copy; never use placeholders such as none, null, N/A, not applicable, or TBD. The three view titles must be distinct: hotTitle describes prioritized Hot Topics, allTitle describes the detailed signal list, and synthesisTitle describes the woven editorial briefing. Write compactly: synthesis lead and big picture at most 60 words each; section titles at most 12 words; section kickers at most 18 words; section bodies at most 90 words. Create 2-3 synthesis sections. If the inventory supports only two genuinely distinct themes, return two rather than padding to three. Before writing, assign each candidate to at most one synthesis section. Every section must have a unique concrete title, a unique kicker, a different editorial angle, and at least one source URL not used by another section. Never reuse the overall issue theme, synthesis title, or coverage label as a section title or kicker. Use no more than 6 sources for the overall synthesis and no more than 3 sources for any section. Connect distinct stories into useful themes rather than repeating one announcement or template. Favor practical agents, Codex and agent craft, new systems, integrations and AI business implications. Keep raw model scores, local setup, video, routine policy/cyber/infrastructure and pre-training details in the background unless exceptionally consequential.\n\nCRITICAL LINK CONTRACT: Every sources[].url must be copied byte-for-byte from the Allowed direct links below. Never invent, shorten, redirect, canonicalize, or modify URLs. The issue URL (${issue.url}) may appear only in issue.url, never in sources. Preserve uncertainty with phrases such as 'AInews reports' or 'the announcement claims'.\n\nActive profile:\n${profileJson}\n\nIssue metadata: publicationDate=${issue.publicationDate}; coverage should be inferred only from the issue; url=${issue.url}\n\nAllowed direct links:\n${allowedLinks}\n\nRanked AInews candidate inventory:\n${issue.body}\n${repairInstruction}`
+      content: `Create only the editorial framing and cross-story synthesis for AI Signal Profile v${profile.version}. The collector—not you—will create Hot Topics and individual signal cards directly from the candidate inventory. Return exactly these top-level fields: schemaVersion, issue, presentation, synthesis. Do not return hotTopics or signals.\n\nUse plain text, not HTML or Markdown, in every title, lead, kicker and body. Every presentation title and intro must be meaningful editorial copy; never use placeholders such as none, null, N/A, not applicable, or TBD. The three view titles must be distinct: hotTitle describes prioritized Hot Topics, allTitle describes the detailed signal list, and synthesisTitle describes the woven editorial briefing. Write compactly: synthesis lead and big picture at most 60 words each; section titles at most 12 words; section kickers at most 18 words; section bodies at most 90 words. Create 2-3 synthesis sections. If the inventory supports only two genuinely distinct themes, return two rather than padding to three. Before writing, assign each candidate to at most one synthesis section. Every section must have a unique concrete title, a unique kicker, a different editorial angle, and at least one source URL not used by another section. Never reuse the overall issue theme, synthesis title, or coverage label as a section title or kicker. Use no more than 6 sources for the overall synthesis and no more than 3 sources for any section. Connect distinct stories into useful themes rather than repeating one announcement or template. Favor practical agents, Codex and agent craft, new systems, integrations and AI business implications. Keep raw model scores, local setup, video, routine policy/cyber/infrastructure and pre-training details in the background unless exceptionally consequential. Do not describe agreement between newsletters as verification or proof; primary source links and linked source links are listed separately for each candidate.\n\nCRITICAL LINK CONTRACT: Every sources[].url must be copied byte-for-byte from the Allowed direct links below. Never invent, shorten, redirect, canonicalize, or modify URLs. The issue URL (${issue.url}) may appear only in issue.url, never in sources. Preserve uncertainty with phrases such as 'the source reports' or 'the announcement claims'.\n\nActive profile:\n${profileJson}\n\nIssue metadata: publicationDate=${issue.publicationDate}; coverage should be inferred only from the issue; url=${issue.url}\n\nAllowed direct links:\n${allowedLinks}\n\nRanked source-aware candidate inventory:\n${issue.body}\n${repairInstruction}`
     }
   ];
 }

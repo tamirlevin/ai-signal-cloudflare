@@ -34,6 +34,25 @@ export type Profile = {
 };
 
 export type Source = { label: string; url: string };
+export type StorySourceId = "ainews" | SupplementalSourceId;
+export type StorySourceAttribution = {
+  id: StorySourceId;
+  name: string;
+  layer: "editorial" | "primary";
+};
+/** `direct` means a usable non-aggregator link supplied by a source; it is not independently verified. */
+export type StoryEvidence = Source & { kind: "direct" | "primary" };
+export type StoryProvenance = {
+  clusterId: string;
+  lead: StorySourceAttribution;
+  /** Editorial agreement is useful discovery context, but is not primary evidence. */
+  editorialCorroboration: StorySourceAttribution[];
+  evidence: StoryEvidence[];
+  selection: {
+    score: number;
+    reason: "ainews-base" | "cross-source" | "strong-fit-supplemental";
+  };
+};
 export type RankedItem = {
   title: string;
   category: string;
@@ -41,6 +60,7 @@ export type RankedItem = {
   exceptional?: boolean;
   watchPermission?: boolean;
   watchGeography?: boolean;
+  provenance?: StoryProvenance;
 };
 
 export type Signal = RankedItem & {
@@ -57,6 +77,14 @@ export type HotTopic = RankedItem & { summary: string; sources: Source[] };
 export type Edition = {
   schemaVersion: 1;
   issue: { publicationDate: string; coverage: string; url: string; quiet: boolean };
+  collection?: {
+    mode: "ainews-only" | "blended";
+    baseSource: "AInews";
+    editorialDiscovery: string[];
+    primaryEvidenceFeeds: string[];
+    selectedSupplemental: number;
+    supplementalCap: number;
+  };
   presentation: {
     hotTitle: string;
     hotIntro: string;
@@ -103,6 +131,9 @@ export type CandidateStory = {
   watchPermission: boolean;
   watchGeography: boolean;
   sources: Source[];
+  provenance?: StoryProvenance;
+  /** Compact collector context used only for synthesis input; it is not published. */
+  modelText?: string;
 };
 
 export type RunResult =
@@ -146,6 +177,8 @@ export type SupplementalCandidate = {
   categoryLabel: string;
   score: number;
   exceptional: boolean;
+  /** Source selected for this candidate's title/summary framing; not a first-seen timestamp claim. */
+  leadSourceId?: SupplementalSourceId;
   sourceAttributions: SupplementalAttribution[];
 };
 export type ShadowCandidate = Pick<SupplementalCandidate, "title" | "summary" | "url" | "publishedAt" | "category" | "categoryLabel" | "score"> & {
@@ -154,7 +187,7 @@ export type ShadowCandidate = Pick<SupplementalCandidate, "title" | "summary" | 
 };
 export type SupplementalShadowReport = {
   schemaVersion: 1;
-  mode: "shadow";
+  mode: "shadow" | "blend";
   generatedAt: string;
   baseIssue: { url: string; issueDate: string; publicationDate: string };
   limits: { modelCandidates: 18; publishedStories: 14; tldr: 3; alphaSignal: 2; cloudflare: 1 };
@@ -166,9 +199,11 @@ export type SupplementalShadowReport = {
     overlapsWithAiNews: number;
     novelQualifiedCandidates: number;
     wouldAdd: number;
+    selectedForBlend?: number;
   };
   overlaps: Array<{ supplementalTitle: string; aiNewsTitle: string; preferredUrl: string; sourceIds: SupplementalSourceId[] }>;
   wouldAdd: ShadowCandidate[];
+  selectedForBlend?: ShadowCandidate[];
 };
 export type SupplementalShadowRun = {
   id: string;
