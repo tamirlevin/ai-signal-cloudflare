@@ -115,6 +115,25 @@ describe("supplemental source parsing", () => {
     </channel></rss>`;
     const candidates = parseCloudflareFeed(feed, new Date("2026-08-15T02:00:00Z"), DEFAULT_PROFILE);
     expect(candidates[0]?.sourceAttributions[0]).toMatchObject({ sourceId: "cloudflare-agents", kind: "discovery" });
+
+    const base: CandidateStory[] = [{
+      id: 1,
+      title: "Cloudflare links to an external announcement",
+      summary: "AInews coverage.",
+      category: "agents",
+      categoryLabel: "Agents in practice",
+      score: 8,
+      exceptional: false,
+      watchPermission: false,
+      watchGeography: false,
+      sources: [{ label: "Announcement", url: "https://example.com/external-announcement" }]
+    }];
+    const blended = buildBlendedCandidateInventory({ aiNewsCandidates: base, sourceResults: [sourceResult("cloudflare-agents", candidates)], profile: DEFAULT_PROFILE });
+    expect(blended.candidates[0]?.provenance).toMatchObject({
+      lead: { id: "ainews", layer: "editorial" },
+      editorialCorroboration: [],
+      coverage: { editorialSourceIds: ["ainews"], editorialSourceCount: 1, boost: 0 }
+    });
   });
 });
 
@@ -210,6 +229,8 @@ describe("cross-source deduplication and shadow selection", () => {
     expect(blended.candidates[0]?.provenance?.evidence[0]?.kind).toBe("primary");
     expect(blended.candidates[0]?.provenance?.coverage?.editorialSourceCount).toBe(1);
     expect(blended.candidates[0]?.provenance?.coverage?.primaryEvidenceCount).toBe(1);
+    expect(blended.candidates[0]?.provenance?.coverage?.boost).toBe(0);
+    expect(blended.candidates[0]?.provenance?.selection.score).toBe(72);
   });
 
   it("matches a supplemental story against every AInews source URL, not only the first", () => {

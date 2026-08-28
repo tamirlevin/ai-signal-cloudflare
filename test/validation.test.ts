@@ -56,6 +56,30 @@ describe("editorial contracts", () => {
     expect(validated.collection?.sourcePackId).toBe("core-ai");
     expect(validated.signals[0]?.provenance?.coverage).toEqual(value.signals[0]?.provenance?.coverage);
   });
+  it("rejects coverage metadata that disagrees with provenance", () => {
+    const value = edition();
+    value.signals[0]!.provenance = {
+      clusterId: "story-example",
+      lead: { id: "alphasignal", name: "AlphaSignal", layer: "editorial" },
+      editorialCorroboration: [{ id: "ainews", name: "AInews", layer: "editorial" }],
+      evidence: [{ label: "Official", url: "https://example.com/story", kind: "primary" }],
+      coverage: { editorialSourceIds: ["alphasignal"], editorialSourceCount: 1, primaryEvidenceCount: 0, boost: 0 },
+      selection: { score: 84, reason: "cross-source" }
+    };
+    expect(() => validateEdition(value, DEFAULT_PROFILE, new Set(["https://example.com/story"]))).toThrow(/coverage\.editorialSourceIds does not match provenance sources/);
+  });
+  it("rejects a primary evidence count that disagrees with provenance", () => {
+    const value = edition();
+    value.signals[0]!.provenance = {
+      clusterId: "story-example",
+      lead: { id: "alphasignal", name: "AlphaSignal", layer: "editorial" },
+      editorialCorroboration: [{ id: "ainews", name: "AInews", layer: "editorial" }],
+      evidence: [{ label: "Official", url: "https://example.com/story", kind: "primary" }],
+      coverage: { editorialSourceIds: ["alphasignal", "ainews"], editorialSourceCount: 2, primaryEvidenceCount: 0, boost: 4 },
+      selection: { score: 84, reason: "cross-source" }
+    };
+    expect(() => validateEdition(value, DEFAULT_PROFILE, new Set(["https://example.com/story"]))).toThrow(/coverage\.primaryEvidenceCount does not match provenance evidence/);
+  });
   it("rejects repeated underlying story URLs", () => {
     const value = edition();
     value.signals.push({ title: "Different framing", summary: "Summary", source: "Source", url: "https://example.com/story", category: "agents", categoryLabel: "Agents in practice", base: 80 });

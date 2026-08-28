@@ -46,7 +46,7 @@ export type StorySourceAttribution = {
 /** `direct` means a usable non-aggregator link supplied by a source; it is not independently verified. */
 export type StoryEvidence = Source & { kind: "direct" | "primary" };
 export type StoryCoverage = {
-  editorialSourceIds: Array<Extract<StorySourceId, "ainews" | SupplementalSourceId>>;
+  editorialSourceIds: Array<"ainews" | Exclude<SupplementalSourceId, "cloudflare-agents">>;
   editorialSourceCount: number;
   primaryEvidenceCount: number;
   boost: number;

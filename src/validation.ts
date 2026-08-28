@@ -87,16 +87,32 @@ function storyProvenance(value: unknown, path: string, permittedUrls?: Set<strin
   const selection = object(provenance.selection, `${path}.selection`);
   const reason = text(selection.reason, `${path}.selection.reason`);
   if (!new Set(["ainews-base", "cross-source", "strong-fit-supplemental"]).has(reason)) throw new ValidationError(`${path}.selection.reason is invalid`);
+  const lead = storySource(provenance.lead, `${path}.lead`);
+  const editorialCorroboration = list(provenance.editorialCorroboration, `${path}.editorialCorroboration`, 0, 3).map((raw, index) => {
+    const source = storySource(raw, `${path}.editorialCorroboration[${index}]`);
+    if (source.layer !== "editorial") throw new ValidationError(`${path}.editorialCorroboration[${index}] must be editorial`);
+    return source;
+  });
+  const coverage = provenance.coverage === undefined ? undefined : storyCoverage(provenance.coverage, `${path}.coverage`);
+  if (coverage) {
+    const expectedEditorialIds = [...new Set([lead, ...editorialCorroboration]
+      .filter((source) => source.layer === "editorial")
+      .map((source) => source.id))];
+    if (expectedEditorialIds.length !== coverage.editorialSourceIds.length
+      || expectedEditorialIds.some((id) => !coverage.editorialSourceIds.includes(id as StoryCoverage["editorialSourceIds"][number]))) {
+      throw new ValidationError(`${path}.coverage.editorialSourceIds does not match provenance sources`);
+    }
+    const expectedPrimaryEvidenceCount = evidence.filter((item) => item.kind === "primary").length;
+    if (coverage.primaryEvidenceCount !== expectedPrimaryEvidenceCount) {
+      throw new ValidationError(`${path}.coverage.primaryEvidenceCount does not match provenance evidence`);
+    }
+  }
   return {
     clusterId: text(provenance.clusterId, `${path}.clusterId`),
-    lead: storySource(provenance.lead, `${path}.lead`),
-    editorialCorroboration: list(provenance.editorialCorroboration, `${path}.editorialCorroboration`, 0, 3).map((raw, index) => {
-      const source = storySource(raw, `${path}.editorialCorroboration[${index}]`);
-      if (source.layer !== "editorial") throw new ValidationError(`${path}.editorialCorroboration[${index}] must be editorial`);
-      return source;
-    }),
+    lead,
+    editorialCorroboration,
     evidence,
-    ...(provenance.coverage === undefined ? {} : { coverage: storyCoverage(provenance.coverage, `${path}.coverage`) }),
+    ...(coverage === undefined ? {} : { coverage }),
     selection: { score: integer(selection.score, `${path}.selection.score`, 0, 999), reason: reason as StoryProvenance["selection"]["reason"] }
   };
 }

@@ -99,7 +99,7 @@ npx wrangler d1 migrations apply ai-signal --local
 1. Confirm the `ai-signal` D1 binding and database ID in `wrangler.jsonc` are the intended production database.
 2. Apply the migration remotely: `npx wrangler d1 migrations apply ai-signal --remote`.
 3. Set the secret: `npx wrangler secret put ADMIN_TOKEN`.
-4. Optionally set non-secret `AI_GATEWAY_ID` and `AI_MODEL` in the dashboard or config.
+4. Treat `wrangler.jsonc` as the source of truth for non-secret runtime values. Confirm its `AI_GATEWAY_ID`, `AI_MODEL`, and `AI_FALLBACK_MODEL` values before deploying; a Wrangler deployment overwrites dashboard-only variable changes unless `keep_vars` is explicitly enabled.
 5. Verify configuration with `npm run types`, `npm run typecheck`, `npm test`, and `npm run dry-run`.
 6. Deploy only after review: `npx wrangler deploy`.
 
@@ -136,4 +136,4 @@ The Worker is attached to `signal.tamirlevin.dev` as a Cloudflare Custom Domain.
 
 ## Tests
 
-`npm test` covers structured-edition validation, collector-trusted link and provenance enforcement, duplicate-link rejection, first-item RSS parsing, API authentication, production diagnostic-route blocking, supplemental parser behavior, cross-source overlap/lead/corroboration, primary-link preference, blend caps/no-padding, and publication isolation under total supplemental failure. `npm run types` generates the Worker binding type definition from `wrangler.jsonc`; do not hand-write `Env`.
+`npm test` covers structured-edition validation, collector-trusted link and provenance enforcement, source-pack/coverage consistency, duplicate-link rejection, first-item RSS parsing, malformed-primary-response fallback orchestration, API authentication, production diagnostic-route blocking, supplemental parser behavior, cross-source overlap/lead/corroboration, primary-link preference, blend caps/no-padding, and publication isolation under total supplemental failure. `npm run types` generates the Worker binding type definition from `wrangler.jsonc`; do not hand-write `Env`.

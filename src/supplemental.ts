@@ -390,7 +390,12 @@ export function deduplicateSupplemental(candidates: SupplementalCandidate[]): Su
   return merged;
 }
 
-function sourceReference(attribution: SupplementalAttribution): StorySourceAttribution {
+function sourceReference(attribution: SupplementalAttribution): StorySourceAttribution | undefined {
+  // Cloudflare Agents is a primary-evidence lane, not an editorial publication.
+  // If its feed unexpectedly points off-host, keep the linked URL available as
+  // evidence for an existing cluster without counting Cloudflare as editorial
+  // corroboration or allowing it to lead a novel discovery-only story.
+  if (attribution.sourceId === "cloudflare-agents" && attribution.kind !== "primary") return undefined;
   return {
     id: attribution.sourceId,
     name: attribution.sourceName,
@@ -401,7 +406,10 @@ function sourceReference(attribution: SupplementalAttribution): StorySourceAttri
 function sourceReferences(candidate: SupplementalCandidate): StorySourceAttribution[] {
   const seen = new Set<StorySourceAttribution["id"]>();
   return candidate.sourceAttributions
-    .map(sourceReference)
+    .flatMap((attribution) => {
+      const source = sourceReference(attribution);
+      return source ? [source] : [];
+    })
     .sort((left, right) => {
       if (left.id === candidate.leadSourceId || right.id === candidate.leadSourceId) return left.id === candidate.leadSourceId ? -1 : 1;
       if (left.id === "ainews" || right.id === "ainews") return left.id === "ainews" ? -1 : 1;
@@ -523,14 +531,15 @@ function mergeWithAiNews(base: CandidateStory, supplemental: SupplementalCandida
   const lead = useSupplementalLead ? supplementalLead! : AI_NEWS_SOURCE;
   const evidence = mergeEvidence(base, supplemental);
   const editorialCorroboration = editorial.filter((source, index) => source.id !== lead.id && editorial.findIndex((item) => item.id === source.id) === index);
+  const coverage = coverageMetadata(lead, editorialCorroboration, evidence);
   const provenance: StoryProvenance = {
     clusterId: clusterId({ title: useSupplementalLead ? supplemental.title : base.title, url: evidence[0]?.url ?? supplemental.url }),
     lead,
     editorialCorroboration,
     evidence,
-    coverage: coverageMetadata(lead, editorialCorroboration, evidence),
+    coverage,
     selection: {
-      score: selectionScore(useSupplementalLead ? supplemental : base, profile, { corroboration: editorialCorroboration.length, primary: evidence.some((item) => item.kind === "primary") }),
+      score: selectionScore(useSupplementalLead ? supplemental : base, profile, { corroboration: Math.max(0, coverage.editorialSourceCount - 1), primary: evidence.some((item) => item.kind === "primary") }),
       reason: "cross-source"
     }
   };
