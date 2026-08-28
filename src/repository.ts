@@ -18,6 +18,47 @@ function stored(row: EditionRow): StoredEdition {
   return { ...edition, profile, id: row.id, issueDate: row.issue_date, publishedAt: row.published_at };
 }
 
+const MELBOURNE_TIME_ZONE = "Australia/Melbourne";
+
+/** Returns the Melbourne calendar day used to bound owner-initiated republishing. */
+export function melbourneCalendarDay(at: Date = new Date()): string {
+  let year = "";
+  let month = "";
+  let day = "";
+  for (const part of new Intl.DateTimeFormat("en-AU", { timeZone: MELBOURNE_TIME_ZONE, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(at)) {
+    if (part.type === "year") year = part.value;
+    if (part.type === "month") month = part.value;
+    if (part.type === "day") day = part.value;
+  }
+  if (!year || !month || !day) throw new Error("could not determine Melbourne calendar day");
+  return `${year}-${month}-${day}`;
+}
+
+export type ManualRepublishClaim = Readonly<{ localDay: string; claimId: string }>;
+
+/** Claims the one owner-initiated republish slot for a Melbourne calendar day. */
+export async function claimManualRepublish(db: D1Database, localDay: string, claimedAt: Date = new Date()): Promise<ManualRepublishClaim | null> {
+  const claimId = crypto.randomUUID();
+  const result = await db.prepare("INSERT OR IGNORE INTO manual_republish_days (local_day, claim_id, status, claimed_at) VALUES (?1, ?2, 'active', ?3)")
+    .bind(localDay, claimId, claimedAt.toISOString())
+    .run();
+  return (result.meta.changes ?? 0) > 0 ? { localDay, claimId } : null;
+}
+
+/** Marks a completed republish so the daily claim cannot be reused. */
+export async function completeManualRepublish(db: D1Database, claim: ManualRepublishClaim, completedAt: Date = new Date()): Promise<void> {
+  await db.prepare("UPDATE manual_republish_days SET status = 'completed', completed_at = ?1 WHERE local_day = ?2 AND claim_id = ?3 AND status = 'active'")
+    .bind(completedAt.toISOString(), claim.localDay, claim.claimId)
+    .run();
+}
+
+/** Releases a claim when generation fails before an edition is replaced. */
+export async function releaseManualRepublish(db: D1Database, claim: ManualRepublishClaim): Promise<void> {
+  await db.prepare("DELETE FROM manual_republish_days WHERE local_day = ?1 AND claim_id = ?2 AND status = 'active'")
+    .bind(claim.localDay, claim.claimId)
+    .run();
+}
+
 export async function getActiveProfile(db: D1Database): Promise<Profile> {
   const row = await db.prepare("SELECT profile_json FROM profiles WHERE is_active = 1 LIMIT 1").first<{ profile_json: string }>();
   if (!row) return DEFAULT_PROFILE;

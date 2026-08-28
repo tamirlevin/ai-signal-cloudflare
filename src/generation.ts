@@ -1,7 +1,7 @@
 import type { Edition, RssIssue, RunResult, Source } from "./contracts";
 import { compactIssueInventory, editorialMessages, extractGeneratedEdition, generationInput, issueFromCandidateInventory, materializeCandidateStories } from "./editorial";
 import { fetchLatestRss } from "./rss";
-import { errorCode, getActiveProfile, insertEdition, publishedEditionState, recordRun, recordSupplementalShadowRun, replaceEdition } from "./repository";
+import { claimManualRepublish, completeManualRepublish, errorCode, getActiveProfile, insertEdition, melbourneCalendarDay, publishedEditionState, recordRun, recordSupplementalShadowRun, releaseManualRepublish, replaceEdition, type ManualRepublishClaim } from "./repository";
 import { normalizeEditionStories } from "./story-normalization";
 import { buildBlendedCandidateInventory, buildSupplementalShadowReport, collectSupplementalSources } from "./supplemental";
 import { ValidationError, validateEdition, validatePresentationDiversity, validateSynthesisDiversity } from "./validation";
@@ -144,10 +144,14 @@ function canRepairModelOutput(error: unknown): boolean {
   return error instanceof ValidationError || isModelJsonInvalid(error);
 }
 
+export type GenerationOptions = { forceRepublish?: boolean };
+
 /** Runs synchronously so scheduled() owns the promise and preserves the last good edition on failure. */
-export async function generateLatestEdition(env: Env, trigger: Trigger): Promise<RunResult> {
+export async function generateLatestEdition(env: Env, trigger: Trigger, options: GenerationOptions = {}): Promise<RunResult> {
   const startedAt = new Date().toISOString();
   const started = Date.now();
+  const forceRepublish = trigger === "manual" && options.forceRepublish === true;
+  let republishClaim: ManualRepublishClaim | undefined;
   let issueUrl: string | undefined;
   let issueDate: string | undefined;
   let modelUsed: string = env.AI_MODEL;
@@ -156,7 +160,25 @@ export async function generateLatestEdition(env: Env, trigger: Trigger): Promise
     issueUrl = issue.url;
     issueDate = issue.issueDate;
     const publication = await publishedEditionState(env.DB, issue.url, issue.issueDate);
-    const replacingExistingEdition = trigger === "manual" && publication.exists && publication.needsStoryRepair;
+    const replacingExistingEdition = trigger === "manual" && publication.exists && (publication.needsStoryRepair || forceRepublish);
+    if (forceRepublish && publication.exists) {
+      const claim = await claimManualRepublish(env.DB, melbourneCalendarDay());
+      if (!claim) {
+        await recordRun(env.DB, {
+          trigger,
+          status: "skipped",
+          issueUrl,
+          issueDate,
+          model: env.AI_MODEL,
+          errorCode: "MANUAL_REPUBLISH_LIMIT",
+          errorMessage: "one forced manual republish is allowed per Melbourne calendar day",
+          startedAt,
+          durationMs: Date.now() - started
+        });
+        return { status: "skipped", reason: "manual-republish-limit" };
+      }
+      republishClaim = claim;
+    }
     if (publication.exists && !replacingExistingEdition) {
       await recordRun(env.DB, { trigger, status: "skipped", issueUrl, issueDate, model: env.AI_MODEL, startedAt, durationMs: Date.now() - started });
       return { status: "skipped", reason: "already-published" };
@@ -224,6 +246,7 @@ export async function generateLatestEdition(env: Env, trigger: Trigger): Promise
         edition.profile = profile;
         const sourceBodyHash = await hash(issue.body);
         const stored = replacingExistingEdition ? await replaceEdition(env.DB, edition, issue.issueDate, sourceBodyHash) : await insertEdition(env.DB, edition, issue.issueDate, sourceBodyHash);
+        if (republishClaim) await completeManualRepublish(env.DB, republishClaim);
         await recordRun(env.DB, { trigger, status: "success", issueUrl, issueDate, model: modelUsed, editionId: stored.id, startedAt, durationMs: Date.now() - started });
         return { status: "success", edition: stored };
       } catch (error) {
@@ -251,6 +274,13 @@ export async function generateLatestEdition(env: Env, trigger: Trigger): Promise
     }
     throw lastError;
   } catch (error) {
+    if (republishClaim) {
+      try {
+        await releaseManualRepublish(env.DB, republishClaim);
+      } catch (releaseError) {
+        console.error(JSON.stringify({ message: "ai-signal republish claim could not be released", issueUrl, error: releaseError instanceof Error ? releaseError.message : String(releaseError) }));
+      }
+    }
     const code = errorCode(error);
     console.error(JSON.stringify({ message: "ai-signal generation failed", code, issueUrl, issueDate, error: error instanceof Error ? error.message : String(error) }));
     try {

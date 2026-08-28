@@ -120,8 +120,9 @@ async function api(request: Request, env: Env, url: URL, ctx: ExecutionContext):
   if (request.method === "GET" && url.pathname === "/api/profile") return json({ profile: await getActiveProfile(env.DB) });
   if (request.method === "POST" && url.pathname === "/api/refresh") {
     if (!(await isAdmin(request, env))) return error("unauthorized", 401);
-    const result = await generateLatestEdition(env, "manual");
-    if (supplementalShadowEnabled(env) && (!supplementalBlendEnabled(env) || result.status === "skipped")) {
+    const republish = ["1", "true"].includes((url.searchParams.get("republish") ?? "").toLowerCase());
+    const result = await generateLatestEdition(env, "manual", { forceRepublish: republish });
+    if (supplementalShadowEnabled(env) && (!supplementalBlendEnabled(env) || (result.status === "skipped" && result.reason === "already-published"))) {
       ctx.waitUntil(runSupplementalShadow(env, "manual").then(() => undefined));
     }
     return json(result, result.status === "failed" ? 502 : 200);

@@ -26,6 +26,10 @@ describe("mutating API protection", () => {
     const response = await worker.fetch(new Request("https://app.test/api/profile", { method: "PUT", body: "{}" }), fakeEnv("secret"), fakeContext);
     expect(response.status).toBe(401);
   });
+  it("rejects a forced republish without an owner token before it touches D1", async () => {
+    const response = await worker.fetch(new Request("https://app.test/api/refresh?republish=1", { method: "POST" }), fakeEnv("secret"), fakeContext);
+    expect(response.status).toBe(401);
+  });
   it("does not expose the local scheduled endpoint in production", async () => {
     const response = await worker.fetch(new Request("https://app.test/__scheduled"), fakeEnv(), fakeContext);
     expect(response.status).toBe(404);

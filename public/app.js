@@ -78,7 +78,7 @@ function scheduledTimeLabel(value) {
 function collectionNotice(edition) {
   const lastRun = state.collectionStatus?.lastRun;
   if (!lastRun) return `<p class="refresh-status">Updated ${escape(localDateTime(edition.publishedAt))}.</p>`;
-  const outcome = lastRun.status === "failed" ? `failed${lastRun.errorCode ? ` (${escape(lastRun.errorCode)})` : ""}${lastRun.failureDetail ? `: ${escape(lastRun.failureDetail)}` : ""}` : lastRun.status === "skipped" ? "found no newer issue" : "published a new brief";
+  const outcome = lastRun.status === "failed" ? `failed${lastRun.errorCode ? ` (${escape(lastRun.errorCode)})` : ""}${lastRun.failureDetail ? `: ${escape(lastRun.failureDetail)}` : ""}` : lastRun.status === "skipped" ? lastRun.errorCode === "MANUAL_REPUBLISH_LIMIT" ? "the once-daily manual republish limit was reached" : "found no newer issue" : "published a new brief";
   const stateLabel = lastRun.status === "failed" ? "Check failed" : lastRun.status === "skipped" ? "Current" : "Published";
   return `<details class="refresh-status"><summary><span>Updated ${escape(localDateTime(edition.publishedAt))} · source checked ${escape(localDateTime(lastRun.finishedAt))}</span><span class="refresh-state ${lastRun.status === "failed" ? "failed" : ""}">${stateLabel}</span></summary><p>The collector ${outcome}. Automatic check: daily at ${escape(scheduledTimeLabel(state.collectionStatus.scheduledDailyAtUtc))}.</p></details>`;
 }
@@ -294,11 +294,12 @@ function visitPanel() {
 
 function renderAdmin(profile) {
   state.adminProfile = profile;
-  app.innerHTML = `<section class="admin"><div class="banner"><p class="eyebrow">Owner controls</p><h1>AI Signal administration</h1><p>Global profile changes affect future generation only. Browser personalisation remains local and is not shown here.</p></div><div class="admin-panel"><label>Admin token <input id="admin-token" type="password" autocomplete="off"></label><p class="muted">Used only for the request you submit below; it is not stored in the browser.</p>${adminControls(profile)}<div class="admin-actions"><button class="button" id="save-global-profile" type="button">Save global Profile v${profile.version + 1}</button><button class="button secondary" id="run-refresh" type="button">Run latest issue now</button></div><p class="status" id="admin-status" aria-live="polite"></p></div>${visitPanel()}</section>`;
+  app.innerHTML = `<section class="admin"><div class="banner"><p class="eyebrow">Owner controls</p><h1>AI Signal administration</h1><p>Global profile changes affect future generation only. Browser personalisation remains local and is not shown here.</p></div><div class="admin-panel"><label>Admin token <input id="admin-token" type="password" autocomplete="off"></label><p class="muted">Used only for the request you submit below; it is not stored in the browser.</p>${adminControls(profile)}<div class="admin-actions"><button class="button" id="save-global-profile" type="button">Save global Profile v${profile.version + 1}</button><button class="button secondary" id="run-refresh" type="button">Run latest issue now</button><button class="button secondary" id="run-republish" type="button">Republish latest issue (once daily)</button></div><p class="muted">Normal refresh skips an issue that is already published. Republish replaces the latest issue in place so you can test a code or profile change; one successful republish is allowed per Melbourne calendar day.</p><p class="status" id="admin-status" aria-live="polite"></p></div>${visitPanel()}</section>`;
   app.querySelectorAll("[data-admin-weight]").forEach((input) => input.addEventListener("input", () => { input.previousElementSibling.querySelector("output").textContent = weightLabel(Number(input.value)); }));
   app.querySelector("#admin-story-budget").addEventListener("input", (event) => { app.querySelector("#admin-budget-value").textContent = event.target.value; });
   app.querySelector("#save-global-profile").addEventListener("click", saveGlobalProfile);
   app.querySelector("#run-refresh").addEventListener("click", runRefresh);
+  app.querySelector("#run-republish").addEventListener("click", () => runRefresh(true));
   app.querySelector("#load-visits").addEventListener("click", loadVisits);
 }
 
@@ -348,15 +349,24 @@ async function saveGlobalProfile() {
   } catch (caught) { setAdminStatus(caught.message); } finally { clearAdminToken(); }
 }
 
-async function runRefresh() {
+async function runRefresh(republish = false) {
   const token = adminToken();
-  if (!token) { setAdminStatus("Enter the admin token to run the latest issue."); return; }
-  setAdminStatus("Running the latest AInews issue…");
+  if (!token) { setAdminStatus(republish ? "Enter the admin token to republish the latest issue." : "Enter the admin token to run the latest issue."); return; }
+  const button = app.querySelector(republish ? "#run-republish" : "#run-refresh");
+  button.disabled = true;
+  setAdminStatus(republish ? "Republishing the latest AInews issue…" : "Running the latest AInews issue…");
   try {
-    const result = await request("/api/refresh", { method: "POST", headers: { Authorization: `Bearer ${token}` } });
-    const message = result.status === "success" ? `Published ${result.edition.issue.publicationDate}.` : result.status === "skipped" ? "Skipped: this AInews issue is already published." : `Run failed: ${result.code}${result.reason ? ` — ${result.reason}` : ""}.`;
+    const path = republish ? "/api/refresh?republish=1" : "/api/refresh";
+    const result = await request(path, { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+    const message = result.status === "success"
+      ? `${republish ? "Republished" : "Published"} ${result.edition.issue.publicationDate}.`
+      : result.reason === "manual-republish-limit"
+        ? "Republish limit reached: one successful republish is allowed per Melbourne calendar day."
+        : result.status === "skipped"
+          ? "Skipped: this AInews issue is already published."
+          : `Run failed: ${result.code}${result.reason ? ` — ${result.reason}` : ""}.`;
     setAdminStatus(message);
-  } catch (caught) { setAdminStatus(caught.message); } finally { clearAdminToken(); }
+  } catch (caught) { setAdminStatus(caught.message); } finally { clearAdminToken(); button.disabled = false; }
 }
 
 async function boot() {

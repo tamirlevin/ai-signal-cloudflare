@@ -150,7 +150,7 @@ export type CandidateStory = {
 
 export type RunResult =
   | { status: "success"; edition: StoredEdition }
-  | { status: "skipped"; reason: "already-published" }
+  | { status: "skipped"; reason: "already-published" | "manual-republish-limit" }
   | { status: "failed"; code: string; reason?: string };
 
 export type RunStatus = {

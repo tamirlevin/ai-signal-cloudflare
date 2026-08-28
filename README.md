@@ -41,7 +41,7 @@ The compatibility date is pinned to `2026-08-11`. Move it forward with a tested 
 
 `Personalise` changes only the current browser. It can save, reset, or copy a tuning link; none of those actions call the profile-write API. Each stored edition retains the global profile that generated it. The latest reader applies the active global profile to that stored candidate inventory, while historical edition links retain their original profile snapshot. Synthesis remains the shared editorial view while Hot Topics and All Signals can be personally re-ranked.
 
-`/admin` is deliberately absent from public navigation. Knowing its URL does not grant authority: `PUT /api/profile` and `POST /api/refresh` require `ADMIN_TOKEN`. A saved global profile is used by future generation runs; it does not rewrite stored editions.
+`/admin` is deliberately absent from public navigation. Knowing its URL does not grant authority: `PUT /api/profile` and `POST /api/refresh` require `ADMIN_TOKEN`. A saved global profile is used by future generation runs; it does not rewrite stored editions. The admin page also exposes a separate forced republish action (`POST /api/refresh?republish=1`), which replaces the latest issue in place and is limited to one successful republish per Melbourne calendar day. Failed republish attempts release their daily slot so they can be retried.
 
 The reader shows the latest collector check, the brief generation time, and the daily scheduled check time. `GET /api/status` exposes only that non-sensitive operational summary.
 
@@ -107,7 +107,7 @@ The project deliberately has no automatic resource provisioning or deployment co
 
 ## Schedule and DST
 
-The configured Cloudflare cron is `15 22 * * *` (UTC). It fires at 08:15 in Melbourne during AEST (UTC+10), and at 09:15 during AEDT (UTC+11). Cloudflare cron has no Melbourne timezone setting. D1 idempotency means a manually triggered or repeated run for the same AInews issue is safely skipped.
+The configured Cloudflare cron is `15 22 * * *` (UTC). It fires at 08:15 in Melbourne during AEST (UTC+10), and at 09:15 during AEDT (UTC+11). Cloudflare cron has no Melbourne timezone setting. D1 idempotency means a manually triggered or repeated run for the same AInews issue is safely skipped. The normal admin refresh keeps that behavior; the separate republish action can replace the current issue once per Melbourne calendar day for post-publication testing.
 
 The scheduled handler performs the fail-open supplemental blend inside generation. It avoids a duplicate shadow fetch after a blended publication, but still runs the isolated shadow collector when the AInews issue is already published. In non-production local development only, `/__scheduled` is protected by `ADMIN_TOKEN`, and `/__shadow` runs the source experiment without model generation. Production returns 404 for both diagnostic routes.
 
@@ -124,7 +124,7 @@ Public same-origin endpoints:
 
 Owner-only endpoints (use `Authorization: Bearer <ADMIN_TOKEN>`):
 
-- `POST /api/refresh`
+- `POST /api/refresh` (normal refresh; add `?republish=1` for the admin-only once-daily forced republish)
 - `PUT /api/profile`
 - `GET /api/visits?limit=50` (entries, distinct-browser totals, today's totals, and country/region grouping)
 
@@ -136,4 +136,4 @@ The Worker is attached to `signal.tamirlevin.dev` as a Cloudflare Custom Domain.
 
 ## Tests
 
-`npm test` covers structured-edition validation, collector-trusted link and provenance enforcement, source-pack/coverage consistency, duplicate-link rejection, first-item RSS parsing, malformed-primary-response fallback orchestration, API authentication, production diagnostic-route blocking, supplemental parser behavior, cross-source overlap/lead/corroboration, primary-link preference, blend caps/no-padding, and publication isolation under total supplemental failure. `npm run types` generates the Worker binding type definition from `wrangler.jsonc`; do not hand-write `Env`.
+`npm test` covers structured-edition validation, collector-trusted link and provenance enforcement, source-pack/coverage consistency, duplicate-link rejection, first-item RSS parsing, malformed-primary-response fallback orchestration, API authentication, production diagnostic-route blocking, supplemental parser behavior, cross-source overlap/lead/corroboration, primary-link preference, blend caps/no-padding, once-daily Melbourne republish claims, and publication isolation under total supplemental failure. `npm run types` generates the Worker binding type definition from `wrangler.jsonc`; do not hand-write `Env`.
