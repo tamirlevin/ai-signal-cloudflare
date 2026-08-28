@@ -4,6 +4,20 @@ A standalone Cloudflare Worker and D1-backed reader for AI Signal. It presents a
 
 Live reader: [signal.tamirlevin.dev](https://signal.tamirlevin.dev/)
 
+## Repository and deployment flow
+
+The same working tree feeds two separate records: Cloudflare runtime deployment and Git source snapshot. Keep them aligned by committing and merging the reviewed state before deploying, then verify the live Worker.
+
+```mermaid
+flowchart LR
+  A[Sources + profile] --> B[Collector output] --> C[Working tree]
+  C --> D[git commit] --> E[push + merge] --> F[GitHub main]
+  C --> G[wrangler deploy] --> H[Worker + D1] --> I[Public reader]
+  F -. release checkpoint .-> G
+```
+
+See the [interactive flow diagram](docs/architecture/ai-signal-repo-flow.html) for the same model with the historical drift point highlighted.
+
 The compatibility date is pinned to `2026-08-11`. Move it forward with a tested Wrangler/workerd update.
 
 ## What it does

@@ -1,0 +1,336 @@
+<div id="ai-signal-repo-flow">
+  <style>
+    #ai-signal-repo-flow {
+      --flow-background: light-dark(#fbfaf7, #171716);
+      --flow-surface: light-dark(#ffffff, #232320);
+      --flow-foreground: light-dark(#20201d, #f3f0e8);
+      --flow-muted: light-dark(#6d6a62, #b8b3a9);
+      --flow-border: light-dark(#ded9cf, #48463f);
+      --flow-accent: light-dark(#9b4f2f, #e39b74);
+      --flow-accent-soft: light-dark(#f2e5dc, #3b2a22);
+      --flow-warning: light-dark(#b86b36, #e7aa73);
+      --flow-warning-soft: light-dark(#fff0df, #3b2c21);
+      color: var(--flow-foreground);
+      background: var(--flow-background);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: var(--font-size-base, 1rem);
+      line-height: 1.45;
+      padding: 1.25rem;
+    }
+
+    #ai-signal-repo-flow * { box-sizing: border-box; }
+    #ai-signal-repo-flow h2,
+    #ai-signal-repo-flow h3,
+    #ai-signal-repo-flow p { margin: 0; }
+
+    #ai-signal-repo-flow .flow-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 1.1rem;
+    }
+
+    #ai-signal-repo-flow .flow-kicker {
+      color: var(--flow-accent);
+      font-size: .72em;
+      font-weight: 500;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    #ai-signal-repo-flow h2 {
+      font-size: 1.45em;
+      font-weight: 500;
+      letter-spacing: -.025em;
+      line-height: 1.12;
+      margin-top: .28rem;
+    }
+
+    #ai-signal-repo-flow .flow-dek {
+      color: var(--flow-muted);
+      margin-top: .42rem;
+      max-width: 70ch;
+    }
+
+    #ai-signal-repo-flow .flow-current {
+      color: var(--flow-foreground);
+      font-size: .8em;
+      margin-top: .55rem;
+    }
+
+    #ai-signal-repo-flow .flow-current strong {
+      color: var(--flow-accent);
+      font-weight: 500;
+      letter-spacing: .07em;
+      text-transform: uppercase;
+      margin-right: .35rem;
+    }
+
+    #ai-signal-repo-flow .flow-status-note {
+      color: var(--flow-warning);
+      font-size: .9em;
+      margin-left: .28em;
+    }
+
+    #ai-signal-repo-flow .flow-toggle {
+      flex: 0 0 auto;
+      min-height: 2.75rem;
+      border: 1px solid var(--flow-border);
+      border-radius: 999px;
+      padding: .45rem .8rem;
+      color: var(--flow-foreground);
+      background: var(--flow-surface);
+      font: inherit;
+      font-size: .78em;
+      cursor: pointer;
+    }
+
+    #ai-signal-repo-flow .flow-toggle[aria-pressed="true"] {
+      border-color: var(--flow-warning);
+      color: var(--flow-warning);
+      background: var(--flow-warning-soft);
+    }
+
+    #ai-signal-repo-flow .flow-topline {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 2.2rem minmax(0, 1fr) 2.2rem minmax(0, 1fr);
+      align-items: stretch;
+      gap: .5rem;
+      margin-bottom: .85rem;
+    }
+
+    #ai-signal-repo-flow .flow-node {
+      min-width: 0;
+      border: 1px solid var(--flow-border);
+      border-radius: .7rem;
+      padding: .8rem .85rem;
+      background: var(--flow-surface);
+      transition: opacity .18s ease, border-color .18s ease, box-shadow .18s ease;
+    }
+
+    #ai-signal-repo-flow .flow-node h3 {
+      font-size: 1em;
+      font-weight: 500;
+      line-height: 1.18;
+      margin-top: .2rem;
+    }
+
+    #ai-signal-repo-flow .flow-node p {
+      color: var(--flow-muted);
+      font-size: .8em;
+      margin-top: .38rem;
+    }
+
+    #ai-signal-repo-flow .flow-step {
+      color: var(--flow-muted);
+      font-size: .7em;
+      font-weight: 500;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    #ai-signal-repo-flow .flow-arrow {
+      display: grid;
+      place-items: center;
+      color: var(--flow-accent);
+      font-size: 1.35em;
+    }
+
+    #ai-signal-repo-flow .flow-node[data-drift="true"] {
+      border-color: var(--flow-warning);
+      background: var(--flow-warning-soft);
+    }
+
+    #ai-signal-repo-flow .flow-lanes {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: .85rem;
+    }
+
+    #ai-signal-repo-flow .flow-lane {
+      min-width: 0;
+      border-top: 2px solid var(--flow-border);
+      padding-top: .72rem;
+    }
+
+    #ai-signal-repo-flow .flow-lane[data-lane="cloudflare"] { border-top-color: var(--flow-accent); }
+    #ai-signal-repo-flow .flow-lane[data-lane="git"] { border-top-color: var(--flow-muted); }
+
+    #ai-signal-repo-flow .flow-lane-title {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: .5rem;
+      margin-bottom: .55rem;
+    }
+
+    #ai-signal-repo-flow .flow-lane-title strong {
+      font-weight: 500;
+      font-size: .92em;
+    }
+
+    #ai-signal-repo-flow .flow-lane-title span {
+      color: var(--flow-muted);
+      font-size: .72em;
+    }
+
+    #ai-signal-repo-flow .flow-lane-steps {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: .55rem;
+    }
+
+    #ai-signal-repo-flow .flow-lane-step {
+      min-width: 0;
+      border-left: 1px solid var(--flow-border);
+      padding-left: .6rem;
+    }
+
+    #ai-signal-repo-flow .flow-lane-step strong {
+      display: block;
+      font-size: .82em;
+      font-weight: 500;
+    }
+
+    #ai-signal-repo-flow .flow-lane-step p {
+      color: var(--flow-muted);
+      font-size: .72em;
+      margin-top: .25rem;
+    }
+
+    #ai-signal-repo-flow .flow-bottom {
+      display: grid;
+      grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+      gap: .85rem;
+      margin-top: 1rem;
+    }
+
+    #ai-signal-repo-flow .flow-converged,
+    #ai-signal-repo-flow .flow-legend {
+      border-top: 1px solid var(--flow-border);
+      padding-top: .72rem;
+    }
+
+    #ai-signal-repo-flow .flow-converged strong {
+      font-size: .9em;
+      font-weight: 500;
+    }
+
+    #ai-signal-repo-flow .flow-converged p,
+    #ai-signal-repo-flow .flow-legend {
+      color: var(--flow-muted);
+      font-size: .76em;
+      margin-top: .28rem;
+    }
+
+    #ai-signal-repo-flow .flow-legend {
+      margin-top: 0;
+    }
+
+    #ai-signal-repo-flow .flow-legend strong {
+      color: var(--flow-warning);
+      font-weight: 500;
+    }
+
+    #ai-signal-repo-flow .flow-node.is-dim,
+    #ai-signal-repo-flow .flow-lane.is-dim,
+    #ai-signal-repo-flow .flow-bottom.is-dim { opacity: .36; }
+
+    #ai-signal-repo-flow .flow-node.is-focus {
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--flow-warning) 28%, transparent);
+    }
+
+    @media (max-width: 720px) {
+      #ai-signal-repo-flow { padding: .9rem; }
+      #ai-signal-repo-flow .flow-header { display: block; }
+      #ai-signal-repo-flow .flow-toggle { margin-top: .8rem; }
+      #ai-signal-repo-flow .flow-topline { grid-template-columns: 1fr; }
+      #ai-signal-repo-flow .flow-arrow { min-height: 1.45rem; transform: rotate(90deg); }
+      #ai-signal-repo-flow .flow-lanes,
+      #ai-signal-repo-flow .flow-bottom { grid-template-columns: 1fr; }
+      #ai-signal-repo-flow .flow-lane-steps { grid-template-columns: 1fr; }
+      #ai-signal-repo-flow .flow-lane-step { border-left: 0; border-top: 1px solid var(--flow-border); padding: .5rem 0 0; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      #ai-signal-repo-flow .flow-node { transition: none; }
+    }
+  </style>
+
+  <div class="flow-header">
+    <div>
+      <div class="flow-kicker">AI Signal · repository lineage</div>
+      <h2>How one change reaches production</h2>
+      <p class="flow-dek">A single working tree can feed both Cloudflare and Git. The release is trustworthy only when the deployed Worker and repository come from the same reviewed state.</p>
+      <p class="flow-current" aria-live="polite"><strong>Release rule</strong> commit, push, merge, deploy, then verify the live Worker<span class="flow-status-note"></span></p>
+    </div>
+    <button type="button" class="flow-toggle" aria-pressed="false">Highlight historical drift</button>
+  </div>
+
+  <div class="flow-topline" aria-label="Inputs through the local working tree">
+    <section class="flow-node">
+      <div class="flow-step">01 · inputs</div>
+      <h3>Feeds + profile</h3>
+      <p>AInews, TLDR AI, AlphaSignal, Cloudflare Agents, the active profile, and model variables.</p>
+    </section>
+    <div class="flow-arrow" aria-hidden="true">→</div>
+    <section class="flow-node">
+      <div class="flow-step">02 · source</div>
+      <h3>Collector output</h3>
+      <p>Clusters and ranks candidates, then hands the Worker a compact source-aware inventory.</p>
+    </section>
+    <div class="flow-arrow" aria-hidden="true">→</div>
+    <section class="flow-node" data-drift="true">
+      <div class="flow-step">03 · split point</div>
+      <h3>Working tree</h3>
+      <p>Edited files on disk. This is the hand-off point where runtime deployment and source control can diverge.</p>
+    </section>
+  </div>
+
+  <div class="flow-lanes" aria-label="The two paths from the working tree">
+    <section class="flow-lane" data-lane="cloudflare">
+      <div class="flow-lane-title"><strong>Cloudflare path</strong><span>runtime state</span></div>
+      <div class="flow-lane-steps">
+        <div class="flow-lane-step"><strong><code>wrangler deploy</code></strong><p>Reads current files; does not require a commit.</p></div>
+        <div class="flow-lane-step"><strong>Worker version</strong><p>Publishes code and keeps D1 data separate.</p></div>
+        <div class="flow-lane-step"><strong>Public reader</strong><p>Serves <code>signal.tamirlevin.dev</code>.</p></div>
+      </div>
+    </section>
+    <section class="flow-lane" data-lane="git">
+      <div class="flow-lane-title"><strong>Git path</strong><span>source snapshot</span></div>
+      <div class="flow-lane-steps">
+        <div class="flow-lane-step"><strong><code>git commit</code></strong><p>Records the files as a local snapshot.</p></div>
+        <div class="flow-lane-step"><strong><code>push + merge</code></strong><p>Moves that snapshot to GitHub and <code>main</code>.</p></div>
+        <div class="flow-lane-step"><strong>Repository</strong><p>Becomes reproducible and reviewable.</p></div>
+      </div>
+    </section>
+  </div>
+
+  <div class="flow-bottom">
+    <section class="flow-converged">
+      <strong>Release checkpoint</strong>
+      <p>Deploy from the reviewed repository state, then verify the Worker, custom domain, and D1-backed reader. If they differ, stop and reconcile before the next scheduled run.</p>
+    </section>
+    <div class="flow-legend"><strong>Orange outline</strong> marks the drift risk: deployment and source control can leave the working tree at different states.</div>
+  </div>
+
+  <script>
+    const flowRoot = document.getElementById("ai-signal-repo-flow");
+    const flowToggle = flowRoot.querySelector(".flow-toggle");
+    const flowFocus = flowRoot.querySelector("[data-drift=\"true\"]");
+    const flowLanes = flowRoot.querySelectorAll(".flow-lane");
+    const flowBottom = flowRoot.querySelector(".flow-bottom");
+    const flowStatusNote = flowRoot.querySelector(".flow-status-note");
+    flowToggle.addEventListener("click", () => {
+      const active = flowToggle.getAttribute("aria-pressed") === "true";
+      flowToggle.setAttribute("aria-pressed", String(!active));
+      flowToggle.textContent = active ? "Highlight historical drift" : "Show complete flow";
+      flowFocus.classList.toggle("is-focus", !active);
+      flowRoot.querySelectorAll(".flow-node").forEach((node) => node.classList.toggle("is-dim", !active && node !== flowFocus));
+      flowLanes.forEach((lane) => lane.classList.toggle("is-dim", !active));
+      flowBottom.classList.toggle("is-dim", !active);
+      flowStatusNote.textContent = active ? "" : " · drift highlighted";
+    });
+  </script>
+</div>
