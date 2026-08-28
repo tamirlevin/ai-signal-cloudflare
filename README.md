@@ -30,7 +30,7 @@ The compatibility date is pinned to `2026-08-11`. Move it forward with a tested 
 
 The reader shows the latest collector check, the brief generation time, and the daily scheduled check time. `GET /api/status` exposes only that non-sensitive operational summary.
 
-## Blended source policy and safe rollout
+## Blended source policy and rollback
 
 `SUPPLEMENTAL_BLEND_ENABLED=true` enables the source-aware production inventory. AInews remains the base and the complete fallback. The collector:
 
@@ -49,7 +49,7 @@ There is no X collector in this Worker. Existing X links supplied by AInews may 
 
 `SUPPLEMENTAL_SHADOW_ENABLED=true` remains the observation fallback. When blending is disabled—or a run skips because the AInews issue is already published—the isolated shadow collector measures the same feeds without mutating an edition. The legacy `supplemental_shadow_runs` table and `/api/shadow/latest` endpoint now store/return the latest source report; `report.mode` identifies `shadow` versus `blend`.
 
-Safe rollout: the repository enables blending for the next reviewed deployment, but this change does not deploy it. Before publishing, run the checks below and inspect a fresh source report. Set `SUPPLEMENTAL_BLEND_ENABLED=false` for an immediate code-free return to AInews-only publication while leaving shadow observation on. No D1 migration is required because provenance and collection policy are backward-compatible optional fields in the edition JSON.
+Production status: blending is enabled in the deployed Worker. Before publishing future changes, run the checks below and inspect a fresh source report. Set `SUPPLEMENTAL_BLEND_ENABLED=false` for an immediate code-free return to AInews-only publication while leaving shadow observation on. No D1 migration is required because provenance and collection policy are backward-compatible optional fields in the edition JSON.
 
 `GET /api/shadow/latest` returns the latest source report, including source health, overlaps with AInews, shadow candidates, and (in blend mode) the novel candidates selected for the publication inventory.
 
