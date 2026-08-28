@@ -15,6 +15,7 @@ import {
   titleSimilarity,
   type SourceResult
 } from "../src/supplemental";
+import { DEFAULT_SOURCE_PACK_ID, SOURCE_PACKS } from "../src/source-packs";
 
 const publishedAt = "2026-08-15T01:00:00.000Z";
 
@@ -41,6 +42,14 @@ function sourceResult(sourceId: SupplementalSourceId, candidates: SupplementalCa
     health: { id: sourceId, name, status: "healthy", requests: 1, fetchedItems: candidates.length, acceptedCandidates: candidates.length, errors: [] }
   };
 }
+
+describe("source packs", () => {
+  it("exposes the default bounded core AI pack", () => {
+    expect(DEFAULT_PROFILE.sourcePackId).toBe(DEFAULT_SOURCE_PACK_ID);
+    expect(SOURCE_PACKS[DEFAULT_SOURCE_PACK_ID]).toMatchObject({ id: "core-ai", version: 1 });
+    expect(SOURCE_PACKS[DEFAULT_SOURCE_PACK_ID].sources.map((source) => source.id)).toEqual(["tldr-ai", "alphasignal", "cloudflare-agents"]);
+  });
+});
 
 describe("supplemental source parsing", () => {
   it("canonicalizes HTTPS URLs without tracking parameters", () => {
@@ -147,6 +156,32 @@ describe("cross-source deduplication and shadow selection", () => {
     expect(story.sources[0]?.url).toBe("https://openai.com/index/codex-runtime-6-2");
   });
 
+  it("records distinct editorial coverage and applies the capped boost", () => {
+    const base: CandidateStory[] = [{
+      id: 1,
+      title: "Codex runtime 6.2 launches for teams",
+      summary: "AInews coverage.",
+      category: "agents",
+      categoryLabel: "Agents in practice",
+      score: 6,
+      exceptional: false,
+      watchPermission: false,
+      watchGeography: false,
+      sources: [{ label: "AInews link", url: "https://openai.com/index/codex-runtime-6-2" }]
+    }];
+    const tldr = supplemental("tldr-ai", "Codex runtime 6.2 launches for teams", "https://openai.com/index/codex-runtime-6-2?utm_source=tldr", 10);
+    const alpha = supplemental("alphasignal", "Codex runtime 6.2 launches for teams", "https://openai.com/index/codex-runtime-6-2?utm_source=alpha", 10);
+    const blended = buildBlendedCandidateInventory({ aiNewsCandidates: base, sourceResults: [sourceResult("tldr-ai", [tldr]), sourceResult("alphasignal", [alpha])], profile: DEFAULT_PROFILE });
+    const coverage = blended.candidates[0]?.provenance?.coverage;
+
+    expect(coverage).toMatchObject({
+      editorialSourceIds: ["alphasignal", "ainews", "tldr-ai"],
+      editorialSourceCount: 3,
+      primaryEvidenceCount: 0,
+      boost: 8
+    });
+  });
+
   it("preserves an AInews-provided URL byte-for-byte when it remains the preferred evidence", () => {
     const exactUrl = "https://openai.com/index/codex/?utm_source=ainews&keep=yes";
     const base: CandidateStory[] = [{ id: 1, title: "Codex workflow controls", summary: "AInews coverage.", category: "codex", categoryLabel: "Codex & agent craft", score: 12, exceptional: false, watchPermission: false, watchGeography: false, sources: [{ label: "OpenAI", url: exactUrl }] }];
@@ -173,6 +208,8 @@ describe("cross-source deduplication and shadow selection", () => {
 
     expect(blended.candidates[0]?.sources[0]?.url).toBe("https://blog.cloudflare.com/agent-sessions-4-1");
     expect(blended.candidates[0]?.provenance?.evidence[0]?.kind).toBe("primary");
+    expect(blended.candidates[0]?.provenance?.coverage?.editorialSourceCount).toBe(1);
+    expect(blended.candidates[0]?.provenance?.coverage?.primaryEvidenceCount).toBe(1);
   });
 
   it("matches a supplemental story against every AInews source URL, not only the first", () => {
@@ -303,6 +340,7 @@ describe("cross-source deduplication and shadow selection", () => {
     });
 
     expect(report.mode).toBe("shadow");
+    expect(report.sourcePack).toEqual({ id: "core-ai", version: 1 });
     expect(report.limits).toEqual({ modelCandidates: 18, publishedStories: 14, tldr: 3, alphaSignal: 2, cloudflare: 1 });
     expect(report.overlaps).toHaveLength(1);
     expect(report.overlaps[0]?.preferredUrl).toBe("https://blog.google/gemini-3-7");

@@ -3,6 +3,8 @@ import type {
   Edition,
   Profile,
   RssIssue,
+  SourcePackSource,
+  StoryCoverage,
   StoryEvidence,
   StoryProvenance,
   StorySourceAttribution,
@@ -15,35 +17,18 @@ import type {
 import { categoryForProfile, compactIssueInventory, isPermissionDesignSignal, scoreCandidateForProfile } from "./editorial";
 import { fetchLatestRss } from "./rss";
 import { getActiveProfile, recordSupplementalShadowRun } from "./repository";
+import { getSourcePack } from "./source-packs";
 
 type Fetcher = typeof fetch;
 export type SourceResult = { candidates: SupplementalCandidate[]; health: SupplementalSourceHealth };
-type SourceDefinition = {
-  id: SupplementalSourceId;
-  name: string;
-  kind: "discovery" | "primary";
-  url: string;
-};
+type SourceDefinition = SourcePackSource;
 
-const SOURCES = {
-  tldr: { id: "tldr-ai", name: "TLDR AI", kind: "discovery", url: "https://tldr.tech/api/rss/ai" },
-  alpha: { id: "alphasignal", name: "AlphaSignal", kind: "discovery", url: "https://alphasignal.ai/sitemaps/news.xml" },
-  cloudflare: { id: "cloudflare-agents", name: "Cloudflare Agents", kind: "primary", url: "https://blog.cloudflare.com/tag/agents/rss" }
-} as const satisfies Record<string, SourceDefinition>;
-
-const SOURCE_CAPS: Record<SupplementalSourceId, number> = {
-  "tldr-ai": 3,
-  alphasignal: 2,
-  "cloudflare-agents": 1
-};
 const AGGREGATOR_HOSTS = new Set(["alphasignal.ai", "news.smol.ai", "tldr.tech", "www.alphasignal.ai", "www.tldr.tech"]);
 const NON_EVIDENCE_HOSTS = new Set(["calendly.com", "forms.gle", "tally.so", "typeform.com", "www.googletagmanager.com"]);
 const STOP_WORDS = new Set(["a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in", "is", "it", "of", "on", "or", "the", "to", "with"]);
 const MAX_FEED_BYTES = 2_000_000;
 const MAX_PAGE_BYTES = 2_500_000;
-const ALPHA_ENRICH_LIMIT = 5;
 const ALPHA_LOOKBACK_HOURS = 72;
-const ALPHA_LOOKBACK_MS = ALPHA_LOOKBACK_HOURS * 60 * 60 * 1000;
 export const MAX_BLENDED_CANDIDATES = 18;
 export const MAX_NOVEL_SUPPLEMENTAL = 2;
 const MAX_NOVEL_PER_SOURCE = 1;
@@ -147,7 +132,8 @@ function promotionalTldrStory(title: string): boolean {
   return /\b(?:sponsor|sponsored|advertisement)\b/i.test(title) || /\b(?:hiring|job|jobs)\b/i.test(title) || /^⚡/.test(title);
 }
 
-export function parseTldrIssue(html: string, issue: { url: string; publishedAt: string }, profile: Profile): SupplementalCandidate[] {
+export function parseTldrIssue(html: string, issue: { url: string; publishedAt: string }, profile: Profile, source = sourceDefinition(profile, "tldr-ai")): SupplementalCandidate[] {
+  if (!source) return [];
   const candidates: SupplementalCandidate[] = [];
   for (const article of blocks(html, "article")) {
     const rawTitle = plainText(tag(article, "h3"));
@@ -163,7 +149,7 @@ export function parseTldrIssue(html: string, issue: { url: string; publishedAt: 
       summary: summary.slice(0, 600),
       url,
       publishedAt: issue.publishedAt,
-      sourceAttributions: [attribution(SOURCES.tldr, issue.url)]
+      sourceAttributions: [attribution(source, issue.url)]
     }, profile));
   }
   return candidates;
@@ -178,8 +164,8 @@ function titleFromAlphaUrl(value: string): string {
   }
 }
 
-export function parseAlphaSitemap(xml: string, now: Date): Array<{ title: string; url: string; publishedAt: string }> {
-  const cutoff = now.getTime() - ALPHA_LOOKBACK_MS;
+export function parseAlphaSitemap(xml: string, now: Date, lookbackHours = ALPHA_LOOKBACK_HOURS): Array<{ title: string; url: string; publishedAt: string }> {
+  const cutoff = now.getTime() - lookbackHours * 60 * 60 * 1000;
   const available = blocks(xml, "url").map((entry) => ({
     title: titleFromAlphaUrl(plainText(tag(entry, "loc"))),
     url: canonicalizeSupplementalUrl(plainText(tag(entry, "loc"))) ?? "",
@@ -223,8 +209,9 @@ export function parseAlphaArticle(html: string, articleUrl: string): { title: st
   return { title: heading || titleFromAlphaUrl(articleUrl), summary: description || heading || titleFromAlphaUrl(articleUrl), preferredUrl };
 }
 
-export function parseCloudflareFeed(xml: string, now: Date, profile: Profile): SupplementalCandidate[] {
-  const cutoff = now.getTime() - 3 * 24 * 60 * 60 * 1000;
+export function parseCloudflareFeed(xml: string, now: Date, profile: Profile, source = sourceDefinition(profile, "cloudflare-agents")): SupplementalCandidate[] {
+  if (!source) return [];
+  const cutoff = now.getTime() - (source.lookbackHours ?? 72) * 60 * 60 * 1000;
   return blocks(xml, "item").map((item) => {
     const title = plainText(tag(item, "title"));
     const url = canonicalizeSupplementalUrl(plainText(tag(item, "link"))) ?? "";
@@ -235,21 +222,21 @@ export function parseCloudflareFeed(xml: string, now: Date, profile: Profile): S
     ...item,
     // The feed is a primary-source lane only for the explicitly allowlisted Cloudflare host.
     // An unexpected external link remains discovery context and cannot receive primary weight.
-    sourceAttributions: [attribution(SOURCES.cloudflare, item.url, isTrustedCloudflarePrimary(item.url) ? "primary" : "discovery")]
+    sourceAttributions: [attribution(source, item.url, isTrustedCloudflarePrimary(item.url) ? "primary" : "discovery")]
   }, profile));
 }
 
-async function collectTldr(profile: Profile, fetcher: Fetcher): Promise<SourceResult> {
-  const health = sourceHealth(SOURCES.tldr);
+async function collectTldr(profile: Profile, fetcher: Fetcher, source: SourceDefinition): Promise<SourceResult> {
+  const health = sourceHealth(source);
   try {
     health.requests += 1;
-    const feed = await boundedText(fetcher, SOURCES.tldr.url, MAX_FEED_BYTES, "application/rss+xml, application/xml;q=0.9");
+    const feed = await boundedText(fetcher, source.url, MAX_FEED_BYTES, "application/rss+xml, application/xml;q=0.9");
     const issue = parseTldrFeed(feed)[0];
     health.fetchedItems = issue ? 1 : 0;
     if (!issue) throw new Error("TLDR feed contains no current issue");
     health.requests += 1;
     const html = await boundedText(fetcher, issue.url, MAX_PAGE_BYTES, "text/html");
-    const candidates = parseTldrIssue(html, issue, profile);
+    const candidates = parseTldrIssue(html, issue, profile, source);
     health.acceptedCandidates = candidates.length;
     if (!candidates.length) health.status = "failed";
     return { candidates, health };
@@ -260,30 +247,31 @@ async function collectTldr(profile: Profile, fetcher: Fetcher): Promise<SourceRe
   }
 }
 
-async function collectAlpha(profile: Profile, now: Date, fetcher: Fetcher): Promise<SourceResult> {
-  const health = sourceHealth(SOURCES.alpha);
+async function collectAlpha(profile: Profile, now: Date, fetcher: Fetcher, source: SourceDefinition): Promise<SourceResult> {
+  const health = sourceHealth(source);
   try {
     health.requests += 1;
-    const sitemap = await boundedText(fetcher, SOURCES.alpha.url, MAX_FEED_BYTES, "application/xml, text/xml;q=0.9");
-    const recent = parseAlphaSitemap(sitemap, now);
+    const sitemap = await boundedText(fetcher, source.url, MAX_FEED_BYTES, "application/xml, text/xml;q=0.9");
+    const lookbackHours = source.lookbackHours ?? ALPHA_LOOKBACK_HOURS;
+    const recent = parseAlphaSitemap(sitemap, now, lookbackHours);
     health.fetchedItems = recent.length;
-    const freshnessCutoff = now.getTime() - ALPHA_LOOKBACK_MS;
+    const freshnessCutoff = now.getTime() - lookbackHours * 60 * 60 * 1000;
     const newest = recent[0];
     if (newest && new Date(newest.publishedAt).getTime() < freshnessCutoff) {
       health.status = "degraded";
-      health.errors.push(`no AlphaSignal item in the preceding ${ALPHA_LOOKBACK_HOURS} hours; using the newest available item`);
+      health.errors.push(`no ${source.name} item in the preceding ${lookbackHours} hours; using the newest available item`);
     }
-    const prioritized = recent.map((item) => ({ ...item, score: scoreCandidateForProfile(item.title, profile) })).sort((left, right) => right.score - left.score || right.publishedAt.localeCompare(left.publishedAt)).slice(0, ALPHA_ENRICH_LIMIT);
+    const prioritized = recent.map((item) => ({ ...item, score: scoreCandidateForProfile(item.title, profile) })).sort((left, right) => right.score - left.score || right.publishedAt.localeCompare(left.publishedAt)).slice(0, source.enrichLimit ?? 5);
     const enriched = await Promise.all(prioritized.map(async (item) => {
       try {
         health.requests += 1;
         const html = await boundedText(fetcher, item.url, MAX_PAGE_BYTES, "text/html");
         const article = parseAlphaArticle(html, item.url);
-        return prepareCandidate({ title: article.title, summary: article.summary.slice(0, 600), url: article.preferredUrl, publishedAt: item.publishedAt, sourceAttributions: [attribution(SOURCES.alpha, item.url)] }, profile);
+        return prepareCandidate({ title: article.title, summary: article.summary.slice(0, 600), url: article.preferredUrl, publishedAt: item.publishedAt, sourceAttributions: [attribution(source, item.url)] }, profile);
       } catch (error) {
         health.status = "degraded";
         health.errors.push(error instanceof Error ? error.message : String(error));
-        return prepareCandidate({ title: item.title, summary: item.title, url: item.url, publishedAt: item.publishedAt, sourceAttributions: [attribution(SOURCES.alpha, item.url)] }, profile);
+        return prepareCandidate({ title: item.title, summary: item.title, url: item.url, publishedAt: item.publishedAt, sourceAttributions: [attribution(source, item.url)] }, profile);
       }
     }));
     health.acceptedCandidates = enriched.length;
@@ -296,12 +284,12 @@ async function collectAlpha(profile: Profile, now: Date, fetcher: Fetcher): Prom
   }
 }
 
-async function collectCloudflare(profile: Profile, now: Date, fetcher: Fetcher): Promise<SourceResult> {
-  const health = sourceHealth(SOURCES.cloudflare);
+async function collectCloudflare(profile: Profile, now: Date, fetcher: Fetcher, source: SourceDefinition): Promise<SourceResult> {
+  const health = sourceHealth(source);
   try {
     health.requests += 1;
-    const feed = await boundedText(fetcher, SOURCES.cloudflare.url, MAX_FEED_BYTES, "application/rss+xml, application/xml;q=0.9");
-    const candidates = parseCloudflareFeed(feed, now, profile);
+    const feed = await boundedText(fetcher, source.url, MAX_FEED_BYTES, "application/rss+xml, application/xml;q=0.9");
+    const candidates = parseCloudflareFeed(feed, now, profile, source);
     health.fetchedItems = blocks(feed, "item").length;
     health.acceptedCandidates = candidates.length;
     return { candidates, health };
@@ -315,7 +303,14 @@ async function collectCloudflare(profile: Profile, now: Date, fetcher: Fetcher):
 export async function collectSupplementalSources(input: { profile: Profile; now?: Date; fetcher?: Fetcher }): Promise<SourceResult[]> {
   const now = input.now ?? new Date();
   const fetcher = input.fetcher ?? fetch;
-  return Promise.all([collectTldr(input.profile, fetcher), collectAlpha(input.profile, now, fetcher), collectCloudflare(input.profile, now, fetcher)]);
+  const sources = sourcePack(input.profile).sources.filter((source) => source.enabled);
+  return Promise.all(sources.map((source) => {
+    switch (source.id) {
+      case "tldr-ai": return collectTldr(input.profile, fetcher, source);
+      case "alphasignal": return collectAlpha(input.profile, now, fetcher, source);
+      case "cloudflare-agents": return collectCloudflare(input.profile, now, fetcher, source);
+    }
+  }));
 }
 
 function tokenSet(title: string): Set<string> {
@@ -464,8 +459,25 @@ function categoryWeight(candidate: Pick<CandidateStory, "category"> | Pick<Suppl
   return profile.weights.find((weight) => weight.id === candidate.category)?.value ?? 0;
 }
 
+/** Give independent editorial corroboration a small, capped contribution to ranking. */
+export function independentCoverageBoost(corroboration: number): number {
+  return Math.min(Math.max(corroboration, 0), 2) * 4;
+}
+
+function coverageMetadata(lead: StorySourceAttribution, editorialCorroboration: StorySourceAttribution[], evidence: StoryEvidence[]): StoryCoverage {
+  const editorialSourceIds = [...new Set([lead, ...editorialCorroboration]
+    .filter((source) => source.layer === "editorial")
+    .map((source) => source.id))] as StoryCoverage["editorialSourceIds"];
+  return {
+    editorialSourceIds,
+    editorialSourceCount: editorialSourceIds.length,
+    primaryEvidenceCount: evidence.filter((item) => item.kind === "primary").length,
+    boost: independentCoverageBoost(Math.max(0, editorialSourceIds.length - 1))
+  };
+}
+
 function selectionScore(candidate: Pick<CandidateStory, "category" | "score"> | Pick<SupplementalCandidate, "category" | "score">, profile: Profile, opts?: { corroboration?: number; primary?: boolean }): number {
-  return Math.max(0, Math.round(categoryWeight(candidate, profile) * 20 + candidate.score + (opts?.corroboration ?? 0) * 4 + (opts?.primary ? 4 : 0)));
+  return Math.max(0, Math.round(categoryWeight(candidate, profile) * 20 + candidate.score + independentCoverageBoost(opts?.corroboration ?? 0) + (opts?.primary ? 4 : 0)));
 }
 
 function withBaseProvenance(candidate: CandidateStory, profile: Profile): CandidateStory {
@@ -475,6 +487,7 @@ function withBaseProvenance(candidate: CandidateStory, profile: Profile): Candid
     lead: AI_NEWS_SOURCE,
     editorialCorroboration: [],
     evidence,
+    coverage: coverageMetadata(AI_NEWS_SOURCE, [], evidence),
     selection: { score: selectionScore(candidate, profile), reason: "ainews-base" }
   };
   return { ...candidate, sources: evidence.map(({ label, url }) => ({ label, url })), provenance };
@@ -515,6 +528,7 @@ function mergeWithAiNews(base: CandidateStory, supplemental: SupplementalCandida
     lead,
     editorialCorroboration,
     evidence,
+    coverage: coverageMetadata(lead, editorialCorroboration, evidence),
     selection: {
       score: selectionScore(useSupplementalLead ? supplemental : base, profile, { corroboration: editorialCorroboration.length, primary: evidence.some((item) => item.kind === "primary") }),
       reason: "cross-source"
@@ -555,6 +569,7 @@ function novelCandidate(candidate: SupplementalCandidate, profile: Profile, id: 
     lead,
     editorialCorroboration,
     evidence: [evidence],
+    coverage: coverageMetadata(lead, editorialCorroboration, [evidence]),
     selection: {
       score: selectionScore(candidate, profile, { corroboration: editorialCorroboration.length, primary: evidence.kind === "primary" }),
       reason: "strong-fit-supplemental"
@@ -623,6 +638,7 @@ export function buildBlendedCandidateInventory(input: {
   const candidates = [...clustered.slice(0, baseLimit), ...selected.map((item) => item.story)]
     .sort((left, right) => right.provenance!.selection.score - left.provenance!.selection.score || left.id - right.id)
     .map((candidate, index) => ({ ...candidate, id: index + 1 }));
+  const pack = sourcePack(input.profile);
   return {
     candidates,
     overlaps,
@@ -634,7 +650,9 @@ export function buildBlendedCandidateInventory(input: {
       editorialDiscovery: input.mode === "ainews-only" ? [] : ["AlphaSignal", "TLDR AI"],
       primaryEvidenceFeeds: input.mode === "ainews-only" ? [] : ["Cloudflare Agents"],
       selectedSupplemental: selected.length,
-      supplementalCap: MAX_NOVEL_SUPPLEMENTAL
+      supplementalCap: MAX_NOVEL_SUPPLEMENTAL,
+      sourcePackId: pack.id,
+      sourcePackVersion: pack.version
     }
   };
 }
@@ -646,8 +664,11 @@ export function buildSupplementalShadowReport(input: {
   generatedAt: string;
   mode?: "shadow" | "blend";
   selectedForBlend?: SupplementalCandidate[];
+  profile?: Profile;
 }): SupplementalShadowReport {
   const collected = input.sourceResults.flatMap((result) => result.candidates);
+  const pack = input.profile ? sourcePack(input.profile) : getSourcePack();
+  const shadowCaps = new Map(pack.sources.map((source) => [source.id, source.shadowCap]));
   const deduplicated = deduplicateSupplemental(collected);
   const overlaps: SupplementalShadowReport["overlaps"] = [];
   const novel: SupplementalCandidate[] = [];
@@ -663,7 +684,7 @@ export function buildSupplementalShadowReport(input: {
   const selected: Array<{ candidate: SupplementalCandidate; countedFor: SupplementalSourceId }> = [];
   const sourceCounts = new Map<SupplementalSourceId, number>();
   for (const candidate of [...novel].sort((left, right) => right.score - left.score || right.publishedAt.localeCompare(left.publishedAt))) {
-    const source = candidate.sourceAttributions.map((item) => item.sourceId).find((id) => (sourceCounts.get(id) ?? 0) < SOURCE_CAPS[id]);
+    const source = candidate.sourceAttributions.map((item) => item.sourceId).find((id) => (sourceCounts.get(id) ?? 0) < (shadowCaps.get(id) ?? 0));
     if (!source) continue;
     selected.push({ candidate, countedFor: source });
     sourceCounts.set(source, (sourceCounts.get(source) ?? 0) + 1);
@@ -674,6 +695,7 @@ export function buildSupplementalShadowReport(input: {
     mode: input.mode ?? "shadow",
     generatedAt: input.generatedAt,
     baseIssue: { url: input.issue.url, issueDate: input.issue.issueDate, publicationDate: input.issue.publicationDate },
+    sourcePack: { id: pack.id, version: pack.version },
     limits: { modelCandidates: 18, publishedStories: 14, tldr: 3, alphaSignal: 2, cloudflare: 1 },
     sources: input.sourceResults.map((result) => result.health),
     totals: {
@@ -719,7 +741,7 @@ export async function collectSupplementalShadow(input: { rssUrl: string; profile
   const issue = await fetchLatestRss(input.rssUrl, fetcher);
   const aiNewsCandidates = compactIssueInventory(issue, input.profile).candidates;
   const sourceResults = await collectSupplementalSources({ profile: input.profile, now, fetcher });
-  return buildSupplementalShadowReport({ issue, aiNewsCandidates, sourceResults, generatedAt: now.toISOString() });
+  return buildSupplementalShadowReport({ issue, aiNewsCandidates, sourceResults, generatedAt: now.toISOString(), profile: input.profile });
 }
 
 export async function runSupplementalShadow(env: Env, trigger: "cron" | "manual" | "local-scheduled"): Promise<{ status: "healthy" | "degraded" | "failed"; report?: SupplementalShadowReport; error?: string }> {
@@ -740,4 +762,12 @@ export async function runSupplementalShadow(env: Env, trigger: "cron" | "manual"
     console.error(JSON.stringify({ message: "ai-signal supplemental shadow failed", error: message }));
     return { status: "failed", error: message };
   }
+}
+
+function sourceDefinition(profile: Profile, id: SupplementalSourceId): SourceDefinition | undefined {
+  return getSourcePack(profile.sourcePackId).sources.find((source) => source.id === id && source.enabled);
+}
+
+function sourcePack(profile: Profile) {
+  return getSourcePack(profile.sourcePackId);
 }

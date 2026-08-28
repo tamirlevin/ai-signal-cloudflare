@@ -181,6 +181,21 @@ export function rankingExplanation(item, profile) {
       factors.push({ label: "Editorial marker", value: `Pinned · ${weight.label}`, state: "Label only", tone: "pinned" });
     }
   }
+  const editorialSources = [];
+  const provenance = item?.provenance;
+  if (provenance?.lead?.layer === "editorial") editorialSources.push(provenance.lead);
+  for (const source of provenance?.editorialCorroboration ?? []) {
+    if (source.layer === "editorial") editorialSources.push(source);
+  }
+  const seenEditorialIds = new Set();
+  const distinctEditorialSources = editorialSources.filter((source) => {
+    if (seenEditorialIds.has(source.id)) return false;
+    seenEditorialIds.add(source.id);
+    return true;
+  });
+  if (distinctEditorialSources.length > 1) {
+    factors.push({ label: "Coverage", value: distinctEditorialSources.map((source) => source.name).join(" + "), state: `${distinctEditorialSources.length} editorial sources`, tone: "neutral" });
+  }
   factors.push({ label: "Editorial strength", value: editorialStrengthLabel(item.base), state: "Underlying", tone: "neutral" });
   return { primary: rankingReason(item, profile), factors };
 }

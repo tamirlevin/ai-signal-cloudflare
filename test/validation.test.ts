@@ -41,6 +41,21 @@ describe("editorial contracts", () => {
     expect(validated.collection).toEqual(value.collection);
     expect(validated.signals[0]?.provenance).toEqual(value.signals[0]?.provenance);
   });
+  it("validates source-pack identity and collector-derived coverage metadata", () => {
+    const value = edition();
+    value.collection = { mode: "blended", baseSource: "AInews", editorialDiscovery: ["AlphaSignal", "TLDR AI"], primaryEvidenceFeeds: ["Cloudflare Agents"], selectedSupplemental: 1, supplementalCap: 2, sourcePackId: "core-ai", sourcePackVersion: 1 };
+    value.signals[0]!.provenance = {
+      clusterId: "story-example",
+      lead: { id: "alphasignal", name: "AlphaSignal", layer: "editorial" },
+      editorialCorroboration: [{ id: "ainews", name: "AInews", layer: "editorial" }, { id: "tldr-ai", name: "TLDR AI", layer: "editorial" }],
+      evidence: [{ label: "Official", url: "https://example.com/story", kind: "primary" }],
+      coverage: { editorialSourceIds: ["alphasignal", "ainews", "tldr-ai"], editorialSourceCount: 3, primaryEvidenceCount: 1, boost: 8 },
+      selection: { score: 92, reason: "cross-source" }
+    };
+    const validated = validateEdition(value, DEFAULT_PROFILE, new Set(["https://example.com/story"]));
+    expect(validated.collection?.sourcePackId).toBe("core-ai");
+    expect(validated.signals[0]?.provenance?.coverage).toEqual(value.signals[0]?.provenance?.coverage);
+  });
   it("rejects repeated underlying story URLs", () => {
     const value = edition();
     value.signals.push({ title: "Different framing", summary: "Summary", source: "Source", url: "https://example.com/story", category: "agents", categoryLabel: "Agents in practice", base: 80 });

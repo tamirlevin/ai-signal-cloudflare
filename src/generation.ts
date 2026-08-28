@@ -181,7 +181,8 @@ export async function generateLatestEdition(env: Env, trigger: Trigger): Promise
         sourceResults,
         generatedAt: new Date().toISOString(),
         mode: "blend",
-        selectedForBlend: blended.selectedSupplemental
+        selectedForBlend: blended.selectedSupplemental,
+        profile
       });
       const failedSources = report.sources.filter((source) => source.status === "failed").length;
       const degradedSources = report.sources.filter((source) => source.status === "degraded").length;

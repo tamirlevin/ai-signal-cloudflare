@@ -1,4 +1,5 @@
-import type { Edition, Profile, Source, StoryEvidence, StoryProvenance, StorySourceAttribution } from "./contracts";
+import type { Edition, Profile, Source, SourcePackId, StoryCoverage, StoryEvidence, StoryProvenance, StorySourceAttribution } from "./contracts";
+import { DEFAULT_SOURCE_PACK_ID, isSourcePackId } from "./source-packs";
 
 const HTTPS = /^https:\/\/[^\s]+$/i;
 const ID = /^[a-z][A-Za-z0-9]*$/;
@@ -55,6 +56,24 @@ function storySource(value: unknown, path: string): StorySourceAttribution {
   return { id: id as StorySourceAttribution["id"], name: text(source.name, `${path}.name`), layer };
 }
 
+function storyCoverage(value: unknown, path: string): StoryCoverage {
+  const coverage = object(value, path);
+  const permittedEditorialIds = new Set(["ainews", "tldr-ai", "alphasignal"]);
+  const editorialSourceIds = list(coverage.editorialSourceIds, `${path}.editorialSourceIds`, 0, 3).map((item, index) => {
+    const id = text(item, `${path}.editorialSourceIds[${index}]`);
+    if (!permittedEditorialIds.has(id)) throw new ValidationError(`${path}.editorialSourceIds[${index}] is not an editorial source`);
+    return id as StoryCoverage["editorialSourceIds"][number];
+  });
+  if (new Set(editorialSourceIds).size !== editorialSourceIds.length) throw new ValidationError(`${path}.editorialSourceIds contains duplicates`);
+  const editorialSourceCount = integer(coverage.editorialSourceCount, `${path}.editorialSourceCount`, 0, 3);
+  if (editorialSourceCount !== editorialSourceIds.length) throw new ValidationError(`${path}.editorialSourceCount does not match editorialSourceIds`);
+  const primaryEvidenceCount = integer(coverage.primaryEvidenceCount, `${path}.primaryEvidenceCount`, 0, 6);
+  const boost = integer(coverage.boost, `${path}.boost`, 0, 8);
+  const expectedBoost = Math.min(Math.max(editorialSourceCount - 1, 0), 2) * 4;
+  if (boost !== expectedBoost) throw new ValidationError(`${path}.boost does not match editorial coverage`);
+  return { editorialSourceIds, editorialSourceCount, primaryEvidenceCount, boost };
+}
+
 function storyProvenance(value: unknown, path: string, permittedUrls?: Set<string>): StoryProvenance {
   const provenance = object(value, path);
   const evidence = list(provenance.evidence, `${path}.evidence`, 1, 6).map((raw, index): StoryEvidence => {
@@ -77,6 +96,7 @@ function storyProvenance(value: unknown, path: string, permittedUrls?: Set<strin
       return source;
     }),
     evidence,
+    ...(provenance.coverage === undefined ? {} : { coverage: storyCoverage(provenance.coverage, `${path}.coverage`) }),
     selection: { score: integer(selection.score, `${path}.selection.score`, 0, 999), reason: reason as StoryProvenance["selection"]["reason"] }
   };
 }
@@ -88,13 +108,18 @@ function collectionMetadata(value: unknown): NonNullable<Edition["collection"]> 
   if (text(collection.baseSource, "edition.collection.baseSource") !== "AInews") throw new ValidationError("edition.collection.baseSource must be AInews");
   const supplementalCap = integer(collection.supplementalCap, "edition.collection.supplementalCap", 0, 14);
   const selectedSupplemental = integer(collection.selectedSupplemental, "edition.collection.selectedSupplemental", 0, supplementalCap);
+  const sourcePackId = collection.sourcePackId === undefined ? undefined : text(collection.sourcePackId, "edition.collection.sourcePackId");
+  if (sourcePackId !== undefined && !isSourcePackId(sourcePackId)) throw new ValidationError("edition.collection.sourcePackId is not recognized");
+  const sourcePackVersion = collection.sourcePackVersion === undefined ? undefined : integer(collection.sourcePackVersion, "edition.collection.sourcePackVersion", 1, 999999);
   return {
     mode,
     baseSource: "AInews",
     editorialDiscovery: list(collection.editorialDiscovery, "edition.collection.editorialDiscovery", 0, 4).map((item, index) => text(item, `edition.collection.editorialDiscovery[${index}]`)),
     primaryEvidenceFeeds: list(collection.primaryEvidenceFeeds, "edition.collection.primaryEvidenceFeeds", 0, 4).map((item, index) => text(item, `edition.collection.primaryEvidenceFeeds[${index}]`)),
     selectedSupplemental,
-    supplementalCap
+    supplementalCap,
+    ...(sourcePackId === undefined ? {} : { sourcePackId: sourcePackId as SourcePackId }),
+    ...(sourcePackVersion === undefined ? {} : { sourcePackVersion })
   };
 }
 
@@ -198,6 +223,8 @@ export function validateProfile(raw: unknown, expectedVersion?: number): Profile
   const profile = object(raw, "profile");
   const version = integer(profile.version, "profile.version", 1, 999999);
   if (expectedVersion !== undefined && version !== expectedVersion) throw new ValidationError("profile.version must be the next profile version");
+  const sourcePackId = profile.sourcePackId === undefined ? DEFAULT_SOURCE_PACK_ID : text(profile.sourcePackId, "profile.sourcePackId");
+  if (!isSourcePackId(sourcePackId)) throw new ValidationError("profile.sourcePackId is not recognized");
   const range = list(profile.storyBudgetRange, "profile.storyBudgetRange", 2, 2);
   const low = integer(range[0], "profile.storyBudgetRange[0]", 5, 14);
   const high = integer(range[1], "profile.storyBudgetRange[1]", 5, 14);
@@ -214,6 +241,7 @@ export function validateProfile(raw: unknown, expectedVersion?: number): Profile
   });
   return {
     version,
+    sourcePackId,
     storyBudget,
     storyBudgetRange: [low, high],
     exceptionalStoryOverride: bool(profile.exceptionalStoryOverride, "profile.exceptionalStoryOverride"),

@@ -1,5 +1,6 @@
 export const DEFAULT_PROFILE: Profile = {
   version: 2,
+  sourcePackId: "core-ai",
   storyBudget: 7,
   storyBudgetRange: [5, 14],
   exceptionalStoryOverride: true,
@@ -22,8 +23,10 @@ export const DEFAULT_PROFILE: Profile = {
 };
 
 export type Weight = { id: string; label: string; value: number };
+export type SourcePackId = "core-ai";
 export type Profile = {
   version: number;
+  sourcePackId: SourcePackId;
   storyBudget: number;
   storyBudgetRange: [number, number];
   exceptionalStoryOverride: boolean;
@@ -42,12 +45,19 @@ export type StorySourceAttribution = {
 };
 /** `direct` means a usable non-aggregator link supplied by a source; it is not independently verified. */
 export type StoryEvidence = Source & { kind: "direct" | "primary" };
+export type StoryCoverage = {
+  editorialSourceIds: Array<Extract<StorySourceId, "ainews" | SupplementalSourceId>>;
+  editorialSourceCount: number;
+  primaryEvidenceCount: number;
+  boost: number;
+};
 export type StoryProvenance = {
   clusterId: string;
   lead: StorySourceAttribution;
   /** Editorial agreement is useful discovery context, but is not primary evidence. */
   editorialCorroboration: StorySourceAttribution[];
   evidence: StoryEvidence[];
+  coverage?: StoryCoverage;
   selection: {
     score: number;
     reason: "ainews-base" | "cross-source" | "strong-fit-supplemental";
@@ -84,6 +94,8 @@ export type Edition = {
     primaryEvidenceFeeds: string[];
     selectedSupplemental: number;
     supplementalCap: number;
+    sourcePackId?: SourcePackId;
+    sourcePackVersion?: number;
   };
   presentation: {
     hotTitle: string;
@@ -153,6 +165,24 @@ export type RunStatus = {
 };
 
 export type SupplementalSourceId = "tldr-ai" | "alphasignal" | "cloudflare-agents";
+export type SourcePackSource = {
+  id: SupplementalSourceId;
+  name: string;
+  kind: "discovery" | "primary";
+  url: string;
+  enabled: boolean;
+  shadowCap: number;
+  lookbackHours?: number;
+  enrichLimit?: number;
+};
+
+export type SourcePack = {
+  id: SourcePackId;
+  version: number;
+  label: string;
+  description: string;
+  sources: SourcePackSource[];
+};
 export type SupplementalSourceHealth = {
   id: SupplementalSourceId;
   name: string;
@@ -190,6 +220,7 @@ export type SupplementalShadowReport = {
   mode: "shadow" | "blend";
   generatedAt: string;
   baseIssue: { url: string; issueDate: string; publicationDate: string };
+  sourcePack?: { id: SourcePackId; version: number };
   limits: { modelCandidates: 18; publishedStories: 14; tldr: 3; alphaSignal: 2; cloudflare: 1 };
   sources: SupplementalSourceHealth[];
   totals: {

@@ -23,6 +23,7 @@ The compatibility date is pinned to `2026-08-11`. Move it forward with a tested 
 ## What it does
 
 - Fetches the newest item in `https://news.smol.ai/rss.xml` as the base issue, then (when blending is enabled) samples the newest TLDR AI issue, up to five enriched AlphaSignal discoveries from a 72-hour source window (falling back to the newest available item when AlphaSignal is quiet), and recent Cloudflare Agents posts.
+- Uses the versioned `core-ai` source pack (v1) to keep public feeds, source roles, lookback windows, and shadow caps explicit and reusable for future team profiles.
 - Treats AlphaSignal and TLDR AI as trusted editorial discovery, AInews as the independent base/cross-check and coverage layer, and the narrow Cloudflare feed as known primary evidence. Newsletter agreement is recorded as editorial corroboration, never as proof.
 - Decodes the AInews issue HTML, captures its exact direct `href` values, and admits a supplemental URL only when it is a usable HTTPS linked/primary source. A linked source is supplied by the feed but not independently verified; primary status is reserved for the explicit Cloudflare host allowlist. Aggregator-only, social-profile, tracking, and invalid URLs cannot become novel published stories.
 - Rejects an edition if any story, provenance-evidence, or synthesis URL was not supplied by the deterministic collector. The AInews issue URL and publication date remain source-derived.
@@ -50,6 +51,7 @@ The reader shows the latest collector check, the brief generation time, and the 
 
 - canonicalizes URLs, strips tracking parameters, and merges exact-URL, fuzzy-title, and product-version duplicates;
 - records one editorial lead, separate editorial cross-checks, and linked/primary evidence for each cluster;
+- applies a small capped deterministic coverage boost for distinct editorial sources (AInews, TLDR AI, AlphaSignal); Cloudflare Agents is tracked as primary evidence, and X is never fetched or counted as corroboration;
 - prefers known primary evidence, then a usable linked source, while retaining the original AInews links in the permitted source catalogue;
 - admits only strong profile-fit novel candidates with usable linked/primary URLs, at most two in total and at most one per lead source;
 - preserves the ceilings of 18 model candidates and 14 published stories, with AInews occupying at least 16 slots when the base inventory is full; and
