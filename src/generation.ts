@@ -122,6 +122,11 @@ export function isModelTimeout(error: unknown): boolean {
   return error instanceof Error && /(?:3007|3046|request timeout|timed out)/i.test(error.message);
 }
 
+export function isModelJsonInvalid(error: unknown): boolean {
+  if (error instanceof SyntaxError) return true;
+  return error instanceof Error && error.message === "Model did not return a JSON edition";
+}
+
 export function supportsStructuredOutput(model: string): boolean {
   return new Set([
     "@cf/meta/llama-3.1-8b-instruct-fast",
@@ -136,8 +141,7 @@ export function supplementalBlendEnabled(env: { SUPPLEMENTAL_BLEND_ENABLED?: str
 }
 
 function canRepairModelOutput(error: unknown): boolean {
-  if (error instanceof ValidationError || error instanceof SyntaxError) return true;
-  return error instanceof Error && error.message === "Model did not return a JSON edition";
+  return error instanceof ValidationError || isModelJsonInvalid(error);
 }
 
 /** Runs synchronously so scheduled() owns the promise and preserves the last good edition on failure. */
@@ -224,8 +228,14 @@ export async function generateLatestEdition(env: Env, trigger: Trigger): Promise
       } catch (error) {
         lastError = error;
         const fallback = env.AI_FALLBACK_MODEL.trim();
-        if (isModelTimeout(error) && !usedFallback && fallback && fallback !== modelUsed) {
-          console.warn(JSON.stringify({ message: "ai-signal primary model timed out; switching once", issueUrl, primaryModel: modelUsed, fallbackModel: fallback }));
+        if ((isModelTimeout(error) || isModelJsonInvalid(error)) && !usedFallback && fallback && fallback !== modelUsed) {
+          console.warn(JSON.stringify({
+            message: "ai-signal primary model failed; switching once",
+            issueUrl,
+            reason: isModelTimeout(error) ? "timeout" : "invalid-json",
+            primaryModel: modelUsed,
+            fallbackModel: fallback
+          }));
           modelUsed = fallback;
           usedFallback = true;
           repair = undefined;

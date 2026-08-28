@@ -65,14 +65,18 @@ describe("supplemental source parsing", () => {
     expect(stories[0]?.summary).toContain("permission scopes");
   });
 
-  it("limits AlphaSignal discovery to the preceding 24 hours and prefers a specific evidence link", () => {
+  it("uses a 72-hour AlphaSignal window and falls back to the newest available item", () => {
     const sitemap = `<urlset>
       <url><loc>https://alphasignal.ai/news/new-codex-agent-runtime</loc><lastmod>2026-08-15T00:30:00Z</lastmod></url>
       <url><loc>https://alphasignal.ai/news/old-model-release</loc><lastmod>2026-08-13T23:59:00Z</lastmod></url>
+      <url><loc>https://alphasignal.ai/news/too-old-model-release</loc><lastmod>2026-08-11T23:59:00Z</lastmod></url>
     </urlset>`;
     const recent = parseAlphaSitemap(sitemap, new Date("2026-08-15T02:00:00Z"));
-    expect(recent).toHaveLength(1);
+    expect(recent).toHaveLength(2);
     expect(recent[0]?.title).toContain("Codex Agent Runtime");
+
+    const quiet = `<urlset><url><loc>https://alphasignal.ai/news/quiet-day-fallback</loc><lastmod>2026-08-10T00:00:00Z</lastmod></url></urlset>`;
+    expect(parseAlphaSitemap(quiet, new Date("2026-08-15T02:00:00Z"))).toHaveLength(1);
 
     const article = `<html><head><meta name="description" content="A new agent runtime with replayable traces."></head><body>
       <h1>OpenAI releases a replayable Codex agent runtime</h1>

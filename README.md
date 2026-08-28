@@ -8,13 +8,13 @@ The compatibility date is pinned to `2026-08-11`. Move it forward with a tested 
 
 ## What it does
 
-- Fetches the newest item in `https://news.smol.ai/rss.xml` as the base issue, then (when blending is enabled) samples the newest TLDR AI issue, up to five enriched AlphaSignal discoveries from the preceding 24 hours, and recent Cloudflare Agents posts.
+- Fetches the newest item in `https://news.smol.ai/rss.xml` as the base issue, then (when blending is enabled) samples the newest TLDR AI issue, up to five enriched AlphaSignal discoveries from a 72-hour source window (falling back to the newest available item when AlphaSignal is quiet), and recent Cloudflare Agents posts.
 - Treats AlphaSignal and TLDR AI as trusted editorial discovery, AInews as the independent base/cross-check and coverage layer, and the narrow Cloudflare feed as known primary evidence. Newsletter agreement is recorded as editorial corroboration, never as proof.
 - Decodes the AInews issue HTML, captures its exact direct `href` values, and admits a supplemental URL only when it is a usable HTTPS linked/primary source. A linked source is supplied by the feed but not independently verified; primary status is reserved for the explicit Cloudflare host allowlist. Aggregator-only, social-profile, tracking, and invalid URLs cannot become novel published stories.
 - Rejects an edition if any story, provenance-evidence, or synthesis URL was not supplied by the deterministic collector. The AInews issue URL and publication date remain source-derived.
 - Compacts each long issue into an 18-block, profile-aware candidate inventory, retaining priority material plus a diversity sample.
 - Builds source-aware clusters, leads, editorial corroboration, evidence metadata, Hot Topics, and individual signal cards deterministically. One cluster becomes at most one source-bound card; Workers AI writes only the cross-story synthesis.
-- Uses `@cf/openai/gpt-oss-120b` normally and switches once to `@cf/zai-org/glm-4.7-flash` only when the primary model times out.
+- Uses `@cf/openai/gpt-oss-120b` normally and switches once to `@cf/zai-org/glm-4.7-flash` when the primary model times out or returns malformed JSON.
 - Ships with AI Signal Profile v2 as its empty-database default: up to 14 qualified candidates without padding, seven stories shown by default, category weights, watched topics, and rare exceptional-story override. Saved D1 profiles advance independently.
 - Stores a validated edition JSON plus its profile snapshot in D1. The last 15 successfully published editions are retained; failed runs only create a run record and cannot replace the last good edition.
 - Persists sparse personal overrides in the viewer's browser only and applies them to current and historical editions. No name, email, click history, or account is stored.
@@ -76,7 +76,7 @@ npx wrangler d1 create ai-signal
 npx wrangler d1 migrations apply ai-signal --local
 ```
 
-`AI_MODEL` defaults to `@cf/openai/gpt-oss-120b`, with `@cf/zai-org/glm-4.7-flash` as a one-time timeout fallback. Before inference, the collector deterministically ranks and compacts the AInews base, clusters it with gated supplemental discoveries, and selects at most 18 profile-aware candidates while retaining permitted source links. It materializes the story inventory itself; the model receives the ranked source-aware candidates only to produce synthesis and presentation copy. Output is capped at 3,200 tokens. GPT-OSS uses Workers AI structured JSON mode; GLM receives the same strict JSON contract in the prompt. Set `AI_GATEWAY_ID` to an existing gateway ID to route the Workers AI binding through that gateway; leave it empty to call the binding directly. No provider API key is used or stored.
+`AI_MODEL` defaults to `@cf/openai/gpt-oss-120b`, with `@cf/zai-org/glm-4.7-flash` as a one-time fallback for a timeout or malformed JSON response. Before inference, the collector deterministically ranks and compacts the AInews base, clusters it with gated supplemental discoveries, and selects at most 18 profile-aware candidates while retaining permitted source links. It materializes the story inventory itself; the model receives the ranked source-aware candidates only to produce synthesis and presentation copy. Output is capped at 3,200 tokens. GPT-OSS uses Workers AI structured JSON mode; GLM receives the same strict JSON contract in the prompt. Set `AI_GATEWAY_ID` to an existing gateway ID to route the Workers AI binding through that gateway; leave it empty to call the binding directly. No provider API key is used or stored.
 
 ## Deploy runbook
 

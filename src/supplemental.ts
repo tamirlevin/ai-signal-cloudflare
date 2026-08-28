@@ -42,6 +42,8 @@ const STOP_WORDS = new Set(["a", "an", "and", "are", "as", "at", "be", "by", "fo
 const MAX_FEED_BYTES = 2_000_000;
 const MAX_PAGE_BYTES = 2_500_000;
 const ALPHA_ENRICH_LIMIT = 5;
+const ALPHA_LOOKBACK_HOURS = 72;
+const ALPHA_LOOKBACK_MS = ALPHA_LOOKBACK_HOURS * 60 * 60 * 1000;
 export const MAX_BLENDED_CANDIDATES = 18;
 export const MAX_NOVEL_SUPPLEMENTAL = 2;
 const MAX_NOVEL_PER_SOURCE = 1;
@@ -177,12 +179,17 @@ function titleFromAlphaUrl(value: string): string {
 }
 
 export function parseAlphaSitemap(xml: string, now: Date): Array<{ title: string; url: string; publishedAt: string }> {
-  const cutoff = now.getTime() - 24 * 60 * 60 * 1000;
-  return blocks(xml, "url").map((entry) => ({
+  const cutoff = now.getTime() - ALPHA_LOOKBACK_MS;
+  const available = blocks(xml, "url").map((entry) => ({
     title: titleFromAlphaUrl(plainText(tag(entry, "loc"))),
     url: canonicalizeSupplementalUrl(plainText(tag(entry, "loc"))) ?? "",
     publishedAt: isoDate(tag(entry, "lastmod")) ?? ""
-  })).filter((item) => item.title && item.url && item.publishedAt && new Date(item.publishedAt).getTime() >= cutoff).sort((left, right) => right.publishedAt.localeCompare(left.publishedAt));
+  })).filter((item) => item.title && item.url && item.publishedAt).sort((left, right) => right.publishedAt.localeCompare(left.publishedAt));
+  const recent = available.filter((item) => new Date(item.publishedAt).getTime() >= cutoff);
+  // AlphaSignal is a low-frequency editorial source rather than a daily RSS issue.
+  // Keep the newest available item when the source is quiet so the blend does not
+  // silently disappear; the collector marks this fallback as degraded below.
+  return recent.length ? recent : available.slice(0, 1);
 }
 
 function evidenceUrlScore(title: string, anchorText: string, value: string): number {
@@ -260,6 +267,12 @@ async function collectAlpha(profile: Profile, now: Date, fetcher: Fetcher): Prom
     const sitemap = await boundedText(fetcher, SOURCES.alpha.url, MAX_FEED_BYTES, "application/xml, text/xml;q=0.9");
     const recent = parseAlphaSitemap(sitemap, now);
     health.fetchedItems = recent.length;
+    const freshnessCutoff = now.getTime() - ALPHA_LOOKBACK_MS;
+    const newest = recent[0];
+    if (newest && new Date(newest.publishedAt).getTime() < freshnessCutoff) {
+      health.status = "degraded";
+      health.errors.push(`no AlphaSignal item in the preceding ${ALPHA_LOOKBACK_HOURS} hours; using the newest available item`);
+    }
     const prioritized = recent.map((item) => ({ ...item, score: scoreCandidateForProfile(item.title, profile) })).sort((left, right) => right.score - left.score || right.publishedAt.localeCompare(left.publishedAt)).slice(0, ALPHA_ENRICH_LIMIT);
     const enriched = await Promise.all(prioritized.map(async (item) => {
       try {
