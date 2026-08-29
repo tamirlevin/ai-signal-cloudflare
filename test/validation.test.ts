@@ -153,6 +153,16 @@ describe("editorial contracts", () => {
     const value = edition();
     expect(extractGeneratedEdition({ choices: [{ message: { content: JSON.stringify(value) } }] }).issue.url).toBe(value.issue.url);
   });
+  it("reads Workers AI Responses output text", () => {
+    const value = edition();
+    expect(extractGeneratedEdition({ output_text: JSON.stringify(value), status: "completed" }).issue.url).toBe(value.issue.url);
+  });
+  it("reports safe completion diagnostics when a reasoning model emits no final text", () => {
+    expect(() => extractGeneratedEdition({
+      choices: [{ finish_reason: "length", message: { content: null } }],
+      usage: { completion_tokens: 3200, completion_tokens_details: { reasoning_tokens: 3198 } }
+    })).toThrow(/finish_reason=length; content=null; completion_tokens=3200; reasoning_tokens=3198/);
+  });
   it("compacts a large issue into a broad profile-aware candidate inventory", () => {
     const anchors = Array.from({ length: 60 }, (_, index) => ({ label: `Story ${index}`, url: `https://example.com/story-${index}` }));
     const body = anchors.map((source, index) => `${index === 59 ? "Codex agent harness permissions and practical workflow" : index % 2 ? "Routine infrastructure and training update" : "A newly released integration platform"} [${source.label}](${source.url}) ${"detail ".repeat(80)}`).join("\n");
@@ -167,6 +177,7 @@ describe("editorial contracts", () => {
   it("uses prompt-only JSON for the fallback model", () => {
     const issue = { url: "https://news.smol.ai/issues/test", issueDate: "2026-08-12", publicationDate: "12 August 2026", body: "Issue", anchors: [{ label: "Story", url: "https://example.com/story" }] };
     expect(generationInput(issue, DEFAULT_PROFILE, undefined, false)).not.toHaveProperty("response_format");
+    expect(generationInput(issue, DEFAULT_PROFILE, undefined, false)).toHaveProperty("reasoning_effort", "low");
     expect(generationInput(issue, DEFAULT_PROFILE, undefined, true)).toHaveProperty("response_format");
     expect(generationInput(issue, DEFAULT_PROFILE, undefined, true)).toHaveProperty("max_completion_tokens", 3200);
     expect(generationInput(issue, DEFAULT_PROFILE, undefined, true, "@cf/openai/gpt-oss-120b")).not.toHaveProperty("chat_template_kwargs");

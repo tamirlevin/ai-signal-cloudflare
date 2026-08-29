@@ -91,6 +91,7 @@ describe("generation model fallback", () => {
 
   it("switches once after malformed primary JSON and records the successful fallback model", async () => {
     const modelCalls: string[] = [];
+    const modelInputs: ChatCompletionsMessagesInput[] = [];
     const runStatements: RecordedStatement[] = [];
     const fetcher = vi.fn(async () => new Response(rss, { status: 200, headers: { "Content-Type": "application/rss+xml" } }));
     vi.stubGlobal("fetch", fetcher);
@@ -98,11 +99,12 @@ describe("generation model fallback", () => {
     const env = {
       DB: fakeDatabase(runStatements),
       AI: {
-        async run(model: string) {
+        async run(model: string, input: ChatCompletionsMessagesInput) {
           modelCalls.push(model);
-          return modelCalls.length === 1
-            ? { choices: [{ message: { content: "{not valid json" } }] }
-            : { choices: [{ message: { content: JSON.stringify(generatedEdition) } }] };
+          modelInputs.push(input);
+          return modelCalls.length < 3
+            ? { choices: [{ finish_reason: "length", message: { content: "{not valid json" } }] }
+            : { choices: [{ finish_reason: "stop", message: { content: JSON.stringify(generatedEdition) } }] };
         }
       },
       ASSETS: { fetch: vi.fn() },
@@ -118,7 +120,11 @@ describe("generation model fallback", () => {
     const result = await generateLatestEdition(env, "manual");
 
     expect(result.status).toBe("success");
-    expect(modelCalls).toEqual(["@cf/openai/gpt-oss-120b", "@cf/zai-org/glm-4.7-flash"]);
+    expect(modelCalls).toEqual(["@cf/openai/gpt-oss-120b", "@cf/openai/gpt-oss-120b", "@cf/zai-org/glm-4.7-flash"]);
+    expect(modelInputs[0]).toHaveProperty("response_format");
+    expect(modelInputs[1]?.messages.at(-1)?.content).toContain("previous output was rejected");
+    expect(modelInputs[2]).not.toHaveProperty("response_format");
+    expect(modelInputs[2]).toHaveProperty("reasoning_effort", "low");
     expect(fetcher).toHaveBeenCalledTimes(1);
     const successfulRun = runStatements.find((statement) => statement.sql.startsWith("INSERT INTO runs"));
     expect(successfulRun?.values[4]).toBe("success");

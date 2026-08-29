@@ -374,26 +374,86 @@ export function generationInput(issue: RssIssue, profile: Profile, repair?: stri
   const input: ChatCompletionsMessagesInput = {
     messages: editorialMessages(issue, profile, repair),
     max_completion_tokens: 3200,
+    reasoning_effort: "low",
     temperature: 0.2,
     frequency_penalty: 0.35,
     presence_penalty: 0.15
   };
   if (!useStructuredOutput) return input;
-  const structured = { ...input, reasoning_effort: "low" as const, response_format: { type: "json_schema" as const, json_schema: { name: "ai_signal_edition", strict: true, schema: EDITION_SCHEMA } } };
+  const structured = { ...input, response_format: { type: "json_schema" as const, json_schema: { name: "ai_signal_edition", strict: true, schema: EDITION_SCHEMA } } };
   return model === "@cf/meta/llama-3.1-8b-instruct-fast" ? { ...structured, chat_template_kwargs: { enable_thinking: false } } : structured;
 }
 
+export class ModelJsonError extends Error {
+  override name = "ModelJsonError";
+}
+
+function record(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function unwrapJsonFence(value: string): string {
+  const trimmed = value.trim();
+  return trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i)?.[1]?.trim() ?? trimmed;
+}
+
+function responseDiagnostic(raw: unknown): string {
+  if (!record(raw)) return `response_type=${raw === null ? "null" : typeof raw}`;
+  const details: string[] = [`keys=${Object.keys(raw).sort().slice(0, 8).join(",") || "none"}`];
+  const choices = Array.isArray(raw.choices) ? raw.choices : [];
+  const choice = record(choices[0]) ? choices[0] : undefined;
+  if (typeof choice?.finish_reason === "string") details.push(`finish_reason=${choice.finish_reason}`);
+  const message = record(choice?.message) ? choice.message : undefined;
+  if (message && "content" in message) {
+    const content = message.content;
+    details.push(`content=${content === null ? "null" : Array.isArray(content) ? `parts:${content.length}` : typeof content}`);
+  }
+  const usage = record(raw.usage) ? raw.usage : undefined;
+  if (typeof usage?.completion_tokens === "number") details.push(`completion_tokens=${usage.completion_tokens}`);
+  const completionDetails = record(usage?.completion_tokens_details) ? usage.completion_tokens_details : undefined;
+  if (typeof completionDetails?.reasoning_tokens === "number") details.push(`reasoning_tokens=${completionDetails.reasoning_tokens}`);
+  if (typeof raw.status === "string") details.push(`status=${raw.status}`);
+  const incomplete = record(raw.incomplete_details) ? raw.incomplete_details : undefined;
+  if (typeof incomplete?.reason === "string") details.push(`incomplete_reason=${incomplete.reason}`);
+  return details.join("; ");
+}
+
+function textParts(value: unknown, acceptedType: "text" | "output_text"): string {
+  if (!Array.isArray(value)) return "";
+  return value.flatMap((part) => record(part) && part.type === acceptedType && typeof part.text === "string" ? [part.text] : []).join("");
+}
+
+function parseModelJson(value: string, diagnostic: string): Edition {
+  const text = unwrapJsonFence(value);
+  try {
+    return JSON.parse(text) as Edition;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new ModelJsonError(`Model returned invalid JSON (${diagnostic}; chars=${text.length}): ${detail}`);
+  }
+}
+
 export function extractGeneratedEdition(raw: unknown): Edition {
-  if (typeof raw === "object" && raw !== null && "response" in raw) {
-    const response = (raw as { response: unknown }).response;
-    if (typeof response === "object" && response !== null) return response as Edition;
-    if (typeof response === "string") return JSON.parse(response.replace(/^```json\s*|\s*```$/g, "")) as Edition;
+  const diagnostic = responseDiagnostic(raw);
+  if (record(raw) && "response" in raw) {
+    const response = raw.response;
+    if (record(response)) return response as Edition;
+    if (typeof response === "string") return parseModelJson(response, `format=response; ${diagnostic}`);
   }
-  if (typeof raw === "string") return JSON.parse(raw.replace(/^```json\s*|\s*```$/g, "")) as Edition;
-  if (typeof raw === "object" && raw !== null && "choices" in raw) {
-    const content = (raw as { choices?: Array<{ message?: { content?: string | Array<{ type?: string; text?: string }> | null } }> }).choices?.[0]?.message?.content;
-    const text = typeof content === "string" ? content : Array.isArray(content) ? content.filter((part) => part.type === "text").map((part) => part.text ?? "").join("") : "";
-    if (text) return JSON.parse(text.replace(/^```json\s*|\s*```$/g, "")) as Edition;
+  if (typeof raw === "string") return parseModelJson(raw, diagnostic);
+  if (record(raw) && typeof raw.output_text === "string" && raw.output_text) {
+    return parseModelJson(raw.output_text, `format=responses-output-text; ${diagnostic}`);
   }
-  throw new Error("Model did not return a JSON edition");
+  if (record(raw) && Array.isArray(raw.output)) {
+    const text = raw.output.flatMap((item) => record(item) ? [textParts(item.content, "output_text")] : []).join("");
+    if (text) return parseModelJson(text, `format=responses-output; ${diagnostic}`);
+  }
+  if (record(raw) && Array.isArray(raw.choices)) {
+    const choice = record(raw.choices[0]) ? raw.choices[0] : undefined;
+    const message = record(choice?.message) ? choice.message : undefined;
+    const content = message?.content;
+    const text = typeof content === "string" ? content : textParts(content, "text");
+    if (text) return parseModelJson(text, `format=chat-completions; ${diagnostic}`);
+  }
+  throw new ModelJsonError(`Model did not return a JSON edition (${diagnostic})`);
 }

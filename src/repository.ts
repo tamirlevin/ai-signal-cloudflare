@@ -1,5 +1,6 @@
 import type { Edition, Profile, RunStatus, StoredEdition, SupplementalShadowReport, SupplementalShadowRun } from "./contracts";
 import { DEFAULT_PROFILE } from "./contracts";
+import { ModelJsonError } from "./editorial";
 import { normalizeEditionStories } from "./story-normalization";
 import { synthesisNeedsRepair, ValidationError, validateEdition, validateProfile } from "./validation";
 
@@ -233,7 +234,7 @@ export async function latestSupplementalShadowRun(db: D1Database): Promise<Suppl
 
 export function errorCode(error: unknown): string {
   if (error instanceof ValidationError) return "VALIDATION_FAILED";
-  if (error instanceof SyntaxError) return "MODEL_JSON_INVALID";
+  if (error instanceof SyntaxError || error instanceof ModelJsonError) return "MODEL_JSON_INVALID";
   if (error instanceof Error && /(?:3007|3046|request timeout|timed out)/i.test(error.message)) return "MODEL_TIMEOUT";
   return "GENERATION_FAILED";
 }

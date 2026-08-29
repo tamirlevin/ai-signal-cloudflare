@@ -1,5 +1,5 @@
 import type { Edition, RssIssue, RunResult, Source } from "./contracts";
-import { compactIssueInventory, editorialMessages, extractGeneratedEdition, generationInput, issueFromCandidateInventory, materializeCandidateStories } from "./editorial";
+import { compactIssueInventory, editorialMessages, extractGeneratedEdition, generationInput, issueFromCandidateInventory, materializeCandidateStories, ModelJsonError } from "./editorial";
 import { fetchLatestRss } from "./rss";
 import { claimManualRepublish, completeManualRepublish, errorCode, getActiveProfile, insertEdition, melbourneCalendarDay, publishedEditionState, recordRun, recordSupplementalShadowRun, releaseManualRepublish, replaceEdition, type ManualRepublishClaim } from "./repository";
 import { normalizeEditionStories } from "./story-normalization";
@@ -123,8 +123,7 @@ export function isModelTimeout(error: unknown): boolean {
 }
 
 export function isModelJsonInvalid(error: unknown): boolean {
-  if (error instanceof SyntaxError) return true;
-  return error instanceof Error && error.message === "Model did not return a JSON edition";
+  return error instanceof SyntaxError || error instanceof ModelJsonError;
 }
 
 export function supportsStructuredOutput(model: string): boolean {
@@ -220,6 +219,7 @@ export async function generateLatestEdition(env: Env, trigger: Trigger, options:
     let lastError: unknown;
     let repair: string | undefined;
     let usedFallback = false;
+    let repairedPrimary = false;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
         const raw = await askModel(env, modelUsed, generationInput(modelIssue, profile, repair, supportsStructuredOutput(modelUsed), modelUsed));
@@ -252,11 +252,24 @@ export async function generateLatestEdition(env: Env, trigger: Trigger, options:
       } catch (error) {
         lastError = error;
         const fallback = env.AI_FALLBACK_MODEL.trim();
-        if ((isModelTimeout(error) || isModelJsonInvalid(error)) && !usedFallback && fallback && fallback !== modelUsed) {
+        const repairable = canRepairModelOutput(error);
+        const hasAttemptRemaining = attempt < 2;
+        if (hasAttemptRemaining && !usedFallback && repairable && !repairedPrimary) {
+          repairedPrimary = true;
+          repair = String(error).slice(0, 280);
+          console.warn(JSON.stringify({
+            message: "ai-signal primary model output rejected; retrying once with repair",
+            issueUrl,
+            model: modelUsed,
+            reason: error instanceof ValidationError ? "validation" : "invalid-json"
+          }));
+          continue;
+        }
+        if (hasAttemptRemaining && !usedFallback && (isModelTimeout(error) || repairable) && fallback && fallback !== modelUsed) {
           console.warn(JSON.stringify({
             message: "ai-signal primary model failed; switching once",
             issueUrl,
-            reason: isModelTimeout(error) ? "timeout" : "invalid-json",
+            reason: isModelTimeout(error) ? "timeout" : error instanceof ValidationError ? "validation" : "invalid-json",
             primaryModel: modelUsed,
             fallbackModel: fallback
           }));
@@ -265,8 +278,9 @@ export async function generateLatestEdition(env: Env, trigger: Trigger, options:
           repair = undefined;
           continue;
         }
-        if (attempt < 2 && canRepairModelOutput(error)) {
+        if (hasAttemptRemaining && usedFallback && repairable) {
           repair = String(error).slice(0, 280);
+          console.warn(JSON.stringify({ message: "ai-signal fallback model output rejected; retrying once with repair", issueUrl, model: modelUsed }));
           continue;
         }
         throw error;
