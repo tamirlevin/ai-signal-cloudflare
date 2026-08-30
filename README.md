@@ -20,6 +20,8 @@ See the [interactive flow diagram](docs/architecture/ai-signal-repo-flow.html) f
 
 See [PROJECT_HISTORY.md](PROJECT_HISTORY.md) for the curated engineering decisions, production incidents, and pending verification behind that flow.
 
+Agent sessions should cold-boot from [AGENTS.md](AGENTS.md). It defines the source hierarchy, verification steps, authorization boundaries, and release discipline. Chat history, handoffs, and agent memory are disposable context rather than project authority. If an agent does not automatically discover the file, tell it: “Read `AGENTS.md`, cold-boot from the repository, verify Git and any relevant live state, then propose a plan before changing anything.”
+
 The compatibility date is pinned to `2026-08-11`. Move it forward with a tested Wrangler/workerd update.
 
 ## What it does

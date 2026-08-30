@@ -11,6 +11,7 @@ This is the curated engineering and production history for AI Signal. It records
 - The Cloudflare Agents lane was corrected to remain narrow primary evidence. An unexpected off-host item may support an existing cluster, but cannot count as editorial corroboration or lead a novel discovery-only story. Validation now cross-checks coverage counts against provenance and evidence.
 - Normal refresh remains idempotent. The owner-only manual path can republish an already-published issue once per successful `Australia/Melbourne` calendar day. Migration `0005_manual_republish_guard.sql` introduced the atomic daily claim; failed attempts release it and successful replacement consumes it.
 - GitHub `main` at `adbb5ff0904336dcaf6f0a9df6f53e200c674a16` adds one primary-model repair attempt before fallback, preserves the three-call ceiling, applies low reasoning effort to prompt-only GLM requests, accepts the known Workers AI response shapes, emits safe output diagnostics, and classifies future missing or malformed model JSON as `MODEL_JSON_INVALID`.
+- The repository became the cross-agent continuity layer through a root `AGENTS.md`. Fresh sessions must verify Git and any relevant live state before acting; chat history, handoffs, and agent memory remain disposable, non-authoritative context.
 
 ### Verified production evidence
 
