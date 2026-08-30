@@ -10,9 +10,15 @@ This is the curated engineering and production history for AI Signal. It records
 - The implementation reuses `/api/shadow/latest`; it adds no feed, model call, scoring path, D1 table, schedule, or republish behavior. Shadow failure or endpoint absence remains fail-open for the last good edition.
 - `/api/status` now separates the latest collector outcome from the latest completed `cron` heartbeat. The heartbeat becomes stale after 26 hours; a recent `skipped` cron run counts as healthy because it proves the scheduler and collector completed normally.
 
-### Verification state
+### Verified release evidence
 
-The source change is locally verified by generated Worker types, TypeScript, the full test suite, dry-run packaging, and diff checks before release. It has **not** been deployed in this record, so the public reader and API cannot yet confirm either behavior. Deployment and live endpoint/browser verification remain separate, owner-authorized work.
+- Git commit `0d51289e4848ae2f7d4af70c078816d5349eaaa9` passed generated Worker types, TypeScript, 67 tests in 11 files, dry-run packaging, JavaScript syntax checks, and diff checks before it was pushed to GitHub `main`.
+- The pre-release rollback point was deployment `e2eec775-48b1-4710-b7c8-9f78935d4474`, version 37 `5fba0bbb-98ab-45eb-891b-f9d64c4ba29b`.
+- Cloudflare deployment `6ac23f04-037f-4602-9b8a-4f475be2f7e6` now sends 100% of traffic to version 38 `34a255d0-b6ab-4a50-9f32-d81f69cdec3a`, created at `2026-08-30T23:41:33.698499Z`. Its tag is `git-0d51289`, and its message records the full Git SHA and both enhancements.
+- Public health, status, latest-edition, profile, shadow, and deployed-asset checks returned HTTP 200. `/api/status` reports the `2026-08-30T22:15:19.201Z` cron skip as a healthy scheduled heartbeat with a 26-hour threshold. The matching healthy shadow report exposes five newer candidates, and the reader renders all five as “Fresh since this edition.”
+- Desktop and 390 px browser checks of the deployed assets and public responses showed the two-column/one-column layouts respectively, no horizontal overflow, no page error, and no browser warning or error. The current healthy heartbeat correctly produces no stale alert.
+- D1 still has no pending migrations and no manual republish claims. Read-only queries reported zero rows written; the latest edition remains ID `19126c44-1dab-445c-9ab2-9fd32a56ab92`, issue `2026-08-26`, published at `2026-08-27T23:39:14.782Z`. Deployment did not trigger generation or republishing.
+- The live AInews RSS item remains “not much happened today,” published 26 August. The fresh supplemental section is therefore additive source visibility, not evidence of a new model-generated edition; a successful post-repair production generation remains pending a genuinely newer AInews anchor.
 
 ## 30 August 2026 — source-aware collection, guarded republishing, and model-output recovery
 
