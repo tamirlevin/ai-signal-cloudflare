@@ -164,6 +164,13 @@ export type RunStatus = {
   durationMs: number;
 };
 
+export type ScheduledHeartbeat = {
+  status: "healthy" | "stale" | "missing";
+  staleAfterHours: number;
+  lastCompletedAt?: string;
+  lastOutcome?: RunStatus["status"];
+};
+
 export type SupplementalSourceId = "tldr-ai" | "alphasignal" | "cloudflare-agents";
 export type SourcePackSource = {
   id: SupplementalSourceId;

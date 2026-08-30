@@ -2,6 +2,18 @@
 
 This is the curated engineering and production history for AI Signal. It records consequential decisions, incidents, verified runtime evidence, unresolved uncertainty, and architectural constraints. It is not a release changelog, commit log, or session transcript.
 
+## 31 August 2026 — fresh source signals and scheduled heartbeat visibility
+
+### Engineering record
+
+- When the displayed latest edition and the latest non-failed shadow report share the same AInews issue, the reader now surfaces up to five `wouldAdd` candidates whose source timestamps are newer than the edition publication time. It preserves the collector's existing order and HTTPS source links, clearly labels the section as candidates rather than a newly generated brief, and never shows it on historical editions.
+- The implementation reuses `/api/shadow/latest`; it adds no feed, model call, scoring path, D1 table, schedule, or republish behavior. Shadow failure or endpoint absence remains fail-open for the last good edition.
+- `/api/status` now separates the latest collector outcome from the latest completed `cron` heartbeat. The heartbeat becomes stale after 26 hours; a recent `skipped` cron run counts as healthy because it proves the scheduler and collector completed normally.
+
+### Verification state
+
+The source change is locally verified by generated Worker types, TypeScript, the full test suite, dry-run packaging, and diff checks before release. It has **not** been deployed in this record, so the public reader and API cannot yet confirm either behavior. Deployment and live endpoint/browser verification remain separate, owner-authorized work.
+
 ## 30 August 2026 — source-aware collection, guarded republishing, and model-output recovery
 
 ### Engineering record
@@ -48,12 +60,11 @@ The follow-on shadow run was healthy in 1,557 ms using `core-ai` v1. TLDR AI, Al
 
 ### Deferred ideas, ranked
 
-1. Add a stale-run alert based on the absence of a completed scheduled heartbeat for roughly 26 hours; a legitimate already-published skip must count as healthy.
-2. Add a parser-drift canary to the existing source report using yield history and initially informational thresholds.
-3. Add an immutable R2 run archive and replay corpus containing deterministic inputs, profile/source-pack versions, source reports, model metadata, validated outputs, and outcomes.
-4. Anchor synthesis sections to validated candidate IDs and derive their source links server-side.
-5. Revisit fallback structured-output support only if the new diagnostics show another real GLM output failure; preserve model-family diversity unless evidence justifies changing it.
-6. Optionally correct the Melbourne summer-time shift with two UTC schedules plus an in-handler local-time gate; leave it alone if 09:15 AEDT is acceptable.
+1. Add a parser-drift canary to the existing source report using yield history and initially informational thresholds.
+2. Add an immutable R2 run archive and replay corpus containing deterministic inputs, profile/source-pack versions, source reports, model metadata, validated outputs, and outcomes.
+3. Anchor synthesis sections to validated candidate IDs and derive their source links server-side.
+4. Revisit fallback structured-output support only if the new diagnostics show another real GLM output failure; preserve model-family diversity unless evidence justifies changing it.
+5. Optionally correct the Melbourne summer-time shift with two UTC schedules plus an in-handler local-time gate; leave it alone if 09:15 AEDT is acceptable.
 
 ### Architectural guardrails
 

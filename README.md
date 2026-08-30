@@ -40,6 +40,7 @@ The compatibility date is pinned to `2026-08-11`. Move it forward with a tested 
 - Records one anonymous browser/day visit for the public reader routes in D1. The ledger stores an opaque visitor key, UTC day, path, timestamp, and Cloudflare-provided country/region/city when available; it does not store raw IP addresses, names, clicks, or reading time. Entries are retained for 30 days and are available only to the owner through `/api/visits` or the admin panel, including distinct-browser counts.
 - Supports portable tuning links in the URL fragment. Imported settings remain a preview until the recipient explicitly accepts them.
 - Keeps global profile updates and manual refresh under `/admin`; both mutations still require the owner token, which is used for one request and never persisted by the browser.
+- When the AInews anchor has not changed, the latest reader can surface up to five newer qualified candidates already present in the matching shadow report. This compact “Fresh since this edition” section preserves collector order and source links; it does not invoke a model, create an edition, or alter history.
 
 ## Personal and global controls
 
@@ -47,7 +48,7 @@ The compatibility date is pinned to `2026-08-11`. Move it forward with a tested 
 
 `/admin` is deliberately absent from public navigation. Knowing its URL does not grant authority: `PUT /api/profile` and `POST /api/refresh` require `ADMIN_TOKEN`. A saved global profile is used by future generation runs; it does not rewrite stored editions. The admin page also exposes a separate forced republish action (`POST /api/refresh?republish=1`), which replaces the latest issue in place and is limited to one successful republish per Melbourne calendar day. Failed republish attempts release their daily slot so they can be retried.
 
-The reader shows the latest collector check, the brief generation time, and the daily scheduled check time. `GET /api/status` exposes only that non-sensitive operational summary.
+The reader shows the latest collector outcome, the brief generation time, and the daily scheduled check time. `GET /api/status` also reports whether the latest completed cron heartbeat is healthy, stale, or missing using a 26-hour threshold. Heartbeat freshness is independent of outcome, so a timely idempotent `skipped` run is healthy; a failed run can still be recent while the collector outcome remains visibly failed.
 
 ## Blended source policy and rollback
 
@@ -71,7 +72,7 @@ There is no X collector in this Worker. Existing X links supplied by AInews may 
 
 Production status: blending is enabled in the deployed Worker. Before publishing future changes, run the checks below and inspect a fresh source report. Set `SUPPLEMENTAL_BLEND_ENABLED=false` for an immediate code-free return to AInews-only publication while leaving shadow observation on. No D1 migration is required because provenance and collection policy are backward-compatible optional fields in the edition JSON.
 
-`GET /api/shadow/latest` returns the latest source report, including source health, overlaps with AInews, shadow candidates, and (in blend mode) the novel candidates selected for the publication inventory.
+`GET /api/shadow/latest` returns the latest source report, including source health, overlaps with AInews, shadow candidates, and (in blend mode) the novel candidates selected for the publication inventory. The public reader uses only a non-failed report anchored to the displayed latest edition, completed after that edition, and filters its `wouldAdd` list to HTTPS candidates with source timestamps newer than the edition publication time.
 
 ## Local setup
 
@@ -113,13 +114,14 @@ The project deliberately has no automatic resource provisioning or deployment co
 
 The configured Cloudflare cron is `15 22 * * *` (UTC). It fires at 08:15 in Melbourne during AEST (UTC+10), and at 09:15 during AEDT (UTC+11). Cloudflare cron has no Melbourne timezone setting. D1 idempotency means a manually triggered or repeated run for the same AInews issue is safely skipped. The normal admin refresh keeps that behavior; the separate republish action can replace the current issue once per Melbourne calendar day for post-publication testing.
 
-The scheduled handler performs the fail-open supplemental blend inside generation. It avoids a duplicate shadow fetch after a blended publication, but still runs the isolated shadow collector when the AInews issue is already published. In non-production local development only, `/__scheduled` is protected by `ADMIN_TOKEN`, and `/__shadow` runs the source experiment without model generation. Production returns 404 for both diagnostic routes.
+The scheduled handler performs the fail-open supplemental blend inside generation. It avoids a duplicate shadow fetch after a blended publication, but still runs the isolated shadow collector when the AInews issue is already published. The latest completed `cron` run is the scheduled heartbeat; the reader alerts after 26 hours without one and does not misclassify a normal already-published skip as stale. In non-production local development only, `/__scheduled` is protected by `ADMIN_TOKEN`, and `/__shadow` runs the source experiment without model generation. Production returns 404 for both diagnostic routes.
 
 ## API
 
 Public same-origin endpoints:
 
 - `GET /api/health`
+- `GET /api/status`
 - `GET /api/editions`
 - `GET /api/editions/latest`
 - `GET /api/editions/:YYYY-MM-DD`
@@ -140,4 +142,4 @@ The Worker is attached to `signal.tamirlevin.dev` as a Cloudflare Custom Domain.
 
 ## Tests
 
-`npm test` covers structured-edition validation, collector-trusted link and provenance enforcement, source-pack/coverage consistency, duplicate-link rejection, first-item RSS parsing, malformed-primary-response fallback orchestration, API authentication, production diagnostic-route blocking, supplemental parser behavior, cross-source overlap/lead/corroboration, primary-link preference, blend caps/no-padding, once-daily Melbourne republish claims, and publication isolation under total supplemental failure. `npm run types` generates the Worker binding type definition from `wrangler.jsonc`; do not hand-write `Env`.
+`npm test` covers structured-edition validation, collector-trusted link and provenance enforcement, source-pack/coverage consistency, duplicate-link rejection, first-item RSS parsing, malformed-primary-response fallback orchestration, API authentication, production diagnostic-route blocking, supplemental parser behavior, cross-source overlap/lead/corroboration, primary-link preference, blend caps/no-padding, fresh-shadow reader filtering, scheduled-heartbeat aging, once-daily Melbourne republish claims, and publication isolation under total supplemental failure. `npm run types` generates the Worker binding type definition from `wrangler.jsonc`; do not hand-write `Env`.

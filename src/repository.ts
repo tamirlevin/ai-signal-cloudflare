@@ -1,4 +1,4 @@
-import type { Edition, Profile, RunStatus, StoredEdition, SupplementalShadowReport, SupplementalShadowRun } from "./contracts";
+import type { Edition, Profile, RunStatus, ScheduledHeartbeat, StoredEdition, SupplementalShadowReport, SupplementalShadowRun } from "./contracts";
 import { DEFAULT_PROFILE } from "./contracts";
 import { ModelJsonError } from "./editorial";
 import { normalizeEditionStories } from "./story-normalization";
@@ -98,17 +98,18 @@ export async function listEditions(db: D1Database): Promise<Array<Pick<StoredEdi
   });
 }
 
-export async function latestRunStatus(db: D1Database): Promise<RunStatus | null> {
-  const row = await db.prepare("SELECT trigger, status, issue_date, error_code, error_message, started_at, finished_at, duration_ms FROM runs ORDER BY started_at DESC LIMIT 1").first<{
-    trigger: RunStatus["trigger"];
-    status: RunStatus["status"];
-    issue_date: string | null;
-    error_code: string | null;
-    error_message: string | null;
-    started_at: string;
-    finished_at: string;
-    duration_ms: number;
-  }>();
+type RunRow = {
+  trigger: RunStatus["trigger"];
+  status: RunStatus["status"];
+  issue_date: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  started_at: string;
+  finished_at: string;
+  duration_ms: number;
+};
+
+function publicRunStatus(row: RunRow | null): RunStatus | null {
   if (!row) return null;
   return {
     trigger: row.trigger,
@@ -119,6 +120,32 @@ export async function latestRunStatus(db: D1Database): Promise<RunStatus | null>
     startedAt: row.started_at,
     finishedAt: row.finished_at,
     durationMs: row.duration_ms
+  };
+}
+
+export async function latestRunStatus(db: D1Database): Promise<RunStatus | null> {
+  const row = await db.prepare("SELECT trigger, status, issue_date, error_code, error_message, started_at, finished_at, duration_ms FROM runs ORDER BY started_at DESC LIMIT 1").first<RunRow>();
+  return publicRunStatus(row);
+}
+
+export async function latestScheduledRunStatus(db: D1Database): Promise<RunStatus | null> {
+  const row = await db.prepare("SELECT trigger, status, issue_date, error_code, error_message, started_at, finished_at, duration_ms FROM runs WHERE trigger = 'cron' ORDER BY finished_at DESC LIMIT 1").first<RunRow>();
+  return publicRunStatus(row);
+}
+
+export const SCHEDULED_HEARTBEAT_STALE_AFTER_HOURS = 26;
+
+export function scheduledHeartbeat(lastScheduledRun: RunStatus | null, now: Date = new Date()): ScheduledHeartbeat {
+  const staleAfterHours = SCHEDULED_HEARTBEAT_STALE_AFTER_HOURS;
+  if (!lastScheduledRun) return { status: "missing", staleAfterHours };
+  const completedAt = Date.parse(lastScheduledRun.finishedAt);
+  if (!Number.isFinite(completedAt)) return { status: "missing", staleAfterHours };
+  const ageMs = Math.max(0, now.getTime() - completedAt);
+  return {
+    status: ageMs > staleAfterHours * 60 * 60 * 1000 ? "stale" : "healthy",
+    staleAfterHours,
+    lastCompletedAt: lastScheduledRun.finishedAt,
+    lastOutcome: lastScheduledRun.status
   };
 }
 

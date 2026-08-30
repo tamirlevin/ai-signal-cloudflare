@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { latestRunStatus } from "../src/repository";
+import { latestRunStatus, latestScheduledRunStatus, scheduledHeartbeat } from "../src/repository";
 
 describe("collector status", () => {
   it("returns a public-safe summary of the latest run", async () => {
@@ -49,5 +49,64 @@ describe("collector status", () => {
       errorCode: "VALIDATION_FAILED",
       failureDetail: "edition.signals contains a duplicate story URL"
     });
+  });
+
+  it("queries the latest completed cron run for the scheduled heartbeat", async () => {
+    let sql = "";
+    const db = {
+      prepare: (statement: string) => {
+        sql = statement;
+        return {
+          first: async () => ({
+            trigger: "cron",
+            status: "skipped",
+            issue_date: "2026-08-26",
+            error_code: null,
+            error_message: null,
+            started_at: "2026-08-30T22:15:18.655Z",
+            finished_at: "2026-08-30T22:15:19.180Z",
+            duration_ms: 525
+          })
+        };
+      }
+    } as unknown as D1Database;
+
+    await expect(latestScheduledRunStatus(db)).resolves.toMatchObject({ trigger: "cron", status: "skipped" });
+    expect(sql).toContain("WHERE trigger = 'cron'");
+    expect(sql).toContain("ORDER BY finished_at DESC");
+  });
+
+  it("treats a recent skipped cron run as a healthy heartbeat", () => {
+    const heartbeat = scheduledHeartbeat({
+      trigger: "cron",
+      status: "skipped",
+      issueDate: "2026-08-26",
+      startedAt: "2026-08-30T22:15:18.655Z",
+      finishedAt: "2026-08-30T22:15:19.180Z",
+      durationMs: 525
+    }, new Date("2026-08-31T23:15:19.180Z"));
+
+    expect(heartbeat).toEqual({
+      status: "healthy",
+      staleAfterHours: 26,
+      lastCompletedAt: "2026-08-30T22:15:19.180Z",
+      lastOutcome: "skipped"
+    });
+  });
+
+  it("marks a scheduled heartbeat stale only after 26 hours", () => {
+    const heartbeat = scheduledHeartbeat({
+      trigger: "cron",
+      status: "success",
+      startedAt: "2026-08-30T22:15:18.655Z",
+      finishedAt: "2026-08-30T22:15:19.180Z",
+      durationMs: 525
+    }, new Date("2026-09-01T00:15:20.180Z"));
+
+    expect(heartbeat).toMatchObject({ status: "stale", staleAfterHours: 26, lastOutcome: "success" });
+  });
+
+  it("reports a missing heartbeat when no cron run has completed", () => {
+    expect(scheduledHeartbeat(null)).toEqual({ status: "missing", staleAfterHours: 26 });
   });
 });

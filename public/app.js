@@ -12,6 +12,7 @@ import {
   tuningFragment,
   weightLabel
 } from "/personalization.js";
+import { freshShadowCandidates } from "/fresh-signals.js";
 
 const app = document.querySelector("#app");
 const dialog = document.querySelector("#tune-dialog");
@@ -22,7 +23,7 @@ const rankingTitle = document.querySelector("#ranking-title");
 const rankingContent = document.querySelector("#ranking-content");
 const closeRanking = document.querySelector("#close-ranking");
 const rankingPersonalise = document.querySelector("#ranking-personalise");
-const state = { baseProfile: null, override: null, previewOverride: null, edition: null, historyEditions: null, adminProfile: null, collectionStatus: null, isHistoricalEdition: false, readerView: "hot", rankingItems: new Map() };
+const state = { baseProfile: null, override: null, previewOverride: null, edition: null, historyEditions: null, adminProfile: null, collectionStatus: null, shadow: null, isHistoricalEdition: false, readerView: "hot", rankingItems: new Map() };
 const READER_VIEWS = [
   { id: "synthesis", label: "Synthesis" },
   { id: "hot", label: "Hot topics" },
@@ -75,12 +76,31 @@ function scheduledTimeLabel(value) {
   return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", timeZoneName: "short" }).format(date);
 }
 
-function collectionNotice(edition) {
+function collectionNotice(edition, freshCount) {
   const lastRun = state.collectionStatus?.lastRun;
   if (!lastRun) return `<p class="refresh-status">Updated ${escape(localDateTime(edition.publishedAt))}.</p>`;
-  const outcome = lastRun.status === "failed" ? `failed${lastRun.errorCode ? ` (${escape(lastRun.errorCode)})` : ""}${lastRun.failureDetail ? `: ${escape(lastRun.failureDetail)}` : ""}` : lastRun.status === "skipped" ? lastRun.errorCode === "MANUAL_REPUBLISH_LIMIT" ? "the once-daily manual republish limit was reached" : "found no newer issue" : "published a new brief";
-  const stateLabel = lastRun.status === "failed" ? "Check failed" : lastRun.status === "skipped" ? "Current" : "Published";
+  const freshOutcome = freshCount === 1 ? "; 1 newer source signal qualified" : freshCount > 1 ? `; ${freshCount} newer source signals qualified` : "";
+  const outcome = lastRun.status === "failed" ? `failed${lastRun.errorCode ? ` (${escape(lastRun.errorCode)})` : ""}${lastRun.failureDetail ? `: ${escape(lastRun.failureDetail)}` : ""}` : lastRun.status === "skipped" ? lastRun.errorCode === "MANUAL_REPUBLISH_LIMIT" ? "the once-daily manual republish limit was reached" : `found no newer AInews issue${freshOutcome}` : "published a new brief";
+  const stateLabel = lastRun.status === "failed" ? "Check failed" : lastRun.status === "skipped" && freshCount > 0 ? "Fresh signals" : lastRun.status === "skipped" ? "Anchor current" : "Published";
   return `<details class="refresh-status"><summary><span>Updated ${escape(localDateTime(edition.publishedAt))} · source checked ${escape(localDateTime(lastRun.finishedAt))}</span><span class="refresh-state ${lastRun.status === "failed" ? "failed" : ""}">${stateLabel}</span></summary><p>The collector ${outcome}. Automatic check: daily at ${escape(scheduledTimeLabel(state.collectionStatus.scheduledDailyAtUtc))}.</p></details>`;
+}
+
+function heartbeatNotice() {
+  if (state.isHistoricalEdition) return "";
+  const heartbeat = state.collectionStatus?.scheduledHeartbeat;
+  if (!heartbeat || heartbeat.status === "healthy") return "";
+  if (heartbeat.status === "missing") return `<aside class="heartbeat-alert" role="alert"><strong>Scheduled heartbeat unavailable.</strong><span>No completed cron check is recorded yet. The last good edition remains available.</span></aside>`;
+  const outcome = heartbeat.lastOutcome ? ` Its recorded outcome was ${heartbeat.lastOutcome}.` : "";
+  return `<aside class="heartbeat-alert" role="alert"><strong>Scheduled check overdue.</strong><span>The last completed cron check was ${escape(localDateTime(heartbeat.lastCompletedAt))}; the alert threshold is ${escape(heartbeat.staleAfterHours)} hours.${escape(outcome)}</span></aside>`;
+}
+
+function freshSignalsMarkup(candidates) {
+  if (!candidates.length) return "";
+  const cards = candidates.map((candidate) => {
+    const metadata = [candidate.categoryLabel, (candidate.sourceNames ?? []).join(" + "), localDateTime(candidate.publishedAt)].filter(Boolean).join(" · ");
+    return `<article class="fresh-signal"><h3><a href="${escape(candidate.url)}" target="_blank" rel="noreferrer">${escape(candidate.title)}</a></h3><p>${escape(candidate.summary)}</p><small>${escape(metadata)}</small></article>`;
+  }).join("");
+  return `<section class="fresh-signals" aria-labelledby="fresh-signals-title"><header><div><p class="view-label">Fresh since this edition</p><h2 id="fresh-signals-title">New source signals</h2></div><p>Qualified, source-linked candidates from the existing collector. They are not a newly generated brief.</p></header><div class="fresh-signal-list">${cards}</div></section>`;
 }
 
 function profileNotice(edition, profile, visibleCount) {
@@ -183,7 +203,8 @@ function renderEdition(edition, profile, view = "hot") {
   const allView = `${viewIntro("All signals", edition.presentation.allTitle, edition.presentation.allIntro)}${markerLegend(profile)}<div class="signals-list">${signals}</div>`;
   const synthesisView = `${viewIntro("Synthesis", edition.presentation.synthesisTitle, edition.presentation.synthesisIntro)}<article class="synthesis-layout"><div class="synthesis-main"><p class="lead">${escape(edition.synthesis.lead)}</p><div class="big">${escape(edition.synthesis.bigPicture)}</div><div>${sections}</div></div><aside class="synthesis-rail"><p class="rail-label">Reading time</p><p class="time">${edition.presentation.sourceReadMinutes} min source → ${edition.presentation.briefReadMinutes} min brief</p>${sourceLinks(edition.synthesis.sources, "Brief sources")}</aside></article>`;
   const content = view === "synthesis" ? synthesisView : view === "all" ? allView : hotView;
-  app.innerHTML = `${issueHeader(edition, profile, visibleSignals.length)}${collectionNotice(edition)}<div class="reader-toolbar">${tabs(view)}</div><section class="view-panel" id="reader-panel" role="tabpanel" aria-labelledby="reader-tab-${view}" tabindex="0">${content}</section>`;
+  const freshSignals = state.isHistoricalEdition ? [] : freshShadowCandidates(edition, state.shadow);
+  app.innerHTML = `${issueHeader(edition, profile, visibleSignals.length)}${heartbeatNotice()}${collectionNotice(edition, freshSignals.length)}${freshSignalsMarkup(freshSignals)}<div class="reader-toolbar">${tabs(view)}</div><section class="view-panel" id="reader-panel" role="tabpanel" aria-labelledby="reader-tab-${view}" tabindex="0">${content}</section>`;
   const buttons = [...app.querySelectorAll("[data-view]")];
   const activate = (nextView, focus = false) => {
     renderEdition(edition, profile, nextView);
@@ -278,6 +299,10 @@ async function request(path, options = {}) {
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.error || body.code || "Could not load AI Signal");
   return body;
+}
+
+async function optionalRequest(path) {
+  try { return await request(path); } catch { return null; }
 }
 
 function adminControls(profile) {
@@ -390,8 +415,12 @@ async function boot() {
       return;
     }
     const key = new URLSearchParams(location.search).get("edition");
-    const data = await request(key ? `/api/editions/${encodeURIComponent(key)}` : "/api/editions/latest");
+    const [data, shadowData] = await Promise.all([
+      request(key ? `/api/editions/${encodeURIComponent(key)}` : "/api/editions/latest"),
+      key ? Promise.resolve(null) : optionalRequest("/api/shadow/latest")
+    ]);
     state.edition = data.edition;
+    state.shadow = shadowData?.shadow ?? null;
     state.isHistoricalEdition = Boolean(key);
     state.baseProfile = baseProfileForEdition(sharedProfile, data.edition.profile, Boolean(key));
     state.override = readStoredViewerOverride(state.baseProfile);

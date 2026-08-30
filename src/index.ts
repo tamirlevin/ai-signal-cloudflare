@@ -1,5 +1,5 @@
 import { generateLatestEdition, supplementalBlendEnabled } from "./generation";
-import { getActiveProfile, getEdition, latestEdition, latestRunStatus, latestSupplementalShadowRun, listEditions, updateProfile } from "./repository";
+import { getActiveProfile, getEdition, latestEdition, latestRunStatus, latestScheduledRunStatus, latestSupplementalShadowRun, listEditions, scheduledHeartbeat, updateProfile } from "./repository";
 import { runSupplementalShadow } from "./supplemental";
 import { ValidationError } from "./validation";
 import { listVisits, recordVisit, requestLocation, visitorIdentity, visitorSetCookie } from "./visits";
@@ -96,7 +96,8 @@ async function api(request: Request, env: Env, url: URL, ctx: ExecutionContext):
     return json({ ok: true, latestPublished: Boolean(latest), environment: env.ENVIRONMENT });
   }
   if (request.method === "GET" && url.pathname === "/api/status") {
-    return json({ lastRun: await latestRunStatus(env.DB), scheduledDailyAtUtc: "22:15" });
+    const [lastRun, lastScheduledRun] = await Promise.all([latestRunStatus(env.DB), latestScheduledRunStatus(env.DB)]);
+    return json({ lastRun, scheduledHeartbeat: scheduledHeartbeat(lastScheduledRun), scheduledDailyAtUtc: "22:15" });
   }
   if (request.method === "GET" && url.pathname === "/api/shadow/latest") {
     const shadow = await latestSupplementalShadowRun(env.DB);
