@@ -18,6 +18,8 @@ flowchart LR
 
 See the [interactive flow diagram](docs/architecture/ai-signal-repo-flow.html) for the same model with the historical drift point highlighted.
 
+See [PROJECT_HISTORY.md](PROJECT_HISTORY.md) for the curated engineering decisions, production incidents, and pending verification behind that flow.
+
 The compatibility date is pinned to `2026-08-11`. Move it forward with a tested Wrangler/workerd update.
 
 ## What it does
