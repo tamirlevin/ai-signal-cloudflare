@@ -18,11 +18,12 @@ Read-only checks on 30 August 2026 established the following:
 
 | Evidence | Verified state |
 | --- | --- |
-| GitHub | `origin/main` resolves to `adbb5ff0904336dcaf6f0a9df6f53e200c674a16`. The exact tree passes generated Worker types, TypeScript, 60 tests in 10 files, and `wrangler deploy --dry-run`. |
+| GitHub release source | Commit `cb194ce589ace189bf59aa480da265204586a79e` was pushed to `main` before deployment. Its runtime files match `adbb5ff0904336dcaf6f0a9df6f53e200c674a16`; the exact tree passes generated Worker types, TypeScript, 60 tests in 10 files, and `wrangler deploy --dry-run`. |
 | Source-aware rollout | Cloudflare lists deployment `ccbf9846-183e-44cb-b267-67a4db959018`, serving Worker version 30 `cf012af4-64de-4215-8fc5-1cec5851ff5a` from 28 August 07:10 UTC. Current public profile and shadow data independently confirm `core-ai` v1 is live. |
 | Republish migration | On D1 database `ai-signal` (`376a852a-26db-4d2d-983c-b872b3361372`), migration 5, `0005_manual_republish_guard.sql`, was applied at `2026-08-29 00:05:11` UTC. Cloudflare lists the immediately following deployment `4444f2f6-57af-453c-8023-c5a025dac01a`, version 32 `bccf8e19-096a-408f-9574-6cc79fe8b864`. |
-| Current Worker | Deployment `5d4c5cb5-387f-4718-a140-b97bb50c48ae` sends 100% of traffic to version 36 `96c78f75-2e47-4677-af25-96e41f1a18e3`, created at `2026-08-29T07:21:40.608876Z`. |
-| Commit-to-version mapping | Wrangler exposes deployment/version metadata but no Git commit SHA. The identifiers above are verified; a specific version-to-commit mapping is not independently proven from timestamps alone. |
+| Worker at initial verification | Deployment `5d4c5cb5-387f-4718-a140-b97bb50c48ae` sent 100% of traffic to version 36 `96c78f75-2e47-4677-af25-96e41f1a18e3`, created at `2026-08-29T07:21:40.608876Z`. |
+| Verified repair deployment | Deployment `e2eec775-48b1-4710-b7c8-9f78935d4474` sends 100% of traffic to version 37 `5fba0bbb-98ab-45eb-891b-f9d64c4ba29b`, created at `2026-08-30T01:10:03.477455Z`. The version is tagged `git-cb194ce`; its message records full Git commit `cb194ce589ace189bf59aa480da265204586a79e` and runtime source `adbb5ff`. |
+| Commit-to-version mapping | Earlier Wrangler versions have no Git SHA, so their exact commit mapping remains unproven. Version 37 closes that gap with explicit Git metadata recorded during deployment. |
 
 ### 29 August republish incident
 
@@ -34,7 +35,9 @@ D1 records three manual attempts for the 26 August issue, not one. All failed at
 
 The existing edition was preserved, and `manual_republish_days` contains no active or completed claim, confirming the failed daily claims were released. Historical failed rows remain unchanged as audit evidence; their generic error code reflects the old classification behavior.
 
-The third failure began after the currently deployed Worker version was created and still used the old generic error code and undiagnosed message. Because Cloudflare does not expose a Git SHA for that version, this is evidence that the `adbb5ff` behavior is not proven in production and may not be present in the deployed bundle. A successful post-fix production generation is **pending**. Do not consume a manual republish merely to close this verification gap without owner approval.
+The third failure began after version 36 was created and still used the old generic error code and undiagnosed message. That established that timestamp proximity alone could not prove the `adbb5ff` behavior was deployed.
+
+On 30 August, the exact reviewed GitHub tree at `cb194ce`—whose only changes after `adbb5ff` are `README.md` and this history file—was deployed as version 37 with explicit Git metadata. Public health, status, latest-edition, and shadow endpoints remained healthy. D1 still showed the scheduled skip as its latest run, zero republish-claim rows, and applied migration 5, confirming deployment did not trigger generation or consume a daily claim. The repair is now verified as deployed; a successful post-fix production generation remains **pending**. Do not consume a manual republish merely to close this verification gap without owner approval.
 
 ### 30 August scheduled state
 
