@@ -57,7 +57,7 @@ Do not smooth over conflicting evidence or convert an unverified inference into 
 - Keep secrets out of Git. `wrangler.jsonc` is the source of truth for non-secret runtime configuration.
 - Do not deploy, mutate D1, apply a remote migration, force a republish, change a schedule or monitor, change secrets, or perform destructive Git operations unless the current user request explicitly authorizes it.
 - Read-only remote verification is appropriate when it is relevant and available.
-- Preserve the architectural guardrails in `PROJECT_HISTORY.md`, especially deterministic story inventory, source-bound URLs, AInews fail-open behavior, no weak padding, preservation of the last good edition, and owner-only guarded republishing.
+- Preserve the architectural guardrails in `PROJECT_HISTORY.md`, especially the deterministic daily story inventory, equal-source candidate pool, 36-hour preference/48-hour cutoff, no X-only cards, source-bound URLs, no weak padding, preservation of the last good edition, and owner-only guarded republishing.
 - Do not create session transcripts, routine progress logs, or another project-memory file in the repository.
 
 ## Verification and release

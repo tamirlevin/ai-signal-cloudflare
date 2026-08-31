@@ -1,4 +1,4 @@
-import { generateLatestEdition, supplementalBlendEnabled } from "./generation";
+import { generateLatestEdition } from "./generation";
 import { getActiveProfile, getEdition, latestEdition, latestRunStatus, latestScheduledRunStatus, latestSupplementalShadowRun, listEditions, scheduledHeartbeat, updateProfile } from "./repository";
 import { runSupplementalShadow } from "./supplemental";
 import { ValidationError } from "./validation";
@@ -123,7 +123,7 @@ async function api(request: Request, env: Env, url: URL, ctx: ExecutionContext):
     if (!(await isAdmin(request, env))) return error("unauthorized", 401);
     const republish = ["1", "true"].includes((url.searchParams.get("republish") ?? "").toLowerCase());
     const result = await generateLatestEdition(env, "manual", { forceRepublish: republish });
-    if (supplementalShadowEnabled(env) && (!supplementalBlendEnabled(env) || (result.status === "skipped" && result.reason === "already-published"))) {
+    if (supplementalShadowEnabled(env) && result.status === "skipped" && result.reason === "already-published") {
       ctx.waitUntil(runSupplementalShadow(env, "manual").then(() => undefined));
     }
     return json(result, result.status === "failed" ? 502 : 200);
@@ -159,6 +159,6 @@ export default {
   },
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
     const result = await generateLatestEdition(env, "cron");
-    if (supplementalShadowEnabled(env) && (!supplementalBlendEnabled(env) || result.status === "skipped")) await runSupplementalShadow(env, "cron");
+    if (supplementalShadowEnabled(env) && result.status === "skipped") await runSupplementalShadow(env, "cron");
   }
 } satisfies ExportedHandler<Env>;

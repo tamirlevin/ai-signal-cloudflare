@@ -86,7 +86,7 @@ function storyProvenance(value: unknown, path: string, permittedUrls?: Set<strin
   });
   const selection = object(provenance.selection, `${path}.selection`);
   const reason = text(selection.reason, `${path}.selection.reason`);
-  if (!new Set(["ainews-base", "cross-source", "strong-fit-supplemental"]).has(reason)) throw new ValidationError(`${path}.selection.reason is invalid`);
+  if (!new Set(["ainews-base", "cross-source", "strong-fit-supplemental", "single-source"]).has(reason)) throw new ValidationError(`${path}.selection.reason is invalid`);
   const lead = storySource(provenance.lead, `${path}.lead`);
   const editorialCorroboration = list(provenance.editorialCorroboration, `${path}.editorialCorroboration`, 0, 3).map((raw, index) => {
     const source = storySource(raw, `${path}.editorialCorroboration[${index}]`);
@@ -120,13 +120,30 @@ function storyProvenance(value: unknown, path: string, permittedUrls?: Set<strin
 function collectionMetadata(value: unknown): NonNullable<Edition["collection"]> {
   const collection = object(value, "edition.collection");
   const mode = text(collection.mode, "edition.collection.mode");
+  const sourcePackId = collection.sourcePackId === undefined ? undefined : text(collection.sourcePackId, "edition.collection.sourcePackId");
+  if (sourcePackId !== undefined && !isSourcePackId(sourcePackId)) throw new ValidationError("edition.collection.sourcePackId is not recognized");
+  const sourcePackVersion = collection.sourcePackVersion === undefined ? undefined : integer(collection.sourcePackVersion, "edition.collection.sourcePackVersion", 1, 999999);
+  if (mode === "daily-pool") {
+    const preferredFreshnessHours = integer(collection.preferredFreshnessHours, "edition.collection.preferredFreshnessHours", 36, 36);
+    const maxFreshnessHours = integer(collection.maxFreshnessHours, "edition.collection.maxFreshnessHours", 48, 48);
+    const eligibleCandidates = integer(collection.eligibleCandidates, "edition.collection.eligibleCandidates", 0, 999);
+    const selectedCandidates = integer(collection.selectedCandidates, "edition.collection.selectedCandidates", 0, Math.min(18, eligibleCandidates));
+    return {
+      mode,
+      sourcesChecked: list(collection.sourcesChecked, "edition.collection.sourcesChecked", 1, 12).map((item, index) => text(item, `edition.collection.sourcesChecked[${index}]`)),
+      sourcesContributing: list(collection.sourcesContributing, "edition.collection.sourcesContributing", 1, 12).map((item, index) => text(item, `edition.collection.sourcesContributing[${index}]`)),
+      preferredFreshnessHours: preferredFreshnessHours as 36,
+      maxFreshnessHours: maxFreshnessHours as 48,
+      eligibleCandidates,
+      selectedCandidates,
+      ...(sourcePackId === undefined ? {} : { sourcePackId: sourcePackId as SourcePackId }),
+      ...(sourcePackVersion === undefined ? {} : { sourcePackVersion })
+    };
+  }
   if (mode !== "ainews-only" && mode !== "blended") throw new ValidationError("edition.collection.mode is invalid");
   if (text(collection.baseSource, "edition.collection.baseSource") !== "AInews") throw new ValidationError("edition.collection.baseSource must be AInews");
   const supplementalCap = integer(collection.supplementalCap, "edition.collection.supplementalCap", 0, 14);
   const selectedSupplemental = integer(collection.selectedSupplemental, "edition.collection.selectedSupplemental", 0, supplementalCap);
-  const sourcePackId = collection.sourcePackId === undefined ? undefined : text(collection.sourcePackId, "edition.collection.sourcePackId");
-  if (sourcePackId !== undefined && !isSourcePackId(sourcePackId)) throw new ValidationError("edition.collection.sourcePackId is not recognized");
-  const sourcePackVersion = collection.sourcePackVersion === undefined ? undefined : integer(collection.sourcePackVersion, "edition.collection.sourcePackVersion", 1, 999999);
   return {
     mode,
     baseSource: "AInews",
@@ -288,7 +305,7 @@ export function validateEdition(raw: unknown, profile: Profile, permittedUrls?: 
   };
   const categoryIds = new Set(profile.weights.map((weight) => weight.id));
   const synthesis = object(edition.synthesis, "edition.synthesis");
-  const sections = list(synthesis.sections, "edition.synthesis.sections", 2, 4).map((rawSection, index) => {
+  const sections = list(synthesis.sections, "edition.synthesis.sections", 1, 4).map((rawSection, index) => {
     const section = object(rawSection, `edition.synthesis.sections[${index}]`);
     return { title: text(section.title, `edition.synthesis.sections[${index}].title`), kicker: text(section.kicker, `edition.synthesis.sections[${index}].kicker`), body: text(section.body, `edition.synthesis.sections[${index}].body`), sources: sources(section.sources, `edition.synthesis.sections[${index}].sources`, permittedUrls) };
   });

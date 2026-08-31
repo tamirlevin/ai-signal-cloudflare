@@ -36,7 +36,7 @@ function fakeDatabase(runStatements: RecordedStatement[]): D1Database {
 const rss = `<rss><channel><item>
   <title>AI News</title>
   <link>https://news.smol.ai/issues/fallback-test</link>
-  <pubDate>Fri, 28 Aug 2026 01:00:00 GMT</pubDate>
+  <pubDate>Sun, 30 Aug 2026 01:00:00 GMT</pubDate>
   <content:encoded><![CDATA[
     <h2>Agent systems</h2>
     <p><a href="https://example.com/agent-permissions">Agent permissions</a> Codex agents add explicit permission scopes and replayable approvals.</p>
@@ -90,6 +90,8 @@ describe("generation model fallback", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it("switches once after malformed primary JSON and records the successful fallback model", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-31T00:00:00.000Z"));
     const modelCalls: string[] = [];
     const modelInputs: ChatCompletionsMessagesInput[] = [];
     const runStatements: RecordedStatement[] = [];
@@ -113,21 +115,24 @@ describe("generation model fallback", () => {
       AI_FALLBACK_MODEL: "@cf/zai-org/glm-4.7-flash",
       AI_GATEWAY_ID: "",
       SUPPLEMENTAL_SHADOW_ENABLED: "true",
-      SUPPLEMENTAL_BLEND_ENABLED: "false",
       RSS_URL: "https://news.smol.ai/rss.xml"
     } as unknown as Env;
 
-    const result = await generateLatestEdition(env, "manual");
+    try {
+      const result = await generateLatestEdition(env, "manual");
 
-    expect(result.status).toBe("success");
-    expect(modelCalls).toEqual(["@cf/openai/gpt-oss-120b", "@cf/openai/gpt-oss-120b", "@cf/zai-org/glm-4.7-flash"]);
-    expect(modelInputs[0]).toHaveProperty("response_format");
-    expect(modelInputs[1]?.messages.at(-1)?.content).toContain("previous output was rejected");
-    expect(modelInputs[2]).not.toHaveProperty("response_format");
-    expect(modelInputs[2]).toHaveProperty("reasoning_effort", "low");
-    expect(fetcher).toHaveBeenCalledTimes(1);
-    const successfulRun = runStatements.find((statement) => statement.sql.startsWith("INSERT INTO runs"));
-    expect(successfulRun?.values[4]).toBe("success");
-    expect(successfulRun?.values[5]).toBe("@cf/zai-org/glm-4.7-flash");
+      expect(result.status).toBe("success");
+      expect(modelCalls).toEqual(["@cf/openai/gpt-oss-120b", "@cf/openai/gpt-oss-120b", "@cf/zai-org/glm-4.7-flash"]);
+      expect(modelInputs[0]).toHaveProperty("response_format");
+      expect(modelInputs[1]?.messages.at(-1)?.content).toContain("previous output was rejected");
+      expect(modelInputs[2]).not.toHaveProperty("response_format");
+      expect(modelInputs[2]).toHaveProperty("reasoning_effort", "low");
+      expect(fetcher).toHaveBeenCalledTimes(5);
+      const successfulRun = runStatements.find((statement) => statement.sql.startsWith("INSERT INTO runs"));
+      expect(successfulRun?.values[4]).toBe("success");
+      expect(successfulRun?.values[5]).toBe("@cf/zai-org/glm-4.7-flash");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

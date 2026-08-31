@@ -53,7 +53,7 @@ export function parseLatestRss(xml: string): RssIssue {
   if (Number.isNaN(date.getTime())) throw new ValidationError("RSS issue pubDate is invalid");
   const issueDate = date.toISOString().slice(0, 10);
   const publicationDate = new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }).format(date);
-  return { url, issueDate, publicationDate, body: markdown, anchors };
+  return { url, issueDate, publicationDate, publishedAt: date.toISOString(), body: markdown, anchors };
 }
 
 export async function fetchLatestRss(url: string, fetcher: typeof fetch = fetch): Promise<RssIssue> {

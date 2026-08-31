@@ -16,11 +16,11 @@ import type {
 } from "./contracts";
 import { categoryForProfile, compactIssueInventory, isPermissionDesignSignal, scoreCandidateForProfile } from "./editorial";
 import { fetchLatestRss } from "./rss";
-import { getActiveProfile, recordSupplementalShadowRun } from "./repository";
+import { getActiveProfile, melbourneCalendarDay, recordSupplementalShadowRun } from "./repository";
 import { getSourcePack } from "./source-packs";
 
 type Fetcher = typeof fetch;
-export type SourceResult = { candidates: SupplementalCandidate[]; health: SupplementalSourceHealth };
+export type SourceResult = { candidates: SupplementalCandidate[]; health: SupplementalSourceHealth; issue?: RssIssue };
 type SourceDefinition = SourcePackSource;
 
 const AGGREGATOR_HOSTS = new Set(["alphasignal.ai", "news.smol.ai", "tldr.tech", "www.alphasignal.ai", "www.tldr.tech"]);
@@ -28,17 +28,19 @@ const NON_EVIDENCE_HOSTS = new Set(["calendly.com", "forms.gle", "tally.so", "ty
 const STOP_WORDS = new Set(["a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in", "is", "it", "of", "on", "or", "the", "to", "with"]);
 const MAX_FEED_BYTES = 2_000_000;
 const MAX_PAGE_BYTES = 2_500_000;
-const ALPHA_LOOKBACK_HOURS = 72;
+const ALPHA_LOOKBACK_HOURS = 48;
 export const MAX_BLENDED_CANDIDATES = 18;
-export const MAX_NOVEL_SUPPLEMENTAL = 2;
-const MAX_NOVEL_PER_SOURCE = 1;
-const AI_NEWS_SOURCE: StorySourceAttribution = { id: "ainews", name: "AInews", layer: "editorial" };
+export const PREFERRED_FRESHNESS_HOURS = 36;
+export const MAX_FRESHNESS_HOURS = 48;
 const CLOUDFLARE_PRIMARY_HOSTS = new Set(["blog.cloudflare.com"]);
-// Deterministic editorial tie-break only. It does not claim which feed surfaced a story first.
-const SOURCE_ORDER: Record<SupplementalSourceId, number> = { alphasignal: 0, "tldr-ai": 1, "cloudflare-agents": 2 };
+const SOCIAL_HOSTS = new Set(["x.com", "twitter.com", "www.x.com", "www.twitter.com"]);
 
 function aggregatorHost(host: string): boolean {
   return AGGREGATOR_HOSTS.has(host) || host.endsWith(".alphasignal.ai") || host.endsWith(".tldr.tech") || host.endsWith(".news.smol.ai");
+}
+
+function socialHost(host: string): boolean {
+  return SOCIAL_HOSTS.has(host.toLowerCase());
 }
 
 function sourceHealth(source: SourceDefinition): SupplementalSourceHealth {
@@ -202,7 +204,7 @@ export function parseAlphaArticle(html: string, articleUrl: string): { title: st
     const parsed = new URL(url);
     const host = parsed.hostname.replace(/^www\./, "");
     if (aggregatorHost(parsed.hostname) || NON_EVIDENCE_HOSTS.has(host) || host.endsWith(".typeform.com") || /\.(?:avif|gif|jpe?g|png|svg|webp)$/i.test(parsed.pathname)) continue;
-    if ((host === "x.com" || host === "twitter.com") && !/\/status\/\d+/i.test(parsed.pathname)) continue;
+    if (socialHost(parsed.hostname)) continue;
     links.set(url, `${links.get(url) ?? ""} ${plainText(match[2] ?? "")}`.trim());
   }
   const preferredUrl = [...links.entries()].sort((left, right) => evidenceUrlScore(heading, right[1], right[0]) - evidenceUrlScore(heading, left[1], left[0]))[0]?.[0] ?? articleUrl;
@@ -224,6 +226,44 @@ export function parseCloudflareFeed(xml: string, now: Date, profile: Profile, so
     // An unexpected external link remains discovery context and cannot receive primary weight.
     sourceAttributions: [attribution(source, item.url, isTrustedCloudflarePrimary(item.url) ? "primary" : "discovery")]
   }, profile));
+}
+
+async function collectAiNews(profile: Profile, fetcher: Fetcher, source: SourceDefinition): Promise<SourceResult> {
+  const health = sourceHealth(source);
+  try {
+    health.requests += 1;
+    const issue = await fetchLatestRss(source.url, fetcher);
+    const inventory = compactIssueInventory(issue, profile);
+    health.fetchedItems = inventory.candidates.length;
+    const candidates = inventory.candidates.flatMap((candidate): SupplementalCandidate[] => {
+      const evidence = candidate.sources.find((item) => {
+        try { return !socialHost(new URL(item.url).hostname); } catch { return false; }
+      });
+      if (!evidence) return [];
+      return [{
+        title: candidate.title,
+        summary: candidate.summary,
+        url: evidence.url,
+        publishedAt: issue.publishedAt,
+        category: candidate.category,
+        categoryLabel: candidate.categoryLabel,
+        score: candidate.score,
+        exceptional: candidate.exceptional,
+        leadSourceId: source.id,
+        sourceAttributions: [attribution(source, issue.url)]
+      }];
+    });
+    health.acceptedCandidates = candidates.length;
+    if (!candidates.length) {
+      health.status = "degraded";
+      health.errors.push("AInews supplied no non-social publishable candidates");
+    }
+    return { candidates, health, issue };
+  } catch (error) {
+    health.status = "failed";
+    health.errors.push(error instanceof Error ? error.message : String(error));
+    return { candidates: [], health };
+  }
 }
 
 async function collectTldr(profile: Profile, fetcher: Fetcher, source: SourceDefinition): Promise<SourceResult> {
@@ -300,12 +340,13 @@ async function collectCloudflare(profile: Profile, now: Date, fetcher: Fetcher, 
   }
 }
 
-export async function collectSupplementalSources(input: { profile: Profile; now?: Date; fetcher?: Fetcher }): Promise<SourceResult[]> {
+export async function collectSupplementalSources(input: { profile: Profile; now?: Date; fetcher?: Fetcher; rssUrl?: string }): Promise<SourceResult[]> {
   const now = input.now ?? new Date();
   const fetcher = input.fetcher ?? fetch;
-  const sources = sourcePack(input.profile).sources.filter((source) => source.enabled);
+  const sources = sourcePack(input.profile).sources.filter((source) => source.enabled).map((source) => source.id === "ainews" && input.rssUrl ? { ...source, url: input.rssUrl } : source);
   return Promise.all(sources.map((source) => {
     switch (source.id) {
+      case "ainews": return collectAiNews(input.profile, fetcher, source);
       case "tldr-ai": return collectTldr(input.profile, fetcher, source);
       case "alphasignal": return collectAlpha(input.profile, now, fetcher, source);
       case "cloudflare-agents": return collectCloudflare(input.profile, now, fetcher, source);
@@ -347,16 +388,12 @@ function urlAuthority(value: string, primary: boolean): number {
     const host = new URL(value).hostname.toLowerCase();
     if (primary) return 4;
     if (aggregatorHost(host)) return 0;
-    if (host === "x.com" || host === "twitter.com" || host.endsWith("reddit.com")) return 1;
+    if (socialHost(host)) return -1;
+    if (host.endsWith("reddit.com")) return 1;
     return 2;
   } catch {
     return -1;
   }
-}
-
-function preferredUrl(baseUrl: string, supplemental: SupplementalCandidate): string {
-  const supplementalPrimary = supplemental.sourceAttributions.some((item) => item.kind === "primary");
-  return urlAuthority(supplemental.url, supplementalPrimary) > urlAuthority(baseUrl, false) ? supplemental.url : baseUrl;
 }
 
 function mergeSupplemental(left: SupplementalCandidate, right: SupplementalCandidate): SupplementalCandidate {
@@ -366,17 +403,17 @@ function mergeSupplemental(left: SupplementalCandidate, right: SupplementalCandi
   const rightPrimary = right.sourceAttributions.some((item) => item.kind === "primary");
   const leftAuthority = urlAuthority(left.url, leftPrimary);
   const rightAuthority = urlAuthority(right.url, rightPrimary);
-  const leftOrder = SOURCE_ORDER[left.leadSourceId ?? left.sourceAttributions[0]?.sourceId ?? "cloudflare-agents"];
-  const rightOrder = SOURCE_ORDER[right.leadSourceId ?? right.sourceAttributions[0]?.sourceId ?? "cloudflare-agents"];
   const preferred = rightAuthority > leftAuthority
-    || (rightAuthority === leftAuthority && (right.score > left.score || (right.score === left.score && (rightOrder < leftOrder || (rightOrder === leftOrder && `${right.title}|${right.url}`.localeCompare(`${left.title}|${left.url}`) < 0)))))
+    || (rightAuthority === leftAuthority && (right.score > left.score
+      || (right.score === left.score && (right.publishedAt > left.publishedAt
+        || (right.publishedAt === left.publishedAt && `${right.title}|${right.url}`.localeCompare(`${left.title}|${left.url}`) < 0)))))
     ? right
     : left;
   return {
     ...preferred,
     score: Math.max(left.score, right.score),
     leadSourceId: preferred.leadSourceId ?? preferred.sourceAttributions[0]?.sourceId,
-    sourceAttributions: [...attributions.values()].sort((first, second) => SOURCE_ORDER[first.sourceId] - SOURCE_ORDER[second.sourceId] || first.sourceUrl.localeCompare(second.sourceUrl))
+    sourceAttributions: [...attributions.values()].sort((first, second) => first.sourceName.localeCompare(second.sourceName) || first.sourceUrl.localeCompare(second.sourceUrl))
   };
 }
 
@@ -412,8 +449,8 @@ function sourceReferences(candidate: SupplementalCandidate): StorySourceAttribut
     })
     .sort((left, right) => {
       if (left.id === candidate.leadSourceId || right.id === candidate.leadSourceId) return left.id === candidate.leadSourceId ? -1 : 1;
-      if (left.id === "ainews" || right.id === "ainews") return left.id === "ainews" ? -1 : 1;
-      return SOURCE_ORDER[left.id] - SOURCE_ORDER[right.id];
+      if (left.layer !== right.layer) return left.layer === "editorial" ? -1 : 1;
+      return left.name.localeCompare(right.name);
     })
     .filter((source) => {
       if (seen.has(source.id)) return false;
@@ -432,25 +469,10 @@ function supplementalEvidence(candidate: SupplementalCandidate): StoryEvidence |
   if (!url) return undefined;
   const parsed = new URL(url);
   const host = parsed.hostname.replace(/^www\./, "");
-  if (NON_EVIDENCE_HOSTS.has(host) || host.endsWith(".typeform.com") || /\.(?:avif|gif|jpe?g|png|svg|webp)$/i.test(parsed.pathname)) return undefined;
+  if (socialHost(parsed.hostname) || NON_EVIDENCE_HOSTS.has(host) || host.endsWith(".typeform.com") || /\.(?:avif|gif|jpe?g|png|svg|webp)$/i.test(parsed.pathname)) return undefined;
   const primary = candidate.sourceAttributions.find((item) => item.kind === "primary");
   if (!primary && urlAuthority(url, false) < 2) return undefined;
   return { label: evidenceLabel(url, primary?.sourceName), url, kind: primary ? "primary" : "direct" };
-}
-
-function baseEvidence(candidate: CandidateStory): StoryEvidence[] {
-  const seen = new Set<string>();
-  return candidate.sources.flatMap((source) => {
-    try {
-      const parsed = new URL(source.url);
-      if (parsed.protocol !== "https:" || seen.has(source.url)) return [];
-      seen.add(source.url);
-      // AInews links remain byte-for-byte intact; only supplemental URLs are canonicalized.
-      return [{ ...source, kind: "direct" as const }];
-    } catch {
-      return [];
-    }
-  });
 }
 
 function clusterId(candidate: { title: string; url: string }): string {
@@ -488,100 +510,45 @@ function selectionScore(candidate: Pick<CandidateStory, "category" | "score"> | 
   return Math.max(0, Math.round(categoryWeight(candidate, profile) * 20 + candidate.score + independentCoverageBoost(opts?.corroboration ?? 0) + (opts?.primary ? 4 : 0)));
 }
 
-function withBaseProvenance(candidate: CandidateStory, profile: Profile): CandidateStory {
-  const evidence = baseEvidence(candidate);
-  const provenance: StoryProvenance = {
-    clusterId: clusterId({ title: candidate.title, url: evidence[0]?.url ?? candidate.sources[0]?.url ?? candidate.title }),
-    lead: AI_NEWS_SOURCE,
-    editorialCorroboration: [],
-    evidence,
-    coverage: coverageMetadata(AI_NEWS_SOURCE, [], evidence),
-    selection: { score: selectionScore(candidate, profile), reason: "ainews-base" }
-  };
-  return { ...candidate, sources: evidence.map(({ label, url }) => ({ label, url })), provenance };
-}
-
-function mergeEvidence(base: CandidateStory, supplemental: SupplementalCandidate): StoryEvidence[] {
-  const direct = supplementalEvidence(supplemental);
-  const original = baseEvidence(base);
-  const preferred = direct ? preferredUrl(original[0]?.url ?? direct.url, supplemental) : original[0]?.url;
-  const merged = [...original, ...(direct ? [direct] : [])];
-  const unique = new Map<string, StoryEvidence>();
-  for (const item of merged) {
-    const key = canonicalizeSupplementalUrl(item.url) ?? item.url;
-    const existing = unique.get(key);
-    if (!existing || item.url === preferred || (existing.url !== preferred && item.kind === "primary" && existing.kind !== "primary")) unique.set(key, item);
-  }
-  return [...unique.values()]
-    .sort((left, right) => {
-      if (left.url === preferred) return -1;
-      if (right.url === preferred) return 1;
-      if (left.kind !== right.kind) return left.kind === "primary" ? -1 : 1;
-      return 0;
-    })
-    .slice(0, 4);
-}
-
-function mergeWithAiNews(base: CandidateStory, supplemental: SupplementalCandidate, profile: Profile): CandidateStory {
-  const references = sourceReferences(supplemental);
-  const editorial = [AI_NEWS_SOURCE, ...references.filter((source) => source.layer === "editorial")];
-  const supplementalLead = references.find((source) => source.layer === "editorial") ?? references.find((source) => source.layer === "primary");
-  const primary = supplemental.sourceAttributions.some((item) => item.kind === "primary");
-  const useSupplementalLead = Boolean(supplementalLead) && (supplemental.score > base.score || (supplemental.score === base.score && primary));
-  const lead = useSupplementalLead ? supplementalLead! : AI_NEWS_SOURCE;
-  const evidence = mergeEvidence(base, supplemental);
-  const editorialCorroboration = editorial.filter((source, index) => source.id !== lead.id && editorial.findIndex((item) => item.id === source.id) === index);
-  const coverage = coverageMetadata(lead, editorialCorroboration, evidence);
-  const provenance: StoryProvenance = {
-    clusterId: clusterId({ title: useSupplementalLead ? supplemental.title : base.title, url: evidence[0]?.url ?? supplemental.url }),
-    lead,
-    editorialCorroboration,
-    evidence,
-    coverage,
-    selection: {
-      score: selectionScore(useSupplementalLead ? supplemental : base, profile, { corroboration: Math.max(0, coverage.editorialSourceCount - 1), primary: evidence.some((item) => item.kind === "primary") }),
-      reason: "cross-source"
-    }
-  };
-  return {
-    ...(useSupplementalLead ? {
-      ...base,
-      title: supplemental.title,
-      summary: supplemental.summary,
-      category: supplemental.category,
-      categoryLabel: supplemental.categoryLabel,
-      score: Math.max(base.score, supplemental.score),
-      exceptional: base.exceptional || supplemental.exceptional,
-      watchPermission: base.watchPermission || isPermissionDesignSignal(`${supplemental.title} ${supplemental.summary}`),
-      modelText: supplemental.summary
-    } : { ...base, score: Math.max(base.score, supplemental.score) }),
-    sources: evidence.map(({ label, url }) => ({ label, url })),
-    provenance
-  };
-}
-
 function strongProfileFit(candidate: SupplementalCandidate, profile: Profile): boolean {
   if (candidate.exceptional && profile.exceptionalStoryOverride) return true;
   if (candidate.score < 4) return false;
   return categoryWeight(candidate, profile) >= 3 || isPermissionDesignSignal(`${candidate.title} ${candidate.summary}`);
 }
 
-function novelCandidate(candidate: SupplementalCandidate, profile: Profile, id: number): CandidateStory | undefined {
-  const evidence = supplementalEvidence(candidate);
-  if (!evidence || !strongProfileFit(candidate, profile)) return undefined;
+export function freshnessBoost(publishedAt: string, now: Date): number {
+  const ageHours = (now.getTime() - Date.parse(publishedAt)) / 3_600_000;
+  if (!Number.isFinite(ageHours) || ageHours < 0 || ageHours > MAX_FRESHNESS_HOURS) return 0;
+  if (ageHours <= PREFERRED_FRESHNESS_HOURS) return 6;
+  return Math.max(0, Math.round(6 * (MAX_FRESHNESS_HOURS - ageHours) / (MAX_FRESHNESS_HOURS - PREFERRED_FRESHNESS_HOURS)));
+}
+
+function qualifiesForDailyPool(candidate: SupplementalCandidate, profile: Profile): boolean {
   const references = sourceReferences(candidate);
-  const lead = references.find((source) => source.layer === "editorial") ?? references.find((source) => source.layer === "primary");
+  const editorialCount = references.filter((source) => source.layer === "editorial").length;
+  const primary = candidate.sourceAttributions.some((item) => item.kind === "primary");
+  return strongProfileFit(candidate, profile) || editorialCount > 1 || (primary && categoryWeight(candidate, profile) >= 2);
+}
+
+function dailyCandidate(candidate: SupplementalCandidate, profile: Profile, id: number, now: Date): CandidateStory | undefined {
+  const evidence = supplementalEvidence(candidate);
+  if (!evidence || !qualifiesForDailyPool(candidate, profile)) return undefined;
+  const references = sourceReferences(candidate);
+  const lead = references.find((source) => source.id === candidate.leadSourceId)
+    ?? references.find((source) => source.layer === "editorial")
+    ?? references.find((source) => source.layer === "primary");
   if (!lead) return undefined;
   const editorialCorroboration = references.filter((source) => source.layer === "editorial" && source.id !== lead.id);
+  const coverage = coverageMetadata(lead, editorialCorroboration, [evidence]);
   const provenance: StoryProvenance = {
     clusterId: clusterId(candidate),
     lead,
     editorialCorroboration,
     evidence: [evidence],
-    coverage: coverageMetadata(lead, editorialCorroboration, [evidence]),
+    coverage,
     selection: {
-      score: selectionScore(candidate, profile, { corroboration: editorialCorroboration.length, primary: evidence.kind === "primary" }),
-      reason: "strong-fit-supplemental"
+      score: selectionScore(candidate, profile, { corroboration: Math.max(0, coverage.editorialSourceCount - 1), primary: evidence.kind === "primary" }) + freshnessBoost(candidate.publishedAt, now),
+      reason: coverage.editorialSourceCount > 1 ? "cross-source" : "single-source"
     }
   };
   return {
@@ -595,162 +562,148 @@ function novelCandidate(candidate: SupplementalCandidate, profile: Profile, id: 
     watchPermission: isPermissionDesignSignal(`${candidate.title} ${candidate.summary}`),
     watchGeography: /cluster geography|data cent(?:er|re)|sovereign|regional capacity|\bchina\b|united states|\bu\.s\.\b/i.test(`${candidate.title} ${candidate.summary}`),
     sources: [{ label: evidence.label, url: evidence.url }],
+    publishedAt: candidate.publishedAt,
     provenance,
     modelText: candidate.summary
   };
 }
 
-export type BlendedCandidateInventory = {
+function gentlyDiversify(stories: CandidateStory[]): CandidateStory[] {
+  const remaining = [...stories];
+  const selected: CandidateStory[] = [];
+  while (remaining.length) {
+    let index = 0;
+    const previousLead = selected.at(-1)?.provenance?.lead.id;
+    const top = remaining[0]!;
+    if (previousLead && top.provenance?.lead.id === previousLead) {
+      const alternative = remaining.findIndex((candidate) => candidate.provenance?.lead.id !== previousLead
+        && top.provenance!.selection.score - candidate.provenance!.selection.score <= 4);
+      if (alternative > 0) index = alternative;
+    }
+    selected.push(remaining.splice(index, 1)[0]!);
+  }
+  return selected;
+}
+
+export type DailyCandidateInventory = {
   candidates: CandidateStory[];
-  overlaps: number;
-  rejectedNovel: number;
-  selectedSupplemental: SupplementalCandidate[];
+  eligibleCandidates: number;
+  expiredCandidates: number;
   collection: NonNullable<Edition["collection"]>;
 };
 
-/** Builds the production inventory while preserving AInews as the base and limiting novel additions. */
-export function buildBlendedCandidateInventory(input: {
-  aiNewsCandidates: CandidateStory[];
+/** Builds one ranked daily pool. Feed identity never contributes source seniority. */
+export function buildDailyCandidateInventory(input: {
   sourceResults: SourceResult[];
   profile: Profile;
-  mode?: "ainews-only" | "blended";
-}): BlendedCandidateInventory {
-  const supplemental = deduplicateSupplemental(input.sourceResults.flatMap((result) => result.candidates));
-  const clustered = input.aiNewsCandidates.map((candidate) => withBaseProvenance(candidate, input.profile));
-  const novel: Array<{ raw: SupplementalCandidate; story: CandidateStory }> = [];
-  let overlaps = 0;
-  let nextId = Math.max(0, ...clustered.map((candidate) => candidate.id)) + 1;
-
-  for (const candidate of supplemental) {
-    const index = clustered.findIndex((base) => base.sources.some((source) => sameStory({ title: base.title, url: source.url }, candidate)));
-    if (index >= 0) {
-      clustered[index] = mergeWithAiNews(clustered[index]!, candidate, input.profile);
-      overlaps += 1;
-      continue;
-    }
-    const story = novelCandidate(candidate, input.profile, nextId);
-    if (!story) continue;
-    nextId += 1;
-    novel.push({ raw: candidate, story });
-  }
-
-  novel.sort((left, right) => right.story.provenance!.selection.score - left.story.provenance!.selection.score || right.raw.publishedAt.localeCompare(left.raw.publishedAt) || left.story.title.localeCompare(right.story.title));
-  const sourceCounts = new Map<StorySourceAttribution["id"], number>();
-  const selected = novel.filter(({ story }) => {
-    const source = story.provenance!.lead.id;
-    if ((sourceCounts.get(source) ?? 0) >= MAX_NOVEL_PER_SOURCE) return false;
-    sourceCounts.set(source, (sourceCounts.get(source) ?? 0) + 1);
-    return true;
-  }).slice(0, MAX_NOVEL_SUPPLEMENTAL);
-
-  const baseLimit = Math.max(0, MAX_BLENDED_CANDIDATES - selected.length);
-  const candidates = [...clustered.slice(0, baseLimit), ...selected.map((item) => item.story)]
-    .sort((left, right) => right.provenance!.selection.score - left.provenance!.selection.score || left.id - right.id)
+  now?: Date;
+}): DailyCandidateInventory {
+  const now = input.now ?? new Date();
+  const allCandidates = input.sourceResults.flatMap((result) => result.candidates);
+  const cutoff = now.getTime() - MAX_FRESHNESS_HOURS * 3_600_000;
+  const fresh = allCandidates.filter((candidate) => {
+    const publishedAt = Date.parse(candidate.publishedAt);
+    return Number.isFinite(publishedAt) && publishedAt <= now.getTime() && publishedAt >= cutoff;
+  });
+  const eligible = deduplicateSupplemental(fresh)
+    .flatMap((candidate, index) => {
+      const story = dailyCandidate(candidate, input.profile, index + 1, now);
+      return story ? [story] : [];
+    })
+    .sort((left, right) => right.provenance!.selection.score - left.provenance!.selection.score
+      || (right.publishedAt ?? "").localeCompare(left.publishedAt ?? "")
+      || left.title.localeCompare(right.title));
+  const candidates = gentlyDiversify(eligible).slice(0, MAX_BLENDED_CANDIDATES)
     .map((candidate, index) => ({ ...candidate, id: index + 1 }));
   const pack = sourcePack(input.profile);
+  const contributing = new Set<string>();
+  for (const candidate of candidates) {
+    if (candidate.provenance?.lead.name) contributing.add(candidate.provenance.lead.name);
+    for (const source of candidate.provenance?.editorialCorroboration ?? []) contributing.add(source.name);
+  }
   return {
     candidates,
-    overlaps,
-    rejectedNovel: supplemental.length - overlaps - selected.length,
-    selectedSupplemental: selected.map((item) => item.raw),
+    eligibleCandidates: eligible.length,
+    expiredCandidates: allCandidates.length - fresh.length,
     collection: {
-      mode: input.mode ?? "blended",
-      baseSource: "AInews",
-      editorialDiscovery: input.mode === "ainews-only" ? [] : ["AlphaSignal", "TLDR AI"],
-      primaryEvidenceFeeds: input.mode === "ainews-only" ? [] : ["Cloudflare Agents"],
-      selectedSupplemental: selected.length,
-      supplementalCap: MAX_NOVEL_SUPPLEMENTAL,
+      mode: "daily-pool",
+      sourcesChecked: input.sourceResults.map((result) => result.health.name),
+      sourcesContributing: [...contributing].sort(),
+      preferredFreshnessHours: PREFERRED_FRESHNESS_HOURS,
+      maxFreshnessHours: MAX_FRESHNESS_HOURS,
+      eligibleCandidates: eligible.length,
+      selectedCandidates: candidates.length,
       sourcePackId: pack.id,
       sourcePackVersion: pack.version
     }
   };
 }
 
-export function buildSupplementalShadowReport(input: {
+export function buildDailySourceReport(input: {
   issue: RssIssue;
-  aiNewsCandidates: CandidateStory[];
   sourceResults: SourceResult[];
+  inventory: DailyCandidateInventory;
   generatedAt: string;
-  mode?: "shadow" | "blend";
-  selectedForBlend?: SupplementalCandidate[];
-  profile?: Profile;
+  profile: Profile;
 }): SupplementalShadowReport {
-  const collected = input.sourceResults.flatMap((result) => result.candidates);
-  const pack = input.profile ? sourcePack(input.profile) : getSourcePack();
-  const shadowCaps = new Map(pack.sources.map((source) => [source.id, source.shadowCap]));
-  const deduplicated = deduplicateSupplemental(collected);
-  const overlaps: SupplementalShadowReport["overlaps"] = [];
-  const novel: SupplementalCandidate[] = [];
-  for (const candidate of deduplicated) {
-    const matchingBase = input.aiNewsCandidates.find((base) => base.sources.some((source) => sameStory({ title: base.title, url: source.url }, candidate)));
-    if (matchingBase) {
-      const matchingSource = matchingBase.sources.find((source) => sameStory({ title: matchingBase.title, url: source.url }, candidate));
-      overlaps.push({ supplementalTitle: candidate.title, aiNewsTitle: matchingBase.title, preferredUrl: preferredUrl(matchingSource?.url ?? candidate.url, candidate), sourceIds: [...new Set(candidate.sourceAttributions.map((item) => item.sourceId))] });
-    } else if (candidate.score >= 4 || candidate.exceptional || isPermissionDesignSignal(`${candidate.title} ${candidate.summary}`)) {
-      novel.push(candidate);
-    }
-  }
-  const selected: Array<{ candidate: SupplementalCandidate; countedFor: SupplementalSourceId }> = [];
-  const sourceCounts = new Map<SupplementalSourceId, number>();
-  for (const candidate of [...novel].sort((left, right) => right.score - left.score || right.publishedAt.localeCompare(left.publishedAt))) {
-    const source = candidate.sourceAttributions.map((item) => item.sourceId).find((id) => (sourceCounts.get(id) ?? 0) < (shadowCaps.get(id) ?? 0));
-    if (!source) continue;
-    selected.push({ candidate, countedFor: source });
-    sourceCounts.set(source, (sourceCounts.get(source) ?? 0) + 1);
-    if (selected.length === 6) break;
-  }
+  const allCandidates = input.sourceResults.flatMap((result) => result.candidates);
+  const selected = input.inventory.candidates.map((candidate): SupplementalShadowReport["wouldAdd"][number] => ({
+    title: candidate.title,
+    summary: candidate.summary,
+    url: candidate.sources[0]!.url,
+    publishedAt: candidate.publishedAt ?? input.generatedAt,
+    category: candidate.category,
+    categoryLabel: candidate.categoryLabel,
+    score: candidate.provenance?.selection.score ?? candidate.score,
+    sourceIds: [...new Set([candidate.provenance?.lead.id, ...(candidate.provenance?.editorialCorroboration ?? []).map((source) => source.id)].filter((id): id is SupplementalSourceId => Boolean(id)))],
+    sourceNames: [...new Set([candidate.provenance?.lead.name, ...(candidate.provenance?.editorialCorroboration ?? []).map((source) => source.name)].filter((name): name is string => Boolean(name)))]
+  }));
+  const pack = sourcePack(input.profile);
+  const aiNewsCandidates = input.sourceResults.find((result) => result.health.id === "ainews")?.candidates.length ?? 0;
   return {
     schemaVersion: 1,
-    mode: input.mode ?? "shadow",
+    mode: "daily-pool",
     generatedAt: input.generatedAt,
     baseIssue: { url: input.issue.url, issueDate: input.issue.issueDate, publicationDate: input.issue.publicationDate },
     sourcePack: { id: pack.id, version: pack.version },
-    limits: { modelCandidates: 18, publishedStories: 14, tldr: 3, alphaSignal: 2, cloudflare: 1 },
+    limits: { modelCandidates: 18, publishedStories: 14 },
+    freshness: {
+      preferredHours: PREFERRED_FRESHNESS_HOURS,
+      maxHours: MAX_FRESHNESS_HOURS,
+      eligibleCandidates: input.inventory.eligibleCandidates,
+      expiredCandidates: input.inventory.expiredCandidates
+    },
     sources: input.sourceResults.map((result) => result.health),
     totals: {
-      aiNewsCandidates: input.aiNewsCandidates.length,
-      supplementalCandidates: collected.length,
-      supplementalAfterDeduplication: deduplicated.length,
-      overlapsWithAiNews: overlaps.length,
-      novelQualifiedCandidates: novel.length,
+      aiNewsCandidates,
+      supplementalCandidates: allCandidates.length - aiNewsCandidates,
+      supplementalAfterDeduplication: input.inventory.eligibleCandidates,
+      overlapsWithAiNews: input.inventory.candidates.filter((candidate) => (candidate.provenance?.coverage?.editorialSourceCount ?? 0) > 1).length,
+      novelQualifiedCandidates: input.inventory.eligibleCandidates,
       wouldAdd: selected.length,
-      ...(input.selectedForBlend ? { selectedForBlend: input.selectedForBlend.length } : {})
+      selectedForBlend: selected.length
     },
-    overlaps,
-    wouldAdd: selected.map(({ candidate }) => ({
-      title: candidate.title,
-      summary: candidate.summary,
-      url: candidate.url,
-      publishedAt: candidate.publishedAt,
-      category: candidate.category,
-      categoryLabel: candidate.categoryLabel,
-      score: candidate.score,
-      sourceIds: [...new Set(candidate.sourceAttributions.map((item) => item.sourceId))],
-      sourceNames: [...new Set(candidate.sourceAttributions.map((item) => item.sourceName))]
-    })),
-    ...(input.selectedForBlend ? {
-      selectedForBlend: input.selectedForBlend.map((candidate) => ({
-        title: candidate.title,
-        summary: candidate.summary,
-        url: candidate.url,
-        publishedAt: candidate.publishedAt,
-        category: candidate.category,
-        categoryLabel: candidate.categoryLabel,
-        score: candidate.score,
-        sourceIds: [...new Set(candidate.sourceAttributions.map((item) => item.sourceId))],
-        sourceNames: [...new Set(candidate.sourceAttributions.map((item) => item.sourceName))]
-      }))
-    } : {})
+    overlaps: [],
+    wouldAdd: selected,
+    selectedForBlend: selected
   };
 }
 
 export async function collectSupplementalShadow(input: { rssUrl: string; profile: Profile; now?: Date; fetcher?: Fetcher }): Promise<SupplementalShadowReport> {
   const now = input.now ?? new Date();
   const fetcher = input.fetcher ?? fetch;
-  const issue = await fetchLatestRss(input.rssUrl, fetcher);
-  const aiNewsCandidates = compactIssueInventory(issue, input.profile).candidates;
-  const sourceResults = await collectSupplementalSources({ profile: input.profile, now, fetcher });
-  return buildSupplementalShadowReport({ issue, aiNewsCandidates, sourceResults, generatedAt: now.toISOString(), profile: input.profile });
+  const issueDate = melbourneCalendarDay(now);
+  const issue: RssIssue = {
+    url: `https://signal.tamirlevin.dev/?edition=${issueDate}`,
+    issueDate,
+    publicationDate: new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "long", year: "numeric", timeZone: "Australia/Melbourne" }).format(now),
+    publishedAt: now.toISOString(),
+    body: "",
+    anchors: []
+  };
+  const sourceResults = await collectSupplementalSources({ profile: input.profile, now, fetcher, rssUrl: input.rssUrl });
+  const inventory = buildDailyCandidateInventory({ sourceResults, profile: input.profile, now });
+  return buildDailySourceReport({ issue, sourceResults, inventory, generatedAt: now.toISOString(), profile: input.profile });
 }
 
 export async function runSupplementalShadow(env: Env, trigger: "cron" | "manual" | "local-scheduled"): Promise<{ status: "healthy" | "degraded" | "failed"; report?: SupplementalShadowReport; error?: string }> {

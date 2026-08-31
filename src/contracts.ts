@@ -37,7 +37,7 @@ export type Profile = {
 };
 
 export type Source = { label: string; url: string };
-export type StorySourceId = "ainews" | SupplementalSourceId;
+export type StorySourceId = SupplementalSourceId;
 export type StorySourceAttribution = {
   id: StorySourceId;
   name: string;
@@ -60,7 +60,7 @@ export type StoryProvenance = {
   coverage?: StoryCoverage;
   selection: {
     score: number;
-    reason: "ainews-base" | "cross-source" | "strong-fit-supplemental";
+    reason: "ainews-base" | "cross-source" | "strong-fit-supplemental" | "single-source";
   };
 };
 export type RankedItem = {
@@ -87,16 +87,7 @@ export type HotTopic = RankedItem & { summary: string; sources: Source[] };
 export type Edition = {
   schemaVersion: 1;
   issue: { publicationDate: string; coverage: string; url: string; quiet: boolean };
-  collection?: {
-    mode: "ainews-only" | "blended";
-    baseSource: "AInews";
-    editorialDiscovery: string[];
-    primaryEvidenceFeeds: string[];
-    selectedSupplemental: number;
-    supplementalCap: number;
-    sourcePackId?: SourcePackId;
-    sourcePackVersion?: number;
-  };
+  collection?: LegacyCollection | DailyCollection;
   presentation: {
     hotTitle: string;
     hotIntro: string;
@@ -128,6 +119,7 @@ export type RssIssue = {
   url: string;
   issueDate: string;
   publicationDate: string;
+  publishedAt: string;
   body: string;
   anchors: Source[];
 };
@@ -143,6 +135,7 @@ export type CandidateStory = {
   watchPermission: boolean;
   watchGeography: boolean;
   sources: Source[];
+  publishedAt?: string;
   provenance?: StoryProvenance;
   /** Compact collector context used only for synthesis input; it is not published. */
   modelText?: string;
@@ -171,14 +164,36 @@ export type ScheduledHeartbeat = {
   lastOutcome?: RunStatus["status"];
 };
 
-export type SupplementalSourceId = "tldr-ai" | "alphasignal" | "cloudflare-agents";
+export type LegacyCollection = {
+  mode: "ainews-only" | "blended";
+  baseSource: "AInews";
+  editorialDiscovery: string[];
+  primaryEvidenceFeeds: string[];
+  selectedSupplemental: number;
+  supplementalCap: number;
+  sourcePackId?: SourcePackId;
+  sourcePackVersion?: number;
+};
+
+export type DailyCollection = {
+  mode: "daily-pool";
+  sourcesChecked: string[];
+  sourcesContributing: string[];
+  preferredFreshnessHours: 36;
+  maxFreshnessHours: 48;
+  eligibleCandidates: number;
+  selectedCandidates: number;
+  sourcePackId?: SourcePackId;
+  sourcePackVersion?: number;
+};
+
+export type SupplementalSourceId = "ainews" | "tldr-ai" | "alphasignal" | "cloudflare-agents";
 export type SourcePackSource = {
   id: SupplementalSourceId;
   name: string;
   kind: "discovery" | "primary";
   url: string;
   enabled: boolean;
-  shadowCap: number;
   lookbackHours?: number;
   enrichLimit?: number;
 };
@@ -224,11 +239,12 @@ export type ShadowCandidate = Pick<SupplementalCandidate, "title" | "summary" | 
 };
 export type SupplementalShadowReport = {
   schemaVersion: 1;
-  mode: "shadow" | "blend";
+  mode: "shadow" | "blend" | "daily-pool";
   generatedAt: string;
   baseIssue: { url: string; issueDate: string; publicationDate: string };
   sourcePack?: { id: SourcePackId; version: number };
-  limits: { modelCandidates: 18; publishedStories: 14; tldr: 3; alphaSignal: 2; cloudflare: 1 };
+  limits: { modelCandidates: 18; publishedStories: 14; tldr?: 3; alphaSignal?: 2; cloudflare?: 1 };
+  freshness?: { preferredHours: 36; maxHours: 48; eligibleCandidates: number; expiredCandidates: number };
   sources: SupplementalSourceHealth[];
   totals: {
     aiNewsCandidates: number;

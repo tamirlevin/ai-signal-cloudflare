@@ -2,6 +2,20 @@
 
 This is the curated engineering and production history for AI Signal. It records consequential decisions, incidents, verified runtime evidence, unresolved uncertainty, and architectural constraints. It is not a release changelog, commit log, or session transcript.
 
+## 31 August 2026 — daily equal-source edition correction
+
+### Engineering record
+
+- Product behavior was corrected from an AInews-anchored issue plus a separate “Fresh since this edition” display to one ordinary daily edition built for the current Melbourne calendar day. The temporary fresh-signals reader section and its client fetch were removed; the scheduled-heartbeat alert remains.
+- `core-ai` v2 places AInews, TLDR AI, and AlphaSignal in one editorial candidate pool with no source seniority. Cloudflare Agents remains a narrow primary-evidence lane. A failed or quiet feed no longer blocks usable candidates from another source.
+- The pool prefers candidates published inside 36 hours, rejects anything older than 48 hours, and excludes X/Twitter URLs from publishable cards and corroboration. Ranking combines profile fit, freshness, evidence quality, and capped cross-source coverage. Diversity is only a four-point near-tie ordering safeguard; there are no source quotas or padding.
+- Each stored signal retains its own source timestamp while the edition itself is dated to the Melbourne run day. Normal refresh is idempotent for that day. No D1 migration, new service, queue, schedule, or second publication path was introduced.
+- The deterministic collector still materialises every story card and permitted URL. Workers AI still writes only the bounded synthesis and presentation copy, and a run with no qualified 48-hour candidates preserves the last good edition.
+
+### Release verification
+
+Pending. Source must pass the repository gates, be pushed to GitHub `main`, then be deployed with Git provenance. The owner has explicitly authorized one ordinary production refresh after deployment; a forced republish is neither required nor intended.
+
 ## 31 August 2026 — fresh source signals and scheduled heartbeat visibility
 
 ### Engineering record
@@ -77,8 +91,10 @@ The follow-on shadow run was healthy in 1,557 ms using `core-ai` v1. TLDR AI, Al
 - The deterministic collector, not the model, materialises the story inventory.
 - The model cannot introduce stories or source URLs.
 - Editorial corroboration is never described as proof.
-- AInews remains the base and complete fail-open fallback.
-- Supplemental failure does not block a usable base edition.
+- AInews, TLDR AI, and AlphaSignal enter one equal editorial pool; no source receives seniority.
+- One failed or quiet source does not block a usable pool from the others.
+- Prefer the first 36 hours and reject candidates older than 48 hours.
+- X/Twitter is background noise and cannot become a published card or corroborating source.
 - Quiet days remain quiet; do not pad to a story target.
 - Failed runs cannot replace the last good edition.
 - Normal refresh remains idempotent.

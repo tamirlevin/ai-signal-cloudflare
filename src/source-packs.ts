@@ -10,13 +10,14 @@ export const DEFAULT_SOURCE_PACK_ID: SourcePackId = "core-ai";
 export const SOURCE_PACKS: Record<SourcePackId, SourcePack> = {
   "core-ai": {
     id: "core-ai",
-    version: 1,
+    version: 2,
     label: "Core AI",
-    description: "AInews base coverage with newsletter discovery and Cloudflare primary evidence.",
+    description: "Equal-source daily AI discovery with a bounded primary-evidence lane.",
     sources: [
-      { id: "tldr-ai", name: "TLDR AI", kind: "discovery", url: "https://tldr.tech/api/rss/ai", enabled: true, shadowCap: 3 },
-      { id: "alphasignal", name: "AlphaSignal", kind: "discovery", url: "https://alphasignal.ai/sitemaps/news.xml", enabled: true, shadowCap: 2, lookbackHours: 72, enrichLimit: 5 },
-      { id: "cloudflare-agents", name: "Cloudflare Agents", kind: "primary", url: "https://blog.cloudflare.com/tag/agents/rss", enabled: true, shadowCap: 1, lookbackHours: 72 }
+      { id: "ainews", name: "AInews", kind: "discovery", url: "https://news.smol.ai/rss.xml", enabled: true },
+      { id: "tldr-ai", name: "TLDR AI", kind: "discovery", url: "https://tldr.tech/api/rss/ai", enabled: true },
+      { id: "alphasignal", name: "AlphaSignal", kind: "discovery", url: "https://alphasignal.ai/sitemaps/news.xml", enabled: true, lookbackHours: 48, enrichLimit: 8 },
+      { id: "cloudflare-agents", name: "Cloudflare Agents", kind: "primary", url: "https://blog.cloudflare.com/tag/agents/rss", enabled: true, lookbackHours: 48 }
     ]
   }
 };

@@ -7,7 +7,7 @@ const MAX_BLOCK_TEXT = 900;
 
 const CATEGORY_TERMS: Record<string, RegExp> = {
   agents: /\bagent(?:s|ic)?\b|autonom|multi-agent|subagent/gi,
-  codex: /\bcodex\b|claude code|coding agent|developer tool|software engineering|terminal/gi,
+  codex: /\bcodex\b|claude code|\bcursor\b|coding agent|developer tool|software engineering|terminal/gi,
   newSystems: /\blaunch|\brelease|new system|first[- ]ever|now possible|new product/gi,
   integration: /integrat|platform|plugin|connector|browser|identity|memory|tool use|foundry|cloud/gi,
   business: /enterprise|business|adoption|revenue|market|economic|company|pricing|cost/gi,
@@ -170,7 +170,9 @@ export function materializeCandidateStories(candidates: CandidateStory[], profil
       title: candidate.title,
       summary: candidate.summary,
       source: displayedSource.label,
-      date: publicationDate,
+      date: candidate.publishedAt
+        ? new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "long", year: "numeric", timeZone: "Australia/Melbourne" }).format(new Date(candidate.publishedAt))
+        : publicationDate,
       url: source.url,
       category: candidate.category,
       categoryLabel: candidate.categoryLabel,
@@ -276,7 +278,7 @@ export function issueFromCandidateInventory(issue: RssIssue, candidates: Candida
     const corroboration = provenance?.editorialCorroboration.map((source) => source.name).join(", ") || "none";
     const evidence = provenance?.evidence.map((source) => `${source.kind === "primary" ? "primary" : "linked"}: ${source.label}`).join(", ") || "linked sources below";
     const sources = candidate.sources.map((source) => `[${source.label}](${source.url})`).join(" | ");
-    return `Candidate ${candidate.id}\nStory: ${candidate.title}\nEvidence summary: ${candidate.modelText ?? candidate.summary}\nLead source (${provenance?.lead.layer ?? "editorial"}): ${provenance?.lead.name ?? "AInews"}\nEditorial corroboration (discovery context, not proof): ${corroboration}\nEvidence links: ${evidence}\nAllowed links for this candidate: ${sources}`;
+    return `Candidate ${candidate.id}\nStory: ${candidate.title}\nPublished: ${candidate.publishedAt ?? "timestamp unavailable"}\nEvidence summary: ${candidate.modelText ?? candidate.summary}\nLead source (${provenance?.lead.layer ?? "editorial"}): ${provenance?.lead.name ?? "source feed"}\nEditorial corroboration (discovery context, not proof): ${corroboration}\nEvidence links: ${evidence}\nAllowed links for this candidate: ${sources}`;
   }).join("\n\n");
   return { ...issue, body, anchors };
 }
@@ -331,7 +333,7 @@ export const EDITION_SCHEMA = {
         sources: SOURCES_SCHEMA,
         sections: {
           type: "array",
-          minItems: 2,
+          minItems: 1,
           maxItems: 4,
           items: {
             type: "object",
@@ -357,7 +359,7 @@ export function editorialMessages(issue: RssIssue, profile: Profile, repair?: st
   return [
     {
       role: "system",
-      content: "You are AI Signal's editorial engine. Produce one JSON object only; no Markdown or commentary. The collector supplies a trusted, source-aware inventory with AInews as its base and may include tightly gated AlphaSignal, TLDR AI, or primary-source discoveries. Do not browse, verify, add sources, invent claims, canonicalize URLs, or use any feed outside the supplied inventory. Editorial corroboration means two editorial sources covered the same story; it is not primary proof. Preserve uncertainty with phrases such as 'the source reports' or 'the announcement claims'."
+      content: "You are AI Signal's editorial engine. Produce one JSON object only; no Markdown or commentary. The collector supplies one freshness-gated candidate pool in which AInews, AlphaSignal, TLDR AI, and future editorial feeds have no source seniority; a narrow primary-source feed may supply evidence. Do not browse, verify, add sources, invent claims, canonicalize URLs, or use any feed outside the supplied inventory. Editorial corroboration means two editorial sources covered the same story; it is not primary proof. Preserve uncertainty with phrases such as 'the source reports' or 'the announcement claims'."
     },
     {
       role: "system",
@@ -365,7 +367,7 @@ export function editorialMessages(issue: RssIssue, profile: Profile, repair?: st
     },
     {
       role: "user",
-      content: `Create only the editorial framing and cross-story synthesis for AI Signal Profile v${profile.version}. The collector—not you—will create Hot Topics and individual signal cards directly from the candidate inventory. Return exactly these top-level fields: schemaVersion, issue, presentation, synthesis. Do not return hotTopics or signals.\n\nUse plain text, not HTML or Markdown, in every title, lead, kicker and body. Every presentation title and intro must be meaningful editorial copy; never use placeholders such as none, null, N/A, not applicable, or TBD. The three view titles must be distinct: hotTitle describes prioritized Hot Topics, allTitle describes the detailed signal list, and synthesisTitle describes the woven editorial briefing. Write compactly: synthesis lead and big picture at most 60 words each; section titles at most 12 words; section kickers at most 18 words; section bodies at most 90 words. Create 2-3 synthesis sections. If the inventory supports only two genuinely distinct themes, return two rather than padding to three. Before writing, assign each candidate to at most one synthesis section. Every section must have a unique concrete title, a unique kicker, a different editorial angle, and at least one source URL not used by another section. Never reuse the overall issue theme, synthesis title, or coverage label as a section title or kicker. Use no more than 6 sources for the overall synthesis and no more than 3 sources for any section. Connect distinct stories into useful themes rather than repeating one announcement or template. Favor practical agents, Codex and agent craft, new systems, integrations and AI business implications. Keep raw model scores, local setup, video, routine policy/cyber/infrastructure and pre-training details in the background unless exceptionally consequential. Do not describe agreement between newsletters as verification or proof; primary source links and linked source links are listed separately for each candidate.\n\nCRITICAL LINK CONTRACT: Every sources[].url must be copied byte-for-byte from the Allowed direct links below. Never invent, shorten, redirect, canonicalize, or modify URLs. The issue URL (${issue.url}) may appear only in issue.url, never in sources. Preserve uncertainty with phrases such as 'the source reports' or 'the announcement claims'.\n\nActive profile:\n${profileJson}\n\nIssue metadata: publicationDate=${issue.publicationDate}; coverage should be inferred only from the issue; url=${issue.url}\n\nAllowed direct links:\n${allowedLinks}\n\nRanked source-aware candidate inventory:\n${issue.body}\n${repairInstruction}`
+      content: `Create only the editorial framing and cross-story synthesis for AI Signal Profile v${profile.version}. The collector—not you—will create Hot Topics and individual signal cards directly from the candidate inventory. Return exactly these top-level fields: schemaVersion, issue, presentation, synthesis. Do not return hotTopics or signals.\n\nUse plain text, not HTML or Markdown, in every title, lead, kicker and body. Every presentation title and intro must be meaningful editorial copy; never use placeholders such as none, null, N/A, not applicable, or TBD. The three view titles must be distinct: hotTitle describes prioritized Hot Topics, allTitle describes the detailed signal list, and synthesisTitle describes the woven editorial briefing. Write compactly: synthesis lead and big picture at most 60 words each; section titles at most 12 words; section kickers at most 18 words; section bodies at most 90 words. Create 1-3 synthesis sections. If the inventory supports only one or two genuinely distinct themes, return that number rather than padding. Before writing, assign each candidate to at most one synthesis section. Every section must have a unique concrete title, a unique kicker, a different editorial angle, and at least one source URL not used by another section. Never reuse the overall issue theme, synthesis title, or coverage label as a section title or kicker. Use no more than 6 sources for the overall synthesis and no more than 3 sources for any section. Connect distinct stories into useful themes rather than repeating one announcement or template. Favor practical agents, Codex and agent craft, new systems, integrations and AI business implications. Keep raw model scores, local setup, video, routine policy/cyber/infrastructure and pre-training details in the background unless exceptionally consequential. Treat every feed as one input with no source seniority. Do not describe agreement between newsletters as verification or proof; primary source links and linked source links are listed separately for each candidate.\n\nCRITICAL LINK CONTRACT: Every sources[].url must be copied byte-for-byte from the Allowed direct links below. Never invent, shorten, redirect, canonicalize, or modify URLs. The issue URL (${issue.url}) may appear only in issue.url, never in sources. Preserve uncertainty with phrases such as 'the source reports' or 'the announcement claims'.\n\nActive profile:\n${profileJson}\n\nEdition metadata: publicationDate=${issue.publicationDate}; coverage is the collector's 48-hour source window; url=${issue.url}\n\nAllowed direct links:\n${allowedLinks}\n\nRanked source-aware candidate inventory:\n${issue.body}\n${repairInstruction}`
     }
   ];
 }

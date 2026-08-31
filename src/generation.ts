@@ -1,9 +1,8 @@
 import type { Edition, RssIssue, RunResult, Source } from "./contracts";
-import { compactIssueInventory, editorialMessages, extractGeneratedEdition, generationInput, issueFromCandidateInventory, materializeCandidateStories, ModelJsonError } from "./editorial";
-import { fetchLatestRss } from "./rss";
+import { editorialMessages, extractGeneratedEdition, generationInput, issueFromCandidateInventory, materializeCandidateStories, ModelJsonError } from "./editorial";
 import { claimManualRepublish, completeManualRepublish, errorCode, getActiveProfile, insertEdition, melbourneCalendarDay, publishedEditionState, recordRun, recordSupplementalShadowRun, releaseManualRepublish, replaceEdition, type ManualRepublishClaim } from "./repository";
 import { normalizeEditionStories } from "./story-normalization";
-import { buildBlendedCandidateInventory, buildSupplementalShadowReport, collectSupplementalSources } from "./supplemental";
+import { buildDailyCandidateInventory, buildDailySourceReport, collectSupplementalSources } from "./supplemental";
 import { ValidationError, validateEdition, validatePresentationDiversity, validateSynthesisDiversity } from "./validation";
 
 type Trigger = "cron" | "manual" | "local-scheduled";
@@ -135,15 +134,23 @@ export function supportsStructuredOutput(model: string): boolean {
   ]).has(model);
 }
 
-export function supplementalBlendEnabled(env: { SUPPLEMENTAL_BLEND_ENABLED?: string }): boolean {
-  return env.SUPPLEMENTAL_BLEND_ENABLED === "true";
-}
-
 function canRepairModelOutput(error: unknown): boolean {
   return error instanceof ValidationError || isModelJsonInvalid(error);
 }
 
 export type GenerationOptions = { forceRepublish?: boolean };
+
+function dailyIssue(at: Date): RssIssue {
+  const issueDate = melbourneCalendarDay(at);
+  return {
+    url: `https://signal.tamirlevin.dev/?edition=${issueDate}`,
+    issueDate,
+    publicationDate: new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "long", year: "numeric", timeZone: "Australia/Melbourne" }).format(at),
+    publishedAt: at.toISOString(),
+    body: "",
+    anchors: []
+  };
+}
 
 /** Runs synchronously so scheduled() owns the promise and preserves the last good edition on failure. */
 export async function generateLatestEdition(env: Env, trigger: Trigger, options: GenerationOptions = {}): Promise<RunResult> {
@@ -155,7 +162,7 @@ export async function generateLatestEdition(env: Env, trigger: Trigger, options:
   let issueDate: string | undefined;
   let modelUsed: string = env.AI_MODEL;
   try {
-    const issue = await fetchLatestRss(env.RSS_URL);
+    const issue = dailyIssue(new Date(startedAt));
     issueUrl = issue.url;
     issueDate = issue.issueDate;
     const publication = await publishedEditionState(env.DB, issue.url, issue.issueDate);
@@ -183,38 +190,27 @@ export async function generateLatestEdition(env: Env, trigger: Trigger, options:
       return { status: "skipped", reason: "already-published" };
     }
     const profile = await getActiveProfile(env.DB);
-    const inventory = compactIssueInventory(issue, profile);
-    const blending = supplementalBlendEnabled(env);
     const supplementalStartedAt = new Date().toISOString();
     const supplementalStarted = Date.now();
-    const sourceResults = blending ? await collectSupplementalSources({ profile }) : [];
-    const blended = buildBlendedCandidateInventory({ aiNewsCandidates: inventory.candidates, sourceResults, profile, mode: blending ? "blended" : "ainews-only" });
-    const modelIssue = issueFromCandidateInventory(issue, blended.candidates);
+    const sourceResults = await collectSupplementalSources({ profile, now: new Date(startedAt), rssUrl: env.RSS_URL });
+    const inventory = buildDailyCandidateInventory({ sourceResults, profile, now: new Date(startedAt) });
+    if (!inventory.candidates.length) throw new ValidationError("No qualified stories were published inside the 48-hour source window");
+    const modelIssue = issueFromCandidateInventory(issue, inventory.candidates);
     const sourceIssue = {
       ...issue,
-      anchors: [...issue.anchors, ...blended.candidates.flatMap((candidate) => candidate.sources)]
+      anchors: inventory.candidates.flatMap((candidate) => candidate.sources)
     };
     const sourceCatalog = buildPermittedSourceCatalog(sourceIssue);
-    if (blending) {
-      const report = buildSupplementalShadowReport({
-        issue,
-        aiNewsCandidates: inventory.candidates,
-        sourceResults,
-        generatedAt: new Date().toISOString(),
-        mode: "blend",
-        selectedForBlend: blended.selectedSupplemental,
-        profile
-      });
-      const failedSources = report.sources.filter((source) => source.status === "failed").length;
-      const degradedSources = report.sources.filter((source) => source.status === "degraded").length;
-      const status = failedSources === report.sources.length ? "failed" : failedSources || degradedSources ? "degraded" : "healthy";
-      try {
-        await recordSupplementalShadowRun(env.DB, { trigger, status, startedAt: supplementalStartedAt, durationMs: Date.now() - supplementalStarted, report });
-      } catch (reportError) {
-        console.warn(JSON.stringify({ message: "ai-signal blended source report could not be stored; publication continues", issueUrl, error: reportError instanceof Error ? reportError.message : String(reportError) }));
-      }
+    const report = buildDailySourceReport({ issue, sourceResults, inventory, generatedAt: new Date().toISOString(), profile });
+    const failedSources = report.sources.filter((source) => source.status === "failed").length;
+    const degradedSources = report.sources.filter((source) => source.status === "degraded").length;
+    const sourceStatus = failedSources === report.sources.length ? "failed" : failedSources || degradedSources ? "degraded" : "healthy";
+    try {
+      await recordSupplementalShadowRun(env.DB, { trigger, status: sourceStatus, startedAt: supplementalStartedAt, durationMs: Date.now() - supplementalStarted, report });
+    } catch (reportError) {
+      console.warn(JSON.stringify({ message: "ai-signal source report could not be stored; publication continues", issueUrl, error: reportError instanceof Error ? reportError.message : String(reportError) }));
     }
-    console.log(JSON.stringify({ message: "ai-signal candidate inventory compacted", issueUrl, sourceChars: issue.body.length, candidateChars: modelIssue.body.length, sourceLinks: issue.anchors.length, candidateLinks: modelIssue.anchors.length, blendMode: blended.collection.mode, overlaps: blended.overlaps, selectedSupplemental: blended.selectedSupplemental.length, candidates: blended.candidates.length }));
+    console.log(JSON.stringify({ message: "ai-signal daily candidate pool compacted", issueUrl, candidateChars: modelIssue.body.length, candidateLinks: modelIssue.anchors.length, eligibleCandidates: inventory.eligibleCandidates, expiredCandidates: inventory.expiredCandidates, candidates: inventory.candidates.length, contributingSources: inventory.collection.mode === "daily-pool" ? inventory.collection.sourcesContributing : [] }));
     const allowedStoryUrls = sourceCatalog.permittedUrls;
     let lastError: unknown;
     let repair: string | undefined;
@@ -224,19 +220,20 @@ export async function generateLatestEdition(env: Env, trigger: Trigger, options:
       try {
         const raw = await askModel(env, modelUsed, generationInput(modelIssue, profile, repair, supportsStructuredOutput(modelUsed), modelUsed));
         const generated = extractGeneratedEdition(raw);
-        const stories = materializeCandidateStories(blended.candidates, profile, issue.publicationDate);
+        const stories = materializeCandidateStories(inventory.candidates, profile, issue.publicationDate);
         // Source metadata and every story card are collector-derived, not model-authored.
         generated.issue = {
           ...(generated.issue ?? {}),
           url: issue.url,
           publicationDate: issue.publicationDate,
+          coverage: "Qualified signals published in the previous 48 hours",
           quiet: stories.signals.length < profile.storyBudget
         };
         generated.signals = stories.signals;
         generated.hotTopics = stories.hotTopics;
-        generated.collection = blended.collection;
+        generated.collection = inventory.collection;
         const repaired = repairEditionSources(generated, issue.url, sourceCatalog);
-        const normalized = normalizeEditionStories(repaired, profile, blended.candidates);
+        const normalized = normalizeEditionStories(repaired, profile, inventory.candidates);
         if (normalized.duplicateSignalsRemoved || normalized.invalidCandidateSignalsRemoved || normalized.titlesRewritten) {
           console.warn(JSON.stringify({ message: "ai-signal model stories normalized", issueUrl, duplicatesRemoved: normalized.duplicateSignalsRemoved, invalidCandidatesRemoved: normalized.invalidCandidateSignalsRemoved, titlesRewritten: normalized.titlesRewritten, remaining: normalized.edition.signals.length }));
         }
@@ -244,7 +241,7 @@ export async function generateLatestEdition(env: Env, trigger: Trigger, options:
         validatePresentationDiversity(edition.presentation);
         validateSynthesisDiversity(edition.synthesis);
         edition.profile = profile;
-        const sourceBodyHash = await hash(issue.body);
+        const sourceBodyHash = await hash(modelIssue.body);
         const stored = replacingExistingEdition ? await replaceEdition(env.DB, edition, issue.issueDate, sourceBodyHash) : await insertEdition(env.DB, edition, issue.issueDate, sourceBodyHash);
         if (republishClaim) await completeManualRepublish(env.DB, republishClaim);
         await recordRun(env.DB, { trigger, status: "success", issueUrl, issueDate, model: modelUsed, editionId: stored.id, startedAt, durationMs: Date.now() - started });

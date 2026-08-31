@@ -41,6 +41,21 @@ describe("editorial contracts", () => {
     expect(validated.collection).toEqual(value.collection);
     expect(validated.signals[0]?.provenance).toEqual(value.signals[0]?.provenance);
   });
+  it("validates the equal-source daily collection contract", () => {
+    const value = edition();
+    value.collection = {
+      mode: "daily-pool",
+      sourcesChecked: ["AInews", "TLDR AI", "AlphaSignal", "Cloudflare Agents"],
+      sourcesContributing: ["AlphaSignal"],
+      preferredFreshnessHours: 36,
+      maxFreshnessHours: 48,
+      eligibleCandidates: 5,
+      selectedCandidates: 5,
+      sourcePackId: "core-ai",
+      sourcePackVersion: 2
+    };
+    expect(validateEdition(value, DEFAULT_PROFILE).collection).toEqual(value.collection);
+  });
   it("validates source-pack identity and collector-derived coverage metadata", () => {
     const value = edition();
     value.collection = { mode: "blended", baseSource: "AInews", editorialDiscovery: ["AlphaSignal", "TLDR AI"], primaryEvidenceFeeds: ["Cloudflare Agents"], selectedSupplemental: 1, supplementalCap: 2, sourcePackId: "core-ai", sourcePackVersion: 1 };
@@ -166,7 +181,7 @@ describe("editorial contracts", () => {
   it("compacts a large issue into a broad profile-aware candidate inventory", () => {
     const anchors = Array.from({ length: 60 }, (_, index) => ({ label: `Story ${index}`, url: `https://example.com/story-${index}` }));
     const body = anchors.map((source, index) => `${index === 59 ? "Codex agent harness permissions and practical workflow" : index % 2 ? "Routine infrastructure and training update" : "A newly released integration platform"} [${source.label}](${source.url}) ${"detail ".repeat(80)}`).join("\n");
-    const issue = { url: "https://news.smol.ai/issues/test", issueDate: "2026-08-12", publicationDate: "12 August 2026", body, anchors };
+    const issue = { url: "https://news.smol.ai/issues/test", issueDate: "2026-08-12", publicationDate: "12 August 2026", publishedAt: "2026-08-12T00:00:00.000Z", body, anchors };
     const compact = compactIssueForModel(issue, DEFAULT_PROFILE);
     expect(compact.body.length).toBeLessThan(issue.body.length);
     expect(compact.anchors.length).toBeLessThanOrEqual(24);
@@ -175,7 +190,7 @@ describe("editorial contracts", () => {
     expect(compact.body.split("\n", 3).join(" ")).toContain("Codex agent harness permissions");
   });
   it("uses prompt-only JSON for the fallback model", () => {
-    const issue = { url: "https://news.smol.ai/issues/test", issueDate: "2026-08-12", publicationDate: "12 August 2026", body: "Issue", anchors: [{ label: "Story", url: "https://example.com/story" }] };
+    const issue = { url: "https://news.smol.ai/issues/test", issueDate: "2026-08-12", publicationDate: "12 August 2026", publishedAt: "2026-08-12T00:00:00.000Z", body: "Issue", anchors: [{ label: "Story", url: "https://example.com/story" }] };
     expect(generationInput(issue, DEFAULT_PROFILE, undefined, false)).not.toHaveProperty("response_format");
     expect(generationInput(issue, DEFAULT_PROFILE, undefined, false)).toHaveProperty("reasoning_effort", "low");
     expect(generationInput(issue, DEFAULT_PROFILE, undefined, true)).toHaveProperty("response_format");
@@ -202,6 +217,7 @@ describe("editorial contracts", () => {
       url: "https://news.smol.ai/issues/test",
       issueDate: "2026-08-12",
       publicationDate: "12 August 2026",
+      publishedAt: "2026-08-12T00:00:00.000Z",
       body: `Tooling releases reflected that shift : GitHub Agent Plugins 1.0 brings Codex workflows to teams [GitHub](${anchors[0]!.url})\nFrontier Model Day : Grok 4.6 reaches the frontier on price and performance [Evaluator](${anchors[1]!.url})\nFrontier Model Day : Grok 4.6 reaches the frontier in a separate announcement [xAI](${anchors[2]!.url})`,
       anchors
     };
@@ -215,16 +231,16 @@ describe("editorial contracts", () => {
     expect(stories.hotTopics).toHaveLength(2);
   });
   it("asks the model for synthesis but not signal-card enumeration", () => {
-    const issue = { url: "https://news.smol.ai/issues/test", issueDate: "2026-08-12", publicationDate: "12 August 2026", body: "Issue", anchors: [{ label: "Story", url: "https://example.com/story" }] };
+    const issue = { url: "https://news.smol.ai/issues/test", issueDate: "2026-08-12", publicationDate: "12 August 2026", publishedAt: "2026-08-12T00:00:00.000Z", body: "Issue", anchors: [{ label: "Story", url: "https://example.com/story" }] };
     const prompt = editorialMessages(issue, DEFAULT_PROFILE).find((message) => message.role === "user")!.content;
     expect(prompt).toContain("collector—not you—will create Hot Topics and individual signal cards");
     expect(prompt).toContain("Do not return hotTopics or signals");
-    expect(prompt).toContain("return two rather than padding to three");
+    expect(prompt).toContain("return that number rather than padding");
     expect(prompt).toContain("Every section must have a unique concrete title");
     expect(prompt).toContain("Do not describe agreement between newsletters as verification or proof");
   });
   it("labels editorial corroboration as discovery context in model input", () => {
-    const issue = { url: "https://news.smol.ai/issues/test", issueDate: "2026-08-12", publicationDate: "12 August 2026", body: "Issue", anchors: [] };
+    const issue = { url: "https://news.smol.ai/issues/test", issueDate: "2026-08-12", publicationDate: "12 August 2026", publishedAt: "2026-08-12T00:00:00.000Z", body: "Issue", anchors: [] };
     const modelIssue = issueFromCandidateInventory(issue, [{
       id: 1,
       title: "Codex agent runtime",

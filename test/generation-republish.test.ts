@@ -8,7 +8,7 @@ const secondSource = "https://example.com/agent-memory";
 const rss = `<rss><channel><item>
   <title>AI News</title>
   <link>${issueUrl}</link>
-  <pubDate>Fri, 28 Aug 2026 01:00:00 GMT</pubDate>
+  <pubDate>Sun, 30 Aug 2026 01:00:00 GMT</pubDate>
   <content:encoded><![CDATA[
     <h2>Agent systems</h2>
     <p><a href="${firstSource}">Agent permissions</a> Codex agents add explicit permission scopes and replayable approvals.</p>
@@ -109,13 +109,14 @@ function fakeEnv(db: D1Database, modelCalls: string[]): Env {
     AI_FALLBACK_MODEL: "@cf/zai-org/glm-4.7-flash",
     AI_GATEWAY_ID: "",
     SUPPLEMENTAL_SHADOW_ENABLED: "false",
-    SUPPLEMENTAL_BLEND_ENABLED: "false",
     RSS_URL: "https://news.smol.ai/rss.xml"
   } as unknown as Env;
 }
 
 describe("generation republish behavior", () => {
   it("keeps normal manual refresh idempotent but replaces an issue when forced", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-31T00:00:00.000Z"));
     const fetcher = vi.fn(async () => new Response(rss, { status: 200, headers: { "Content-Type": "application/rss+xml" } }));
     vi.stubGlobal("fetch", fetcher);
     try {
@@ -132,7 +133,7 @@ describe("generation republish behavior", () => {
       expect(forcedCalls).toEqual(["@cf/openai/gpt-oss-120b"]);
       expect(forcedStatements.some((statement) => statement.sql.startsWith("UPDATE editions SET"))).toBe(true);
       expect(forcedStatements.some((statement) => statement.sql.startsWith("UPDATE manual_republish_days"))).toBe(true);
-      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(fetcher).toHaveBeenCalledTimes(5);
 
       const limitedCalls: string[] = [];
       const limitedStatements: RecordedStatement[] = [];
@@ -142,6 +143,7 @@ describe("generation republish behavior", () => {
       expect(limitedStatements.some((statement) => statement.sql.startsWith("INSERT INTO runs"))).toBe(true);
     } finally {
       vi.unstubAllGlobals();
+      vi.useRealTimers();
     }
   });
 });
