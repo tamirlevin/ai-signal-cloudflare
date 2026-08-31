@@ -14,7 +14,12 @@ This is the curated engineering and production history for AI Signal. It records
 
 ### Release verification
 
-Pending. Source must pass the repository gates, be pushed to GitHub `main`, then be deployed with Git provenance. The owner has explicitly authorized one ordinary production refresh after deployment; a forced republish is neither required nor intended.
+- Git commit `7e5bf34bc3e0a4628ae047a141021109d16d327e` passed generated Worker types, TypeScript, 61 tests in 10 files, dry-run packaging, JavaScript syntax, diff checks, and desktop/390 px responsive review before it was pushed to GitHub `main`.
+- The pre-release rollback point was deployment `6ac23f04-037f-4602-9b8a-4f475be2f7e6`, version 38 `34a255d0-b6ab-4a50-9f32-d81f69cdec3a`. No D1 migration was pending or applied.
+- Cloudflare deployment `726cc6bf-6903-4df5-a399-9d24df39b042` now sends 100% of traffic to version `7de8164a-f2c9-45d7-aa80-63145ac1e8d3`, created at `2026-08-31T00:30:44.860801Z`. Its tag is `git-7e5bf34`, and its message records the full Git SHA and the 36/48-hour equal-source policy. The custom domain and `15 22 * * *` UTC schedule are unchanged.
+- Public health, status, latest-edition, profile, shadow, and deployed-asset checks returned HTTP 200. A read-only D1 query wrote zero rows and confirmed no manual republish claim. As expected from deployment alone, the live edition remains ID `19126c44-1dab-445c-9ab2-9fd32a56ab92`, issue `2026-08-26`, published at `2026-08-27T23:39:14.782Z`.
+- A live collector rehearsal at `2026-08-31T00:23:34.941Z` checked all four configured sources and selected one qualifying 48-hour candidate from AlphaSignal: “OpenAI Cuts Cursor's Access to GPT Models After SpaceX Takeover,” timestamped `2026-08-29T01:46:20Z` and linked to `https://openai.com/index/our-decision-on-cursor-following-its-acquisition-by-spacex`. AInews and TLDR were healthy but stale; Cloudflare had no in-window candidate. No X URL entered the candidate pool.
+- The owner authorized one ordinary production refresh after deployment, but it has not yet been invoked: this checkout and shell contain no owner token, and no unapproved credential lookup, secret change, forced republish, or workaround was attempted. Whether Workers AI can successfully synthesize and store the first `daily-pool` edition therefore remains unresolved.
 
 ## 31 August 2026 — fresh source signals and scheduled heartbeat visibility
 
