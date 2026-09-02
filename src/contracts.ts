@@ -146,6 +146,19 @@ export type RunResult =
   | { status: "skipped"; reason: "already-published" | "manual-republish-limit" }
   | { status: "failed"; code: string; reason?: string };
 
+export type ModelAttemptAudit = {
+  attempt: number;
+  model: string;
+  outcome: "success" | "timeout" | "output-truncated" | "invalid-json" | "validation" | "failed";
+  durationMs: number;
+  finishReason?: string;
+  incompleteReason?: string;
+  completionTokens?: number;
+  reasoningTokens?: number;
+  contentChars?: number;
+  error?: string;
+};
+
 export type RunStatus = {
   trigger: "cron" | "manual" | "local-scheduled";
   status: "success" | "failed" | "skipped";

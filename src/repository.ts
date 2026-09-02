@@ -1,6 +1,6 @@
-import type { Edition, Profile, RunStatus, ScheduledHeartbeat, StoredEdition, SupplementalShadowReport, SupplementalShadowRun } from "./contracts";
+import type { Edition, ModelAttemptAudit, Profile, RunStatus, ScheduledHeartbeat, StoredEdition, SupplementalShadowReport, SupplementalShadowRun } from "./contracts";
 import { DEFAULT_PROFILE } from "./contracts";
-import { ModelJsonError } from "./editorial";
+import { ModelJsonError, ModelOutputTruncatedError } from "./editorial";
 import { normalizeEditionStories } from "./story-normalization";
 import { synthesisNeedsRepair, ValidationError, validateEdition, validateProfile } from "./validation";
 
@@ -189,11 +189,11 @@ export async function updateProfile(db: D1Database, raw: unknown): Promise<Profi
 
 export async function recordRun(
   db: D1Database,
-  run: { trigger: "cron" | "manual" | "local-scheduled"; status: "success" | "failed" | "skipped"; issueUrl?: string; issueDate?: string; model?: string; editionId?: string; errorCode?: string; errorMessage?: string; startedAt: string; durationMs: number }
+  run: { trigger: "cron" | "manual" | "local-scheduled"; status: "success" | "failed" | "skipped"; issueUrl?: string; issueDate?: string; model?: string; editionId?: string; errorCode?: string; errorMessage?: string; modelAttempts?: ModelAttemptAudit[]; startedAt: string; durationMs: number }
 ): Promise<void> {
   const finishedAt = new Date().toISOString();
-  await db.prepare("INSERT INTO runs (id, trigger, issue_url, issue_date, status, model, edition_id, error_code, error_message, started_at, finished_at, duration_ms) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)")
-    .bind(crypto.randomUUID(), run.trigger, run.issueUrl ?? null, run.issueDate ?? null, run.status, run.model ?? null, run.editionId ?? null, run.errorCode ?? null, run.errorMessage?.slice(0, 500) ?? null, run.startedAt, finishedAt, run.durationMs)
+  await db.prepare("INSERT INTO runs (id, trigger, issue_url, issue_date, status, model, edition_id, error_code, error_message, started_at, finished_at, duration_ms, model_attempts_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)")
+    .bind(crypto.randomUUID(), run.trigger, run.issueUrl ?? null, run.issueDate ?? null, run.status, run.model ?? null, run.editionId ?? null, run.errorCode ?? null, run.errorMessage?.slice(0, 500) ?? null, run.startedAt, finishedAt, run.durationMs, run.modelAttempts?.length ? JSON.stringify(run.modelAttempts).slice(0, 8000) : null)
     .run();
 }
 
@@ -261,6 +261,7 @@ export async function latestSupplementalShadowRun(db: D1Database): Promise<Suppl
 
 export function errorCode(error: unknown): string {
   if (error instanceof ValidationError) return "VALIDATION_FAILED";
+  if (error instanceof ModelOutputTruncatedError) return "MODEL_OUTPUT_TRUNCATED";
   if (error instanceof SyntaxError || error instanceof ModelJsonError) return "MODEL_JSON_INVALID";
   if (error instanceof Error && /(?:3007|3046|request timeout|timed out)/i.test(error.message)) return "MODEL_TIMEOUT";
   return "GENERATION_FAILED";

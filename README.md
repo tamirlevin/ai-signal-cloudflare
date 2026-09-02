@@ -47,7 +47,9 @@ The issue header is the edition date, not a source date. Each signal retains its
 
 - A source failure degrades the source report but does not fail a run when other qualified candidates remain.
 - If no qualified candidate exists inside 48 hours, the run fails without publishing an empty or padded edition; the last good edition remains live.
-- Invalid model output gets one repair attempt before a one-time fallback from `@cf/openai/gpt-oss-120b` to `@cf/zai-org/glm-4.7-flash`. A primary timeout switches immediately.
+- Editorial generation makes at most one call to each configured model: `@cf/openai/gpt-oss-120b`, then non-reasoning `@cf/meta/llama-3.3-70b-instruct-fp8-fast`, then paid `@cf/moonshotai/kimi-k2.6`. Timeouts, invalid JSON, validation failures, and output-length stops switch models immediately rather than repeating the same request.
+- Reasoning models receive a 6,000-token completion allowance; Llama receives a 3,200-token non-reasoning allowance. If all three calls fail, conservative deterministic framing is built from the already validated collector inventory so a healthy source run can still publish without model-authored claims or URLs.
+- Each completed run stores a bounded JSON audit of its attempts, including model, outcome, duration, finish reason, completion/reasoning tokens, and response length when available. Output-length exhaustion is classified separately as `MODEL_OUTPUT_TRUNCATED`.
 - Failed runs are audit records only and cannot replace the last good edition.
 - The legacy D1 table `supplemental_shadow_runs` and endpoint `GET /api/shadow/latest` now carry the latest source report. `report.mode="daily-pool"` records source health, the 36/48-hour policy, eligible counts, and selected candidates. The reader no longer renders a separate fresh-signals section.
 - `GET /api/status` separates the latest run outcome from the latest completed cron heartbeat. The reader alerts after 26 hours without a completed cron check; a timely idempotent skip is a healthy heartbeat.
@@ -72,6 +74,8 @@ npm run types
 cp .dev.vars.example .dev.vars
 npm run dev
 ```
+
+Run `npm install` independently on every machine. `node_modules` contains architecture-specific `workerd` and test-runner binaries and is not portable between Intel and Apple Silicon Macs, even when the checkout itself is synchronized through Dropbox.
 
 Create the ignored `.dev.vars` with `ADMIN_TOKEN`. For a new local D1 database:
 

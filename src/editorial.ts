@@ -1,4 +1,4 @@
-import type { CandidateStory, Edition, HotTopic, Profile, RssIssue, Signal } from "./contracts";
+import type { CandidateStory, Edition, HotTopic, Profile, RssIssue, Signal, Source } from "./contracts";
 
 const MAX_CANDIDATE_BLOCKS = 18;
 const PRIORITY_BLOCKS = 15;
@@ -375,12 +375,16 @@ export function editorialMessages(issue: RssIssue, profile: Profile, repair?: st
 export function generationInput(issue: RssIssue, profile: Profile, repair?: string, useStructuredOutput = true, model?: string): ChatCompletionsMessagesInput {
   const input: ChatCompletionsMessagesInput = {
     messages: editorialMessages(issue, profile, repair),
-    max_completion_tokens: 3200,
-    reasoning_effort: "low",
     temperature: 0.2,
     frequency_penalty: 0.35,
     presence_penalty: 0.15
   };
+  if (model === "@cf/meta/llama-3.3-70b-instruct-fp8-fast") {
+    input.max_tokens = 3200;
+  } else {
+    input.max_completion_tokens = 6000;
+    input.reasoning_effort = "low";
+  }
   if (!useStructuredOutput) return input;
   const structured = { ...input, response_format: { type: "json_schema" as const, json_schema: { name: "ai_signal_edition", strict: true, schema: EDITION_SCHEMA } } };
   return model === "@cf/meta/llama-3.1-8b-instruct-fast" ? { ...structured, chat_template_kwargs: { enable_thinking: false } } : structured;
@@ -388,6 +392,10 @@ export function generationInput(issue: RssIssue, profile: Profile, repair?: stri
 
 export class ModelJsonError extends Error {
   override name = "ModelJsonError";
+}
+
+export class ModelOutputTruncatedError extends Error {
+  override name = "ModelOutputTruncatedError";
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -399,24 +407,56 @@ function unwrapJsonFence(value: string): string {
   return trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i)?.[1]?.trim() ?? trimmed;
 }
 
-function responseDiagnostic(raw: unknown): string {
-  if (!record(raw)) return `response_type=${raw === null ? "null" : typeof raw}`;
-  const details: string[] = [`keys=${Object.keys(raw).sort().slice(0, 8).join(",") || "none"}`];
+export type ModelResponseDiagnostic = {
+  finishReason?: string;
+  incompleteReason?: string;
+  completionTokens?: number;
+  reasoningTokens?: number;
+  contentChars?: number;
+};
+
+export function modelResponseDiagnostic(raw: unknown): ModelResponseDiagnostic {
+  if (!record(raw)) return {};
   const choices = Array.isArray(raw.choices) ? raw.choices : [];
   const choice = record(choices[0]) ? choices[0] : undefined;
-  if (typeof choice?.finish_reason === "string") details.push(`finish_reason=${choice.finish_reason}`);
   const message = record(choice?.message) ? choice.message : undefined;
-  if (message && "content" in message) {
-    const content = message.content;
-    details.push(`content=${content === null ? "null" : Array.isArray(content) ? `parts:${content.length}` : typeof content}`);
-  }
+  const content = message?.content;
+  const contentChars = message && "content" in message && content === null
+    ? 0
+    : typeof content === "string"
+      ? content.length
+      : Array.isArray(content)
+        ? content.reduce((total, part) => total + (record(part) && typeof part.text === "string" ? part.text.length : 0), 0)
+        : typeof raw.output_text === "string"
+          ? raw.output_text.length
+          : typeof raw.response === "string"
+            ? raw.response.length
+            : undefined;
   const usage = record(raw.usage) ? raw.usage : undefined;
-  if (typeof usage?.completion_tokens === "number") details.push(`completion_tokens=${usage.completion_tokens}`);
   const completionDetails = record(usage?.completion_tokens_details) ? usage.completion_tokens_details : undefined;
-  if (typeof completionDetails?.reasoning_tokens === "number") details.push(`reasoning_tokens=${completionDetails.reasoning_tokens}`);
-  if (typeof raw.status === "string") details.push(`status=${raw.status}`);
   const incomplete = record(raw.incomplete_details) ? raw.incomplete_details : undefined;
-  if (typeof incomplete?.reason === "string") details.push(`incomplete_reason=${incomplete.reason}`);
+  return {
+    ...(typeof choice?.finish_reason === "string" ? { finishReason: choice.finish_reason } : {}),
+    ...(typeof incomplete?.reason === "string" ? { incompleteReason: incomplete.reason } : {}),
+    ...(typeof usage?.completion_tokens === "number" ? { completionTokens: usage.completion_tokens } : {}),
+    ...(typeof completionDetails?.reasoning_tokens === "number" ? { reasoningTokens: completionDetails.reasoning_tokens } : {}),
+    ...(contentChars === undefined ? {} : { contentChars })
+  };
+}
+
+function responseDiagnostic(raw: unknown): string {
+  if (!record(raw)) return `response_type=${raw === null ? "null" : typeof raw}`;
+  const metrics = modelResponseDiagnostic(raw);
+  const details: string[] = [`keys=${Object.keys(raw).sort().slice(0, 8).join(",") || "none"}`];
+  if (metrics.finishReason) details.push(`finish_reason=${metrics.finishReason}`);
+  const choices = Array.isArray(raw.choices) ? raw.choices : [];
+  const choice = record(choices[0]) ? choices[0] : undefined;
+  const message = record(choice?.message) ? choice.message : undefined;
+  if (message && "content" in message) details.push(`content=${message.content === null ? "null" : Array.isArray(message.content) ? `parts:${message.content.length}` : typeof message.content}`);
+  if (metrics.completionTokens !== undefined) details.push(`completion_tokens=${metrics.completionTokens}`);
+  if (metrics.reasoningTokens !== undefined) details.push(`reasoning_tokens=${metrics.reasoningTokens}`);
+  if (typeof raw.status === "string") details.push(`status=${raw.status}`);
+  if (metrics.incompleteReason) details.push(`incomplete_reason=${metrics.incompleteReason}`);
   return details.join("; ");
 }
 
@@ -437,6 +477,10 @@ function parseModelJson(value: string, diagnostic: string): Edition {
 
 export function extractGeneratedEdition(raw: unknown): Edition {
   const diagnostic = responseDiagnostic(raw);
+  const metrics = modelResponseDiagnostic(raw);
+  if (metrics.finishReason === "length" || metrics.incompleteReason === "max_output_tokens") {
+    throw new ModelOutputTruncatedError(`Model output was truncated (${diagnostic})`);
+  }
   if (record(raw) && "response" in raw) {
     const response = raw.response;
     if (record(response)) return response as Edition;
@@ -458,4 +502,86 @@ export function extractGeneratedEdition(raw: unknown): Edition {
     if (text) return parseModelJson(text, `format=chat-completions; ${diagnostic}`);
   }
   throw new ModelJsonError(`Model did not return a JSON edition (${diagnostic})`);
+}
+
+function clipWords(value: string, maxWords: number): string {
+  const words = value.replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+  return `${words.slice(0, maxWords).join(" ")}${words.length > maxWords ? "…" : ""}`;
+}
+
+/** Produces conservative, source-bound framing when every model attempt fails. */
+export function deterministicEditorialEdition(issue: RssIssue, candidates: CandidateStory[], profile: Profile): Edition {
+  const stories = materializeCandidateStories(candidates, profile, issue.publicationDate);
+  const selected = distinctCandidates(candidates).slice(0, Math.min(profile.storyBudgetRange[1], 14));
+  const allSources: Source[] = [];
+  const allSourceUrls = new Set<string>();
+  for (const candidate of selected) {
+    for (const source of candidate.sources) {
+      if (allSourceUrls.has(source.url)) continue;
+      allSourceUrls.add(source.url);
+      allSources.push(displaySource(source));
+      if (allSources.length === 6) break;
+    }
+    if (allSources.length === 6) break;
+  }
+
+  const groups = new Map<string, CandidateStory[]>();
+  for (const candidate of selected) {
+    const group = groups.get(candidate.categoryLabel) ?? [];
+    group.push(candidate);
+    groups.set(candidate.categoryLabel, group);
+  }
+  const reservedSectionUrls = new Set<string>();
+  const sections: Edition["synthesis"]["sections"] = [];
+  for (const [label, group] of groups) {
+    const sectionSources: Source[] = [];
+    for (const candidate of group) {
+      const source = candidate.sources.find((item) => !reservedSectionUrls.has(item.url));
+      if (!source) continue;
+      reservedSectionUrls.add(source.url);
+      sectionSources.push(displaySource(source));
+      if (sectionSources.length === 3) break;
+    }
+    if (!sectionSources.length) continue;
+    const summaries = group.slice(0, 2).map((candidate) => `${candidate.title}: ${clipWords(candidate.summary, 32)}`);
+    sections.push({
+      title: `${label} in focus`,
+      kicker: `Collector-ranked developments across ${label.toLowerCase()}`,
+      body: clipWords(`The sources report ${summaries.join(" ")}`, 88),
+      sources: sectionSources
+    });
+    if (sections.length === 3) break;
+  }
+
+  const leadTitles = selected.slice(0, 2).map((candidate) => candidate.title);
+  const categoryLabels = [...groups.keys()].slice(0, 3);
+  const sourceReadMinutes = Math.max(2, Math.ceil(stories.signals.length * 1.5));
+  const briefReadMinutes = Math.max(1, Math.min(sourceReadMinutes, Math.ceil(stories.signals.length / 2)));
+  return {
+    schemaVersion: 1,
+    issue: {
+      publicationDate: issue.publicationDate,
+      coverage: "Qualified signals published in the previous 48 hours",
+      url: issue.url,
+      quiet: stories.signals.length < profile.storyBudget
+    },
+    presentation: {
+      hotTitle: "Today's priority AI signals",
+      hotIntro: "The collector-ranked developments most aligned with this profile.",
+      allTitle: "All qualified developments",
+      allIntro: "Every source-bound signal that passed the freshness and relevance checks.",
+      synthesisTitle: "Patterns across today's AI activity",
+      synthesisIntro: "A conservative source-led view generated without model-authored framing.",
+      sourceReadMinutes,
+      briefReadMinutes
+    },
+    synthesis: {
+      lead: `The collector ranks ${leadTitles.join(leadTitles.length > 1 ? " and " : "")} among today's clearest AI signals.`,
+      bigPicture: `The wider pattern spans ${categoryLabels.join(", ")} across ${selected.length} qualified development${selected.length === 1 ? "" : "s"}.`,
+      sources: allSources,
+      sections
+    },
+    hotTopics: stories.hotTopics,
+    signals: stories.signals
+  };
 }

@@ -40,7 +40,8 @@ function fakeEnv(adminToken?: string) {
     ASSETS: { fetch: async () => new Response("<!doctype html><title>AI Signal</title>", { headers: { "Content-Type": "text/html" } }) } as unknown as Fetcher,
     ENVIRONMENT: "production" as const,
     AI_MODEL: "@cf/openai/gpt-oss-120b" as const,
-    AI_FALLBACK_MODEL: "@cf/zai-org/glm-4.7-flash" as const,
+    AI_FALLBACK_MODEL: "@cf/meta/llama-3.3-70b-instruct-fp8-fast" as const,
+    AI_QUALITY_FALLBACK_MODEL: "@cf/moonshotai/kimi-k2.6" as const,
     AI_GATEWAY_ID: "" as const,
     SUPPLEMENTAL_SHADOW_ENABLED: "true" as const,
     RSS_URL: "https://news.smol.ai/rss.xml" as const

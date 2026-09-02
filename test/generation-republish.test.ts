@@ -106,7 +106,8 @@ function fakeEnv(db: D1Database, modelCalls: string[]): Env {
     ASSETS: { fetch: vi.fn() },
     ENVIRONMENT: "production",
     AI_MODEL: "@cf/openai/gpt-oss-120b",
-    AI_FALLBACK_MODEL: "@cf/zai-org/glm-4.7-flash",
+    AI_FALLBACK_MODEL: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+    AI_QUALITY_FALLBACK_MODEL: "@cf/moonshotai/kimi-k2.6",
     AI_GATEWAY_ID: "",
     SUPPLEMENTAL_SHADOW_ENABLED: "false",
     RSS_URL: "https://news.smol.ai/rss.xml"

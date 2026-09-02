@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { Edition } from "../src/contracts";
+import type { CandidateStory, Edition } from "../src/contracts";
 import { DEFAULT_PROFILE } from "../src/contracts";
 import { anchorsToMarkdown, parseLatestRss } from "../src/rss";
 import { validateEdition, validatePresentationDiversity, validateSynthesisDiversity, ValidationError } from "../src/validation";
-import { compactIssueForModel, compactIssueInventory, editorialMessages, extractGeneratedEdition, generationInput, isPermissionDesignSignal, issueFromCandidateInventory, materializeCandidateStories } from "../src/editorial";
+import { compactIssueForModel, compactIssueInventory, deterministicEditorialEdition, editorialMessages, extractGeneratedEdition, generationInput, isPermissionDesignSignal, issueFromCandidateInventory, materializeCandidateStories } from "../src/editorial";
 import { normalizeEditionStories } from "../src/story-normalization";
 
 function edition(): Edition {
@@ -189,13 +189,33 @@ describe("editorial contracts", () => {
     expect(compact.body).toContain("Candidate 1");
     expect(compact.body.split("\n", 3).join(" ")).toContain("Codex agent harness permissions");
   });
-  it("uses prompt-only JSON for the fallback model", () => {
+  it("uses model-specific token budgets and structured output", () => {
     const issue = { url: "https://news.smol.ai/issues/test", issueDate: "2026-08-12", publicationDate: "12 August 2026", publishedAt: "2026-08-12T00:00:00.000Z", body: "Issue", anchors: [{ label: "Story", url: "https://example.com/story" }] };
     expect(generationInput(issue, DEFAULT_PROFILE, undefined, false)).not.toHaveProperty("response_format");
     expect(generationInput(issue, DEFAULT_PROFILE, undefined, false)).toHaveProperty("reasoning_effort", "low");
     expect(generationInput(issue, DEFAULT_PROFILE, undefined, true)).toHaveProperty("response_format");
-    expect(generationInput(issue, DEFAULT_PROFILE, undefined, true)).toHaveProperty("max_completion_tokens", 3200);
+    expect(generationInput(issue, DEFAULT_PROFILE, undefined, true)).toHaveProperty("max_completion_tokens", 6000);
     expect(generationInput(issue, DEFAULT_PROFILE, undefined, true, "@cf/openai/gpt-oss-120b")).not.toHaveProperty("chat_template_kwargs");
+    const llama = generationInput(issue, DEFAULT_PROFILE, undefined, true, "@cf/meta/llama-3.3-70b-instruct-fp8-fast");
+    expect(llama).toHaveProperty("response_format");
+    expect(llama).toHaveProperty("max_tokens", 3200);
+    expect(llama).not.toHaveProperty("max_completion_tokens");
+    expect(llama).not.toHaveProperty("reasoning_effort");
+  });
+  it("builds valid, source-bound deterministic framing across distinct categories", () => {
+    const issue = { url: "https://signal.tamirlevin.dev/?edition=2026-08-12", issueDate: "2026-08-12", publicationDate: "12 August 2026", publishedAt: "2026-08-12T00:00:00.000Z", body: "", anchors: [] };
+    const candidates: CandidateStory[] = [
+      { id: 1, title: "Agents gain scoped permissions", summary: "A new agent runtime introduces scoped permission controls.", category: "agents", categoryLabel: "Agents in practice", score: 90, exceptional: false, watchPermission: true, watchGeography: false, sources: [{ label: "Agent source", url: "https://example.com/agents" }] },
+      { id: 2, title: "AI pricing shifts", summary: "A provider changes enterprise pricing for production workloads.", category: "business", categoryLabel: "AI business & economics", score: 80, exceptional: false, watchPermission: false, watchGeography: false, sources: [{ label: "Business source", url: "https://example.com/business" }] },
+      { id: 3, title: "Platforms add connectors", summary: "A platform releases new connectors for tool-using systems.", category: "integration", categoryLabel: "Integration & platforms", score: 70, exceptional: false, watchPermission: false, watchGeography: false, sources: [{ label: "Platform source", url: "https://example.com/platform" }] }
+    ];
+    const generated = deterministicEditorialEdition(issue, candidates, DEFAULT_PROFILE);
+    const permitted = new Set(candidates.flatMap((candidate) => candidate.sources.map((source) => source.url)));
+    const validated = validateEdition(generated, DEFAULT_PROFILE, permitted);
+    expect(() => validatePresentationDiversity(validated.presentation)).not.toThrow();
+    expect(() => validateSynthesisDiversity(validated.synthesis)).not.toThrow();
+    expect(validated.synthesis.sections).toHaveLength(3);
+    expect(new Set(validated.synthesis.sections.flatMap((section) => section.sources.map((source) => source.url))).size).toBe(3);
   });
   it("rejects placeholder presentation copy", () => {
     const value = edition();

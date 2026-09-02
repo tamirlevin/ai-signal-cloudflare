@@ -2,6 +2,26 @@
 
 This is the curated engineering and production history for AI Signal. It records consequential decisions, incidents, verified runtime evidence, unresolved uncertainty, and architectural constraints. It is not a release changelog, commit log, or session transcript.
 
+## 2 September 2026 — model output exhaustion and fallback hardening
+
+### Verified incident evidence
+
+- The `2026-09-01T22:15:18.811Z` cron run collected normally for the 2 September Melbourne edition. All four sources completed, nine candidates passed the 48-hour gate, and the source report was healthy in 3,206 ms.
+- Workers logs show `@cf/openai/gpt-oss-120b` returned invalid JSON twice. The terminal `@cf/zai-org/glm-4.7-flash` response was not a request timeout: it ended with `finish_reason=length`, `content=null`, and all 3,200 completion tokens consumed. The run failed safely after 159,557 ms with `MODEL_JSON_INVALID`, and the previous good edition remained live.
+- No matching Workers AI platform incident was reported. The failure was an output-budget and fallback-policy weakness: the primary was repeated under the same ceiling, then a second reasoning model received the same ceiling without structured output.
+
+### Engineering decision
+
+- The bounded three-call chain is now `@cf/openai/gpt-oss-120b`, non-reasoning `@cf/meta/llama-3.3-70b-instruct-fp8-fast`, and paid structured-output `@cf/moonshotai/kimi-k2.6`. Each model gets one attempt; a rejected response switches families immediately.
+- Reasoning calls receive 6,000 completion tokens. Llama uses its native 3,200-token `max_tokens` parameter without reasoning effort. `finish_reason=length` and `max_output_tokens` are represented as `MODEL_OUTPUT_TRUNCATED`, distinct from malformed JSON.
+- If all three models fail, deterministic presentation and category-grouped synthesis are built only from the validated collector inventory. Story cards, dates, rankings, provenance, and URLs remain collector-owned, and the completed edition still passes the normal source, presentation, and synthesis validation path.
+- Migration `0006_model_attempt_audit.sql` adds a nullable `runs.model_attempts_json` audit containing bounded per-attempt model, outcome, duration, finish reason, token usage, response length, and safe error diagnostics.
+
+### Release status
+
+- Local verification passes generated Worker types, TypeScript, 64 tests in 10 files, dry-run packaging with all three model bindings, diff checks, and an in-memory SQLite check of migration 6.
+- This change is not deployed. Migration 6 remains unapplied remotely, the public Worker remains on the recorded `git-7e5bf34` deployment, and the production schedule is unchanged.
+
 ## 31 August 2026 — daily equal-source edition correction
 
 ### Engineering record

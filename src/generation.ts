@@ -1,5 +1,5 @@
-import type { Edition, RssIssue, RunResult, Source } from "./contracts";
-import { editorialMessages, extractGeneratedEdition, generationInput, issueFromCandidateInventory, materializeCandidateStories, ModelJsonError } from "./editorial";
+import type { Edition, ModelAttemptAudit, RssIssue, RunResult, Source } from "./contracts";
+import { deterministicEditorialEdition, editorialMessages, extractGeneratedEdition, generationInput, issueFromCandidateInventory, materializeCandidateStories, ModelJsonError, ModelOutputTruncatedError, modelResponseDiagnostic, type ModelResponseDiagnostic } from "./editorial";
 import { claimManualRepublish, completeManualRepublish, errorCode, getActiveProfile, insertEdition, melbourneCalendarDay, publishedEditionState, recordRun, recordSupplementalShadowRun, releaseManualRepublish, replaceEdition, type ManualRepublishClaim } from "./repository";
 import { normalizeEditionStories } from "./story-normalization";
 import { buildDailyCandidateInventory, buildDailySourceReport, collectSupplementalSources } from "./supplemental";
@@ -125,17 +125,48 @@ export function isModelJsonInvalid(error: unknown): boolean {
   return error instanceof SyntaxError || error instanceof ModelJsonError;
 }
 
+export function isModelOutputTruncated(error: unknown): boolean {
+  return error instanceof ModelOutputTruncatedError;
+}
+
 export function supportsStructuredOutput(model: string): boolean {
   return new Set([
     "@cf/meta/llama-3.1-8b-instruct-fast",
+    "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
     "@cf/openai/gpt-oss-20b",
     "@cf/openai/gpt-oss-120b",
     "@cf/moonshotai/kimi-k2.6"
   ]).has(model);
 }
 
-function canRepairModelOutput(error: unknown): boolean {
-  return error instanceof ValidationError || isModelJsonInvalid(error);
+function configuredModelChain(env: Env): string[] {
+  const seen = new Set<string>();
+  return [env.AI_MODEL, env.AI_FALLBACK_MODEL, env.AI_QUALITY_FALLBACK_MODEL]
+    .map((model) => model.trim())
+    .filter((model) => {
+      if (!model || seen.has(model)) return false;
+      seen.add(model);
+      return true;
+    });
+}
+
+function modelAttemptOutcome(error: unknown): ModelAttemptAudit["outcome"] {
+  if (isModelTimeout(error)) return "timeout";
+  if (isModelOutputTruncated(error)) return "output-truncated";
+  if (isModelJsonInvalid(error)) return "invalid-json";
+  if (error instanceof ValidationError) return "validation";
+  return "failed";
+}
+
+function modelAttemptAudit(attempt: number, model: string, outcome: ModelAttemptAudit["outcome"], durationMs: number, diagnostic: ModelResponseDiagnostic, error?: unknown): ModelAttemptAudit {
+  return {
+    attempt,
+    model,
+    outcome,
+    durationMs,
+    ...diagnostic,
+    ...(error === undefined ? {} : { error: (error instanceof Error ? error.message : String(error)).slice(0, 280) })
+  };
 }
 
 export type GenerationOptions = { forceRepublish?: boolean };
@@ -161,6 +192,7 @@ export async function generateLatestEdition(env: Env, trigger: Trigger, options:
   let issueUrl: string | undefined;
   let issueDate: string | undefined;
   let modelUsed: string = env.AI_MODEL;
+  const modelAttempts: ModelAttemptAudit[] = [];
   try {
     const issue = dailyIssue(new Date(startedAt));
     issueUrl = issue.url;
@@ -212,78 +244,79 @@ export async function generateLatestEdition(env: Env, trigger: Trigger, options:
     }
     console.log(JSON.stringify({ message: "ai-signal daily candidate pool compacted", issueUrl, candidateChars: modelIssue.body.length, candidateLinks: modelIssue.anchors.length, eligibleCandidates: inventory.eligibleCandidates, expiredCandidates: inventory.expiredCandidates, candidates: inventory.candidates.length, contributingSources: inventory.collection.mode === "daily-pool" ? inventory.collection.sourcesContributing : [] }));
     const allowedStoryUrls = sourceCatalog.permittedUrls;
-    let lastError: unknown;
-    let repair: string | undefined;
-    let usedFallback = false;
-    let repairedPrimary = false;
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    const finalizeEdition = (generated: Edition): Edition => {
+      const stories = materializeCandidateStories(inventory.candidates, profile, issue.publicationDate);
+      // Source metadata and every story card are collector-derived, not model-authored.
+      generated.issue = {
+        ...(generated.issue ?? {}),
+        url: issue.url,
+        publicationDate: issue.publicationDate,
+        coverage: "Qualified signals published in the previous 48 hours",
+        quiet: stories.signals.length < profile.storyBudget
+      };
+      generated.signals = stories.signals;
+      generated.hotTopics = stories.hotTopics;
+      generated.collection = inventory.collection;
+      const repaired = repairEditionSources(generated, issue.url, sourceCatalog);
+      const normalized = normalizeEditionStories(repaired, profile, inventory.candidates);
+      if (normalized.duplicateSignalsRemoved || normalized.invalidCandidateSignalsRemoved || normalized.titlesRewritten) {
+        console.warn(JSON.stringify({ message: "ai-signal edition stories normalized", issueUrl, duplicatesRemoved: normalized.duplicateSignalsRemoved, invalidCandidatesRemoved: normalized.invalidCandidateSignalsRemoved, titlesRewritten: normalized.titlesRewritten, remaining: normalized.edition.signals.length }));
+      }
+      const validated = validateEdition(normalized.edition, profile, allowedStoryUrls);
+      validatePresentationDiversity(validated.presentation);
+      validateSynthesisDiversity(validated.synthesis);
+      validated.profile = profile;
+      return validated;
+    };
+
+    let edition: Edition | undefined;
+    const models = configuredModelChain(env);
+    for (const [index, model] of models.entries()) {
+      modelUsed = model;
+      const attempt = index + 1;
+      const attemptStarted = Date.now();
+      let diagnostic: ModelResponseDiagnostic = {};
       try {
-        const raw = await askModel(env, modelUsed, generationInput(modelIssue, profile, repair, supportsStructuredOutput(modelUsed), modelUsed));
+        const raw = await askModel(env, model, generationInput(modelIssue, profile, undefined, supportsStructuredOutput(model), model));
+        diagnostic = modelResponseDiagnostic(raw);
         const generated = extractGeneratedEdition(raw);
-        const stories = materializeCandidateStories(inventory.candidates, profile, issue.publicationDate);
-        // Source metadata and every story card are collector-derived, not model-authored.
-        generated.issue = {
-          ...(generated.issue ?? {}),
-          url: issue.url,
-          publicationDate: issue.publicationDate,
-          coverage: "Qualified signals published in the previous 48 hours",
-          quiet: stories.signals.length < profile.storyBudget
-        };
-        generated.signals = stories.signals;
-        generated.hotTopics = stories.hotTopics;
-        generated.collection = inventory.collection;
-        const repaired = repairEditionSources(generated, issue.url, sourceCatalog);
-        const normalized = normalizeEditionStories(repaired, profile, inventory.candidates);
-        if (normalized.duplicateSignalsRemoved || normalized.invalidCandidateSignalsRemoved || normalized.titlesRewritten) {
-          console.warn(JSON.stringify({ message: "ai-signal model stories normalized", issueUrl, duplicatesRemoved: normalized.duplicateSignalsRemoved, invalidCandidatesRemoved: normalized.invalidCandidateSignalsRemoved, titlesRewritten: normalized.titlesRewritten, remaining: normalized.edition.signals.length }));
-        }
-        const edition = validateEdition(normalized.edition, profile, allowedStoryUrls);
-        validatePresentationDiversity(edition.presentation);
-        validateSynthesisDiversity(edition.synthesis);
-        edition.profile = profile;
-        const sourceBodyHash = await hash(modelIssue.body);
-        const stored = replacingExistingEdition ? await replaceEdition(env.DB, edition, issue.issueDate, sourceBodyHash) : await insertEdition(env.DB, edition, issue.issueDate, sourceBodyHash);
-        if (republishClaim) await completeManualRepublish(env.DB, republishClaim);
-        await recordRun(env.DB, { trigger, status: "success", issueUrl, issueDate, model: modelUsed, editionId: stored.id, startedAt, durationMs: Date.now() - started });
-        return { status: "success", edition: stored };
+        edition = finalizeEdition(generated);
+        modelAttempts.push(modelAttemptAudit(attempt, model, "success", Date.now() - attemptStarted, diagnostic));
+        break;
       } catch (error) {
-        lastError = error;
-        const fallback = env.AI_FALLBACK_MODEL.trim();
-        const repairable = canRepairModelOutput(error);
-        const hasAttemptRemaining = attempt < 2;
-        if (hasAttemptRemaining && !usedFallback && repairable && !repairedPrimary) {
-          repairedPrimary = true;
-          repair = String(error).slice(0, 280);
-          console.warn(JSON.stringify({
-            message: "ai-signal primary model output rejected; retrying once with repair",
-            issueUrl,
-            model: modelUsed,
-            reason: error instanceof ValidationError ? "validation" : "invalid-json"
-          }));
-          continue;
-        }
-        if (hasAttemptRemaining && !usedFallback && (isModelTimeout(error) || repairable) && fallback && fallback !== modelUsed) {
-          console.warn(JSON.stringify({
-            message: "ai-signal primary model failed; switching once",
-            issueUrl,
-            reason: isModelTimeout(error) ? "timeout" : error instanceof ValidationError ? "validation" : "invalid-json",
-            primaryModel: modelUsed,
-            fallbackModel: fallback
-          }));
-          modelUsed = fallback;
-          usedFallback = true;
-          repair = undefined;
-          continue;
-        }
-        if (hasAttemptRemaining && usedFallback && repairable) {
-          repair = String(error).slice(0, 280);
-          console.warn(JSON.stringify({ message: "ai-signal fallback model output rejected; retrying once with repair", issueUrl, model: modelUsed }));
-          continue;
-        }
+        const outcome = modelAttemptOutcome(error);
+        modelAttempts.push(modelAttemptAudit(attempt, model, outcome, Date.now() - attemptStarted, diagnostic, error));
+        console.warn(JSON.stringify({
+          message: "ai-signal model attempt rejected",
+          issueUrl,
+          attempt,
+          model,
+          outcome,
+          ...diagnostic,
+          nextModel: models[index + 1] ?? "collector-deterministic"
+        }));
+      }
+    }
+
+    if (!edition) {
+      modelUsed = "collector-deterministic";
+      const attempt = modelAttempts.length + 1;
+      const attemptStarted = Date.now();
+      try {
+        edition = finalizeEdition(deterministicEditorialEdition(issue, inventory.candidates, profile));
+        modelAttempts.push(modelAttemptAudit(attempt, modelUsed, "success", Date.now() - attemptStarted, {}));
+        console.warn(JSON.stringify({ message: "ai-signal deterministic editorial fallback activated", issueUrl, failedModelAttempts: models.length }));
+      } catch (error) {
+        modelAttempts.push(modelAttemptAudit(attempt, modelUsed, modelAttemptOutcome(error), Date.now() - attemptStarted, {}, error));
         throw error;
       }
     }
-    throw lastError;
+
+    const sourceBodyHash = await hash(modelIssue.body);
+    const stored = replacingExistingEdition ? await replaceEdition(env.DB, edition, issue.issueDate, sourceBodyHash) : await insertEdition(env.DB, edition, issue.issueDate, sourceBodyHash);
+    if (republishClaim) await completeManualRepublish(env.DB, republishClaim);
+    await recordRun(env.DB, { trigger, status: "success", issueUrl, issueDate, model: modelUsed, editionId: stored.id, modelAttempts, startedAt, durationMs: Date.now() - started });
+    return { status: "success", edition: stored };
   } catch (error) {
     if (republishClaim) {
       try {
@@ -295,7 +328,7 @@ export async function generateLatestEdition(env: Env, trigger: Trigger, options:
     const code = errorCode(error);
     console.error(JSON.stringify({ message: "ai-signal generation failed", code, issueUrl, issueDate, error: error instanceof Error ? error.message : String(error) }));
     try {
-      await recordRun(env.DB, { trigger, status: "failed", issueUrl, issueDate, model: modelUsed, errorCode: code, errorMessage: error instanceof Error ? error.message : String(error), startedAt, durationMs: Date.now() - started });
+      await recordRun(env.DB, { trigger, status: "failed", issueUrl, issueDate, model: modelUsed, errorCode: code, errorMessage: error instanceof Error ? error.message : String(error), modelAttempts, startedAt, durationMs: Date.now() - started });
     } catch (recordError) {
       console.error(JSON.stringify({ message: "ai-signal failure could not be logged", error: recordError instanceof Error ? recordError.message : String(recordError) }));
     }

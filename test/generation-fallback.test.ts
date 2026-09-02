@@ -89,7 +89,7 @@ const generatedEdition = {
 describe("generation model fallback", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it("switches once after malformed primary JSON and records the successful fallback model", async () => {
+  it("switches immediately after truncated primary output and records the non-reasoning fallback", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-31T00:00:00.000Z"));
     const modelCalls: string[] = [];
@@ -104,15 +104,16 @@ describe("generation model fallback", () => {
         async run(model: string, input: ChatCompletionsMessagesInput) {
           modelCalls.push(model);
           modelInputs.push(input);
-          return modelCalls.length < 3
-            ? { choices: [{ finish_reason: "length", message: { content: "{not valid json" } }] }
+          return modelCalls.length === 1
+            ? { choices: [{ finish_reason: "length", message: { content: null } }], usage: { completion_tokens: 6000, completion_tokens_details: { reasoning_tokens: 5998 } } }
             : { choices: [{ finish_reason: "stop", message: { content: JSON.stringify(generatedEdition) } }] };
         }
       },
       ASSETS: { fetch: vi.fn() },
       ENVIRONMENT: "production",
       AI_MODEL: "@cf/openai/gpt-oss-120b",
-      AI_FALLBACK_MODEL: "@cf/zai-org/glm-4.7-flash",
+      AI_FALLBACK_MODEL: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+      AI_QUALITY_FALLBACK_MODEL: "@cf/moonshotai/kimi-k2.6",
       AI_GATEWAY_ID: "",
       SUPPLEMENTAL_SHADOW_ENABLED: "true",
       RSS_URL: "https://news.smol.ai/rss.xml"
@@ -122,15 +123,80 @@ describe("generation model fallback", () => {
       const result = await generateLatestEdition(env, "manual");
 
       expect(result.status).toBe("success");
-      expect(modelCalls).toEqual(["@cf/openai/gpt-oss-120b", "@cf/openai/gpt-oss-120b", "@cf/zai-org/glm-4.7-flash"]);
+      expect(modelCalls).toEqual(["@cf/openai/gpt-oss-120b", "@cf/meta/llama-3.3-70b-instruct-fp8-fast"]);
       expect(modelInputs[0]).toHaveProperty("response_format");
-      expect(modelInputs[1]?.messages.at(-1)?.content).toContain("previous output was rejected");
-      expect(modelInputs[2]).not.toHaveProperty("response_format");
-      expect(modelInputs[2]).toHaveProperty("reasoning_effort", "low");
+      expect(modelInputs[0]).toHaveProperty("max_completion_tokens", 6000);
+      expect(modelInputs[0]).toHaveProperty("reasoning_effort", "low");
+      expect(modelInputs[1]).toHaveProperty("response_format");
+      expect(modelInputs[1]).toHaveProperty("max_tokens", 3200);
+      expect(modelInputs[1]).not.toHaveProperty("max_completion_tokens");
+      expect(modelInputs[1]).not.toHaveProperty("reasoning_effort");
       expect(fetcher).toHaveBeenCalledTimes(5);
       const successfulRun = runStatements.find((statement) => statement.sql.startsWith("INSERT INTO runs"));
       expect(successfulRun?.values[4]).toBe("success");
-      expect(successfulRun?.values[5]).toBe("@cf/zai-org/glm-4.7-flash");
+      expect(successfulRun?.values[5]).toBe("@cf/meta/llama-3.3-70b-instruct-fp8-fast");
+      expect(JSON.parse(String(successfulRun?.values[12]))).toMatchObject([
+        { attempt: 1, model: "@cf/openai/gpt-oss-120b", outcome: "output-truncated", finishReason: "length", completionTokens: 6000, reasoningTokens: 5998, contentChars: 0 },
+        { attempt: 2, model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast", outcome: "success" }
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("publishes conservative collector framing after all three models fail", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-31T00:00:00.000Z"));
+    const modelCalls: string[] = [];
+    const modelInputs: ChatCompletionsMessagesInput[] = [];
+    const runStatements: RecordedStatement[] = [];
+    const fetcher = vi.fn(async () => new Response(rss, { status: 200, headers: { "Content-Type": "application/rss+xml" } }));
+    vi.stubGlobal("fetch", fetcher);
+
+    const env = {
+      DB: fakeDatabase(runStatements),
+      AI: {
+        async run(model: string, input: ChatCompletionsMessagesInput) {
+          modelCalls.push(model);
+          modelInputs.push(input);
+          return { choices: [{ finish_reason: "stop", message: { content: "{not valid json" } }], usage: { completion_tokens: 12 } };
+        }
+      },
+      ASSETS: { fetch: vi.fn() },
+      ENVIRONMENT: "production",
+      AI_MODEL: "@cf/openai/gpt-oss-120b",
+      AI_FALLBACK_MODEL: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+      AI_QUALITY_FALLBACK_MODEL: "@cf/moonshotai/kimi-k2.6",
+      AI_GATEWAY_ID: "",
+      SUPPLEMENTAL_SHADOW_ENABLED: "true",
+      RSS_URL: "https://news.smol.ai/rss.xml"
+    } as unknown as Env;
+
+    try {
+      const result = await generateLatestEdition(env, "manual");
+
+      expect(result.status).toBe("success");
+      expect(modelCalls).toEqual([
+        "@cf/openai/gpt-oss-120b",
+        "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+        "@cf/moonshotai/kimi-k2.6"
+      ]);
+      expect(modelInputs[2]).toHaveProperty("response_format");
+      expect(modelInputs[2]).toHaveProperty("max_completion_tokens", 6000);
+      expect(modelInputs[2]).toHaveProperty("reasoning_effort", "low");
+      if (result.status === "success") {
+        expect(result.edition.presentation.synthesisIntro).toContain("without model-authored framing");
+        expect(result.edition.signals.length).toBeGreaterThan(0);
+        expect(result.edition.synthesis.sections.length).toBeGreaterThan(0);
+      }
+      const successfulRun = runStatements.find((statement) => statement.sql.startsWith("INSERT INTO runs"));
+      expect(successfulRun?.values[5]).toBe("collector-deterministic");
+      expect(JSON.parse(String(successfulRun?.values[12]))).toMatchObject([
+        { attempt: 1, outcome: "invalid-json" },
+        { attempt: 2, outcome: "invalid-json" },
+        { attempt: 3, outcome: "invalid-json" },
+        { attempt: 4, model: "collector-deterministic", outcome: "success" }
+      ]);
     } finally {
       vi.useRealTimers();
     }
