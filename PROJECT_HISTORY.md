@@ -17,10 +17,14 @@ This is the curated engineering and production history for AI Signal. It records
 - If all three models fail, deterministic presentation and category-grouped synthesis are built only from the validated collector inventory. Story cards, dates, rankings, provenance, and URLs remain collector-owned, and the completed edition still passes the normal source, presentation, and synthesis validation path.
 - Migration `0006_model_attempt_audit.sql` adds a nullable `runs.model_attempts_json` audit containing bounded per-attempt model, outcome, duration, finish reason, token usage, response length, and safe error diagnostics.
 
-### Release status
+### Verified release evidence
 
-- Local verification passes generated Worker types, TypeScript, 64 tests in 10 files, dry-run packaging with all three model bindings, diff checks, and an in-memory SQLite check of migration 6.
-- This change is not deployed. Migration 6 remains unapplied remotely, the public Worker remains on the recorded `git-7e5bf34` deployment, and the production schedule is unchanged.
+- Source commit `a0d5ce435da09ac511f6f5e1c8fa4a959dafa385` passed generated Worker types, TypeScript, 64 tests in 10 files, dry-run packaging with all three model bindings, diff checks, and an in-memory SQLite check of migration 6 before it was pushed to GitHub `main`.
+- The pre-release rollback point was deployment `726cc6bf-6903-4df5-a399-9d24df39b042`, version 39 `7de8164a-f2c9-45d7-aa80-63145ac1e8d3`, serving 100% of traffic with tag `git-7e5bf34`.
+- Migration `0006_model_attempt_audit.sql` was applied successfully to remote D1 database `ai-signal` (`376a852a-26db-4d2d-983c-b872b3361372`). A read-only schema query wrote zero rows and confirmed `runs.model_attempts_json`; Wrangler then reported no pending migrations.
+- Cloudflare deployment `17a77af1-6d0f-4a29-a791-e6f4034dfcf2` now sends 100% of traffic to version 40 `dc129873-3360-44e0-8fb0-11d8f6bfa634`, created at `2026-09-02T00:50:50.380474Z`. Its tag is `git-a0d5ce4`, and its message records the full source Git SHA and fallback summary. The custom domain and `15 22 * * *` UTC schedule are unchanged.
+- Public health, status, latest-edition, and shadow endpoints returned HTTP 200 after deployment. The latest edition remained ID `6543c77d-6002-4b40-9fbc-08cc0899146e`, issue `2026-09-01`, published at `2026-08-31T22:15:49.314Z`; the healthy 2 September shadow report still showed all four sources healthy and nine eligible candidates. Deployment did not run the collector, force a republish, or write a new run.
+- The status endpoint therefore still reports the pre-release 2 September `MODEL_JSON_INVALID` failure. Live execution of the new fallback chain and population of `model_attempts_json` remain pending the next qualifying scheduled run; no manual republish should be forced merely to close that verification item.
 
 ## 31 August 2026 — daily equal-source edition correction
 
