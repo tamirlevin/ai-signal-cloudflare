@@ -1,6 +1,6 @@
 import type {
   CandidateStory,
-  Edition,
+  DailyCollection,
   Profile,
   RssIssue,
   SourcePackSource,
@@ -28,10 +28,12 @@ const NON_EVIDENCE_HOSTS = new Set(["calendly.com", "forms.gle", "tally.so", "ty
 const STOP_WORDS = new Set(["a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in", "is", "it", "of", "on", "or", "the", "to", "with"]);
 const MAX_FEED_BYTES = 2_000_000;
 const MAX_PAGE_BYTES = 2_500_000;
-const ALPHA_LOOKBACK_HOURS = 48;
+const ALPHA_LOOKBACK_HOURS = 72;
 export const MAX_BLENDED_CANDIDATES = 18;
 export const PREFERRED_FRESHNESS_HOURS = 36;
 export const MAX_FRESHNESS_HOURS = 48;
+export const EXPANDED_FRESHNESS_HOURS = 72;
+export const MIN_DAILY_CANDIDATES = 10;
 const CLOUDFLARE_PRIMARY_HOSTS = new Set(["blog.cloudflare.com"]);
 const SOCIAL_HOSTS = new Set(["x.com", "twitter.com", "www.x.com", "www.twitter.com"]);
 
@@ -301,7 +303,13 @@ async function collectAlpha(profile: Profile, now: Date, fetcher: Fetcher, sourc
       health.status = "degraded";
       health.errors.push(`no ${source.name} item in the preceding ${lookbackHours} hours; using the newest available item`);
     }
-    const prioritized = recent.map((item) => ({ ...item, score: scoreCandidateForProfile(item.title, profile) })).sort((left, right) => right.score - left.score || right.publishedAt.localeCompare(left.publishedAt)).slice(0, source.enrichLimit ?? 5);
+    const normalCutoff = now.getTime() - MAX_FRESHNESS_HOURS * 3_600_000;
+    const prioritized = recent.map((item) => ({ ...item, score: scoreCandidateForProfile(item.title, profile) }))
+      // Older fallback inputs must not crowd normal-window inputs out of the
+      // existing bounded enrichment budget.
+      .sort((left, right) => Number(Date.parse(right.publishedAt) >= normalCutoff) - Number(Date.parse(left.publishedAt) >= normalCutoff)
+        || right.score - left.score || right.publishedAt.localeCompare(left.publishedAt))
+      .slice(0, source.enrichLimit ?? 5);
     const enriched = await Promise.all(prioritized.map(async (item) => {
       try {
         health.requests += 1;
@@ -589,7 +597,7 @@ export type DailyCandidateInventory = {
   candidates: CandidateStory[];
   eligibleCandidates: number;
   expiredCandidates: number;
-  collection: NonNullable<Edition["collection"]>;
+  collection: DailyCollection;
 };
 
 /** Builds one ranked daily pool. Feed identity never contributes source seniority. */
@@ -600,17 +608,26 @@ export function buildDailyCandidateInventory(input: {
 }): DailyCandidateInventory {
   const now = input.now ?? new Date();
   const allCandidates = input.sourceResults.flatMap((result) => result.candidates);
-  const cutoff = now.getTime() - MAX_FRESHNESS_HOURS * 3_600_000;
-  const fresh = allCandidates.filter((candidate) => {
-    const publishedAt = Date.parse(candidate.publishedAt);
-    return Number.isFinite(publishedAt) && publishedAt <= now.getTime() && publishedAt >= cutoff;
-  });
-  const eligible = deduplicateSupplemental(fresh)
-    .flatMap((candidate, index) => {
+  const poolWithin = (hours: number) => {
+    const cutoff = now.getTime() - hours * 3_600_000;
+    const fresh = allCandidates.filter((candidate) => {
+      const publishedAt = Date.parse(candidate.publishedAt);
+      return Number.isFinite(publishedAt) && publishedAt <= now.getTime() && publishedAt >= cutoff;
+    });
+    const eligible = deduplicateSupplemental(fresh).flatMap((candidate, index) => {
       const story = dailyCandidate(candidate, input.profile, index + 1, now);
       return story ? [story] : [];
-    })
-    .sort((left, right) => right.provenance!.selection.score - left.provenance!.selection.score
+    });
+    return { fresh, eligible };
+  };
+  // Count qualified, distinct stories, not raw feed entries. Reuse collected
+  // inputs for one bounded expansion; never weaken evidence or relevance gates.
+  const normal = poolWithin(MAX_FRESHNESS_HOURS);
+  const maxFreshnessHours = normal.eligible.length < MIN_DAILY_CANDIDATES
+    ? EXPANDED_FRESHNESS_HOURS : MAX_FRESHNESS_HOURS;
+  const { fresh, eligible } = maxFreshnessHours === MAX_FRESHNESS_HOURS
+    ? normal : poolWithin(EXPANDED_FRESHNESS_HOURS);
+  eligible.sort((left, right) => right.provenance!.selection.score - left.provenance!.selection.score
       || (right.publishedAt ?? "").localeCompare(left.publishedAt ?? "")
       || left.title.localeCompare(right.title));
   const candidates = gentlyDiversify(eligible).slice(0, MAX_BLENDED_CANDIDATES)
@@ -630,7 +647,7 @@ export function buildDailyCandidateInventory(input: {
       sourcesChecked: input.sourceResults.map((result) => result.health.name),
       sourcesContributing: [...contributing].sort(),
       preferredFreshnessHours: PREFERRED_FRESHNESS_HOURS,
-      maxFreshnessHours: MAX_FRESHNESS_HOURS,
+      maxFreshnessHours,
       eligibleCandidates: eligible.length,
       selectedCandidates: candidates.length,
       sourcePackId: pack.id,
@@ -669,7 +686,7 @@ export function buildDailySourceReport(input: {
     limits: { modelCandidates: 18, publishedStories: 14 },
     freshness: {
       preferredHours: PREFERRED_FRESHNESS_HOURS,
-      maxHours: MAX_FRESHNESS_HOURS,
+      maxHours: input.inventory.collection.maxFreshnessHours,
       eligibleCandidates: input.inventory.eligibleCandidates,
       expiredCandidates: input.inventory.expiredCandidates
     },

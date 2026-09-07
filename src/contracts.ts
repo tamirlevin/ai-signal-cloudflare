@@ -193,7 +193,7 @@ export type DailyCollection = {
   sourcesChecked: string[];
   sourcesContributing: string[];
   preferredFreshnessHours: 36;
-  maxFreshnessHours: 48;
+  maxFreshnessHours: 48 | 72;
   eligibleCandidates: number;
   selectedCandidates: number;
   sourcePackId?: SourcePackId;
@@ -257,7 +257,7 @@ export type SupplementalShadowReport = {
   baseIssue: { url: string; issueDate: string; publicationDate: string };
   sourcePack?: { id: SourcePackId; version: number };
   limits: { modelCandidates: 18; publishedStories: 14; tldr?: 3; alphaSignal?: 2; cloudflare?: 1 };
-  freshness?: { preferredHours: 36; maxHours: 48; eligibleCandidates: number; expiredCandidates: number };
+  freshness?: { preferredHours: 36; maxHours: 48 | 72; eligibleCandidates: number; expiredCandidates: number };
   sources: SupplementalSourceHealth[];
   totals: {
     aiNewsCandidates: number;

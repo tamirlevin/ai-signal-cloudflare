@@ -2,6 +2,14 @@
 
 This is the curated engineering and production history for AI Signal. It records consequential decisions, incidents, verified runtime evidence, unresolved uncertainty, and architectural constraints. It is not a release changelog, commit log, or session transcript.
 
+## 7 September 2026 — conditional three-day source window (not deployed)
+
+- The owner approved one bounded freshness fallback: qualify and deduplicate the normal 48-hour pool first; if fewer than 10 candidates qualify for any reason, expand once to 72 hours. Preserve the 36-hour preference, zero freshness boost beyond 48 hours, equal-source ranking, evidence/relevance checks, no padding, and the existing 18-candidate/14-card caps. Ten is an expansion threshold, not a guaranteed minimum.
+- Source pack v3 collects up to 72 hours from the existing sources without a second collection pass. AlphaSignal retains its bounded enrichment budget and prioritizes normal-window inputs before older inputs. Edition coverage and source-report metadata record the actual window used. No database migration, new source, schedule, secret, model call, or publication path is introduced.
+- Read-only production evidence: the 7 September cron ran from `2026-09-06T22:15:13.160Z` to `2026-09-06T22:15:27.679Z` and published one story despite AInews returning HTTP 402. Its stored source report recorded 19 expired candidates and one eligible candidate. D1 confirms GPT OSS returned invalid JSON and Llama then succeeded, resolving the earlier pending live fallback verification. Production remains the 2 September deployment `17a77af1-6d0f-4a29-a791-e6f4034dfcf2`; the window change is local and has not been deployed or republished.
+- Separate unresolved quality issues remain: AlphaSignal sitemap modification times are treated as publication dates, evidence-link selection can mismatch the story claim, and profile weights can exclude otherwise relevant stories. The window change does not claim to repair those issues or AInews's HTTP 402.
+- Local verification passed generated Worker types, TypeScript, all 70 tests in 10 files, dry-run packaging, and diff checks. Regression coverage includes the 9/10/11-candidate threshold, exact 48/72-hour boundaries, invalid/future/expired timestamps, deduplication, no padding, and successful mocked generation from older TLDR stories while AInews returns 402. Production verification awaits an authorized release.
+
 ## 2 September 2026 — model output exhaustion and fallback hardening
 
 ### Verified incident evidence
@@ -122,7 +130,7 @@ The follow-on shadow run was healthy in 1,557 ms using `core-ai` v1. TLDR AI, Al
 - Editorial corroboration is never described as proof.
 - AInews, TLDR AI, and AlphaSignal enter one equal editorial pool; no source receives seniority.
 - One failed or quiet source does not block a usable pool from the others.
-- Prefer the first 36 hours and reject candidates older than 48 hours.
+- Prefer the first 36 hours; use 48 hours normally and expand once to 72 hours only when fewer than 10 qualified, deduplicated candidates remain. Never admit older material or weaken evidence/relevance rules to fill a target.
 - X/Twitter is background noise and cannot become a published card or corroborating source.
 - Quiet days remain quiet; do not pad to a story target.
 - Failed runs cannot replace the last good edition.

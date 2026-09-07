@@ -66,11 +66,11 @@ function dailyIssue(): RssIssue {
 }
 
 describe("source packs", () => {
-  it("defines one equal-source pack with a 48-hour collection horizon", () => {
+  it("defines one equal-source pack with a 72-hour collection horizon", () => {
     expect(DEFAULT_PROFILE.sourcePackId).toBe(DEFAULT_SOURCE_PACK_ID);
-    expect(SOURCE_PACKS[DEFAULT_SOURCE_PACK_ID]).toMatchObject({ id: "core-ai", version: 2 });
+    expect(SOURCE_PACKS[DEFAULT_SOURCE_PACK_ID]).toMatchObject({ id: "core-ai", version: 3 });
     expect(SOURCE_PACKS[DEFAULT_SOURCE_PACK_ID].sources.map((source) => source.id)).toEqual(["ainews", "tldr-ai", "alphasignal", "cloudflare-agents"]);
-    expect(SOURCE_PACKS[DEFAULT_SOURCE_PACK_ID].sources.filter((source) => source.lookbackHours).every((source) => source.lookbackHours === 48)).toBe(true);
+    expect(SOURCE_PACKS[DEFAULT_SOURCE_PACK_ID].sources.filter((source) => source.lookbackHours).every((source) => source.lookbackHours === 72)).toBe(true);
   });
 });
 
@@ -93,11 +93,11 @@ describe("source parsing", () => {
     expect(stories[0]).toMatchObject({ title: "Codex adds persistent agent memory", url: "https://openai.com/index/codex-memory" });
   });
 
-  it("uses a 48-hour AlphaSignal window and extracts a direct evidence link", () => {
+  it("collects AlphaSignal fallback inputs through 72 hours and extracts a direct evidence link", () => {
     const sitemap = `<urlset>
       <url><loc>https://alphasignal.ai/news/new-codex-agent-runtime</loc><lastmod>2026-08-15T00:30:00Z</lastmod></url>
-      <url><loc>https://alphasignal.ai/news/inside-window-model-release</loc><lastmod>2026-08-13T03:00:00Z</lastmod></url>
-      <url><loc>https://alphasignal.ai/news/too-old-model-release</loc><lastmod>2026-08-13T01:59:00Z</lastmod></url>
+      <url><loc>https://alphasignal.ai/news/inside-window-model-release</loc><lastmod>2026-08-12T14:00:00Z</lastmod></url>
+      <url><loc>https://alphasignal.ai/news/too-old-model-release</loc><lastmod>2026-08-12T01:59:00Z</lastmod></url>
     </urlset>`;
     const recent = parseAlphaSitemap(sitemap, now);
     expect(recent).toHaveLength(2);
@@ -112,7 +112,7 @@ describe("source parsing", () => {
 
   it("keeps only recent Cloudflare posts and reserves primary status for Cloudflare", () => {
     const feed = `<rss><channel>
-      <item><title>Workers AI adds agent tool contracts</title><link>https://blog.cloudflare.com/agent-tool-contracts</link><pubDate>Fri, 14 Aug 2026 01:00:00 GMT</pubDate><description>Structured tool contracts improve agent integrations.</description></item>
+      <item><title>Workers AI adds agent tool contracts</title><link>https://blog.cloudflare.com/agent-tool-contracts</link><pubDate>Wed, 12 Aug 2026 14:00:00 GMT</pubDate><description>Structured tool contracts improve agent integrations.</description></item>
       <item><title>External announcement</title><link>https://example.com/announcement</link><pubDate>Fri, 14 Aug 2026 01:00:00 GMT</pubDate><description>External.</description></item>
       <item><title>Old Agents post</title><link>https://blog.cloudflare.com/old-agents</link><pubDate>Sat, 1 Aug 2026 01:00:00 GMT</pubDate><description>Old.</description></item>
     </channel></rss>`;
@@ -124,6 +124,40 @@ describe("source parsing", () => {
 });
 
 describe("daily equal-source pool", () => {
+  it.each([9, 10, 11])("expands only below ten qualified distinct candidates (%i)", (count) => {
+    const fresh = Array.from({ length: count }, (_, i) => candidate("tldr-ai", `Development ${i}`, `https://example.com/fresh-${i}`));
+    const older = candidate("alphasignal", "Fallback development", "https://example.com/fallback", 8, "2026-08-12T02:00:00Z");
+    const inventory = buildDailyCandidateInventory({ sourceResults: [sourceResult("tldr-ai", fresh), sourceResult("alphasignal", [older])], profile: DEFAULT_PROFILE, now });
+    expect(inventory.collection.maxFreshnessHours).toBe(count < 10 ? 72 : 48);
+    expect(inventory.eligibleCandidates).toBe(count < 10 ? count + 1 : count);
+    expect(inventory.candidates.some((item) => item.sources[0]?.url === older.url)).toBe(count < 10);
+    expect(freshnessBoost(older.publishedAt, now)).toBe(0);
+  });
+
+  it("counts after deduplication and qualification, rejects invalid dates, and never pads", () => {
+    const fresh = candidate("tldr-ai", "Fresh development", "https://example.com/fresh");
+    const fallback = candidate("tldr-ai", "Older development", "https://example.com/older", 8, "2026-08-12T02:00:00Z");
+    const weak = { ...fallback, title: "Weak material", url: "https://example.com/weak", score: -4 };
+    const candidates = [
+      ...Array.from({ length: 12 }, () => ({ ...fresh })), fallback, weak,
+      { ...fallback, url: "https://x.com/example/status/2" },
+      { ...fallback, url: "https://example.com/future", publishedAt: "2026-08-16T00:00:00Z" },
+      { ...fallback, url: "https://example.com/invalid", publishedAt: "invalid" },
+      { ...fallback, url: "https://example.com/expired", publishedAt: "2026-08-12T01:59:59.999Z" }
+    ];
+    const inventory = buildDailyCandidateInventory({ sourceResults: [sourceResult("tldr-ai", candidates)], profile: DEFAULT_PROFILE, now });
+    expect(inventory.collection.maxFreshnessHours).toBe(72);
+    expect(inventory.candidates.map((item) => item.sources[0]?.url).sort()).toEqual([fresh.url, fallback.url].sort());
+    expect(inventory.expiredCandidates).toBe(3);
+  });
+
+  it("includes the exact 48-hour boundary without expansion when ten qualify", () => {
+    const candidates = Array.from({ length: 10 }, (_, i) => candidate("tldr-ai", `Boundary ${i}`, `https://example.com/boundary-${i}`, 8, "2026-08-13T02:00:00Z"));
+    const inventory = buildDailyCandidateInventory({ sourceResults: [sourceResult("tldr-ai", candidates)], profile: DEFAULT_PROFILE, now });
+    expect(inventory.collection.maxFreshnessHours).toBe(48);
+    expect(inventory.eligibleCandidates).toBe(10);
+  });
+
   it("deduplicates cross-source coverage without a source-order tie-break", () => {
     const tldr = candidate("tldr-ai", "OpenAI launches the new Codex runtime", "https://openai.com/codex?utm_source=tldr", 8);
     const alpha = candidate("alphasignal", "Codex runtime launches", "https://openai.com/codex", 10);
@@ -134,10 +168,10 @@ describe("daily equal-source pool", () => {
     expect(titleSimilarity(tldr.title, alpha.title)).toBeGreaterThanOrEqual(0.62);
   });
 
-  it("enforces the 48-hour cutoff, prefers the first 36 hours, and never publishes X-only cards", () => {
+  it("enforces the 72-hour ceiling, prefers the first 36 hours, and never publishes X-only cards", () => {
     const results = [sourceResult("ainews", [
       candidate("ainews", "Fresh Codex workflow", "https://openai.com/fresh", 8, "2026-08-13T14:01:00Z"),
-      candidate("ainews", "Stale Codex workflow", "https://openai.com/stale", 30, "2026-08-13T01:59:00Z"),
+      candidate("ainews", "Stale Codex workflow", "https://openai.com/stale", 30, "2026-08-12T01:59:00Z"),
       candidate("ainews", "X-only agent noise", "https://x.com/example/status/1", 30, "2026-08-15T01:00:00Z")
     ])];
     const inventory = buildDailyCandidateInventory({ sourceResults: results, profile: DEFAULT_PROFILE, now });
@@ -158,7 +192,7 @@ describe("daily equal-source pool", () => {
     });
     expect(inventory.candidates[0]?.provenance?.coverage).toMatchObject({ editorialSourceCount: 2, boost: 4 });
     expect(inventory.candidates[0]?.provenance?.selection.reason).toBe("cross-source");
-    expect(inventory.collection).toMatchObject({ mode: "daily-pool", preferredFreshnessHours: 36, maxFreshnessHours: 48, selectedCandidates: 2 });
+    expect(inventory.collection).toMatchObject({ mode: "daily-pool", preferredFreshnessHours: 36, maxFreshnessHours: 72, selectedCandidates: 2 });
   });
 
   it("has no per-source quota and does not pad with weak material", () => {
@@ -190,9 +224,9 @@ describe("daily equal-source pool", () => {
     const report = buildDailySourceReport({ issue: dailyIssue(), sourceResults, inventory, generatedAt: now.toISOString(), profile: DEFAULT_PROFILE });
     expect(report).toMatchObject({
       mode: "daily-pool",
-      sourcePack: { id: "core-ai", version: 2 },
+      sourcePack: { id: "core-ai", version: 3 },
       limits: { modelCandidates: 18, publishedStories: 14 },
-      freshness: { preferredHours: 36, maxHours: 48, eligibleCandidates: 2 },
+      freshness: { preferredHours: 36, maxHours: 72, eligibleCandidates: 2 },
       totals: { selectedForBlend: 2 }
     });
     expect(report.selectedForBlend).toHaveLength(2);

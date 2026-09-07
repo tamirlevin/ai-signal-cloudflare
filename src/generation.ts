@@ -226,7 +226,7 @@ export async function generateLatestEdition(env: Env, trigger: Trigger, options:
     const supplementalStarted = Date.now();
     const sourceResults = await collectSupplementalSources({ profile, now: new Date(startedAt), rssUrl: env.RSS_URL });
     const inventory = buildDailyCandidateInventory({ sourceResults, profile, now: new Date(startedAt) });
-    if (!inventory.candidates.length) throw new ValidationError("No qualified stories were published inside the 48-hour source window");
+    if (!inventory.candidates.length) throw new ValidationError(`No qualified stories were published inside the ${inventory.collection.maxFreshnessHours}-hour source window`);
     const modelIssue = issueFromCandidateInventory(issue, inventory.candidates);
     const sourceIssue = {
       ...issue,
@@ -251,7 +251,7 @@ export async function generateLatestEdition(env: Env, trigger: Trigger, options:
         ...(generated.issue ?? {}),
         url: issue.url,
         publicationDate: issue.publicationDate,
-        coverage: "Qualified signals published in the previous 48 hours",
+        coverage: `Qualified signals published in the previous ${inventory.collection.maxFreshnessHours} hours`,
         quiet: stories.signals.length < profile.storyBudget
       };
       generated.signals = stories.signals;

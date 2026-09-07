@@ -59,6 +59,7 @@ function fakeDatabase(runStatements: RecordedStatement[], hasExistingEdition: bo
   let replacedEditionJson: string | undefined;
   const prepare = (sql: string) => {
     const statement = {
+      sql,
       values: [] as unknown[],
       bind(...values: unknown[]) {
         this.values = values;
@@ -90,7 +91,8 @@ function fakeDatabase(runStatements: RecordedStatement[], hasExistingEdition: bo
   };
   return {
     prepare,
-    async batch() {
+    async batch(statements: RecordedStatement[]) {
+      runStatements.push(...statements.map(({ sql, values }) => ({ sql, values })));
       return [
         { success: true, meta: { changes: 1 }, results: [] },
         { success: true, meta: { changes: 0 }, results: [] }
@@ -115,6 +117,36 @@ function fakeEnv(db: D1Database, modelCalls: string[]): Env {
 }
 
 describe("generation republish behavior", () => {
+  it("publishes a 72-hour fallback edition from TLDR when AInews returns 402", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-01T12:00:00.000Z"));
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("news.smol.ai")) return new Response("unavailable", { status: 402 });
+      if (url === "https://tldr.tech/api/rss/ai") return new Response(`<rss><channel><item><title>TLDR AI</title><link>https://tldr.tech/ai/2026-08-30</link><pubDate>Sun, 30 Aug 2026 01:00:00 GMT</pubDate></item></channel></rss>`);
+      if (url === "https://tldr.tech/ai/2026-08-30") return new Response(`<article><a href="${firstSource}"><h3>Codex adds explicit agent permission scopes</h3></a></article><article><a href="${secondSource}"><h3>Enterprise memory enables durable handoffs</h3></a></article>`);
+      return new Response("<rss><channel></channel></rss>");
+    }));
+    try {
+      const calls: string[] = [];
+      const statements: RecordedStatement[] = [];
+      const result = await generateLatestEdition(fakeEnv(fakeDatabase(statements, false), calls), "cron");
+      expect(result.status).toBe("success");
+      if (result.status !== "success") throw new Error("Expected a published fallback edition");
+      expect(result.edition.collection).toMatchObject({ mode: "daily-pool", maxFreshnessHours: 72, sourcesContributing: ["TLDR AI"] });
+      expect(result.edition.issue.coverage).toBe("Qualified signals published in the previous 72 hours");
+      expect(result.edition.signals).toHaveLength(2);
+      expect(result.edition.signals.every((item) => item.date === "30 August 2026")).toBe(true);
+      expect(calls).toHaveLength(1);
+      expect(statements.some((statement) => statement.sql.includes("manual_republish_days"))).toBe(false);
+      const report = statements.find((statement) => statement.sql.startsWith("INSERT INTO supplemental_shadow_runs"));
+      expect(JSON.stringify(report?.values)).toContain("RSS returned 402");
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps normal manual refresh idempotent but replaces an issue when forced", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-31T00:00:00.000Z"));

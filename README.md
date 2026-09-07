@@ -23,7 +23,7 @@ The compatibility date is pinned to `2026-08-11`. Move it forward only with a te
 
 Every run targets the current `Australia/Melbourne` calendar day. A normal refresh is idempotent for that date, so a repeated run skips after a successful edition already exists.
 
-The code-defined `core-ai` source pack v2 checks:
+The code-defined `core-ai` source pack v3 checks:
 
 - AInews, TLDR AI, and AlphaSignal as equal editorial discovery inputs;
 - Cloudflare Agents as a narrow primary-evidence lane; and
@@ -32,7 +32,7 @@ The code-defined `core-ai` source pack v2 checks:
 The collector then:
 
 1. Parses each source independently. One failed or quiet feed does not block usable candidates from another.
-2. Rejects candidates older than 48 hours. Items inside 36 hours receive a small freshness preference; the final 12 hours taper to zero freshness boost.
+2. Qualifies and deduplicates the normal 48-hour pool. If fewer than 10 candidates qualify, expands once to 72 hours using the same collected inputs and eligibility rules. Items inside 36 hours receive a small freshness preference, tapering to zero at 48 hours; older fallback items receive no freshness boost. Nothing older than 72 hours is eligible.
 3. Requires a usable non-social HTTPS evidence URL. X/Twitter is not collected as a source, cannot become a published card, and does not count as corroboration.
 4. Merges duplicate URLs, fuzzy-title matches, and product-version matches into one cluster.
 5. Ranks clusters by profile fit, freshness, evidence quality, and capped independent editorial corroboration. Agreement is discovery context, never proof.
@@ -46,12 +46,12 @@ The issue header is the edition date, not a source date. Each signal retains its
 ## Failure and observability behavior
 
 - A source failure degrades the source report but does not fail a run when other qualified candidates remain.
-- If no qualified candidate exists inside 48 hours, the run fails without publishing an empty or padded edition; the last good edition remains live.
+- If no qualified candidate exists even inside 72 hours, the run fails without publishing an empty or padded edition; the last good edition remains live. Ten is the expansion threshold, not a guaranteed minimum or a new publication cap.
 - Editorial generation makes at most one call to each configured model: `@cf/openai/gpt-oss-120b`, then non-reasoning `@cf/meta/llama-3.3-70b-instruct-fp8-fast`, then paid `@cf/moonshotai/kimi-k2.6`. Timeouts, invalid JSON, validation failures, and output-length stops switch models immediately rather than repeating the same request.
 - Reasoning models receive a 6,000-token completion allowance; Llama receives a 3,200-token non-reasoning allowance. If all three calls fail, conservative deterministic framing is built from the already validated collector inventory so a healthy source run can still publish without model-authored claims or URLs.
 - Each completed run stores a bounded JSON audit of its attempts, including model, outcome, duration, finish reason, completion/reasoning tokens, and response length when available. Output-length exhaustion is classified separately as `MODEL_OUTPUT_TRUNCATED`.
 - Failed runs are audit records only and cannot replace the last good edition.
-- The legacy D1 table `supplemental_shadow_runs` and endpoint `GET /api/shadow/latest` now carry the latest source report. `report.mode="daily-pool"` records source health, the 36/48-hour policy, eligible counts, and selected candidates. The reader no longer renders a separate fresh-signals section.
+- The legacy D1 table `supplemental_shadow_runs` and endpoint `GET /api/shadow/latest` carry the latest source report. `report.mode="daily-pool"` records source health, the actual 48- or 72-hour window, eligible counts, and selected candidates. The edition's coverage label and `collection.maxFreshnessHours` reflect the same window. The reader has no separate fresh-signals section.
 - `GET /api/status` separates the latest run outcome from the latest completed cron heartbeat. The reader alerts after 26 hours without a completed cron check; a timely idempotent skip is a healthy heartbeat.
 
 `SUPPLEMENTAL_SHADOW_ENABLED=true` keeps the read-only source report refreshed when a same-day edition causes generation to skip. It does not create another publication path.
@@ -96,7 +96,7 @@ npm run dry-run
 git diff --check
 ```
 
-Then follow [AGENTS.md](AGENTS.md): push the reviewed commit to `main`, record the current deployment as rollback evidence, deploy with strict configuration and Git provenance, verify public and D1 state, and record consequential evidence in [PROJECT_HISTORY.md](PROJECT_HISTORY.md). No D1 migration is needed for the v2 pool because edition collection/provenance metadata remains optional and backward compatible.
+Then follow [AGENTS.md](AGENTS.md): push the reviewed commit to `main`, record the current deployment as rollback evidence, deploy with strict configuration and Git provenance, verify public and D1 state, and record consequential evidence in [PROJECT_HISTORY.md](PROJECT_HISTORY.md). No D1 migration is needed for the v3 pool; historical 48-hour and legacy editions remain readable.
 
 The configured cron is `15 22 * * *` UTC: 08:15 Melbourne during AEST and 09:15 during AEDT. Cloudflare cron has no Melbourne timezone setting.
 
@@ -122,4 +122,4 @@ All API responses use security headers and do not enable cross-origin access. Th
 
 ## Tests
 
-`npm test` covers source-pack policy, feed parsers, the 36/48-hour window, X exclusion, equal-source clustering, corroboration, gentle diversity, no quotas/no padding, trusted-link validation, daily idempotency, guarded republishing, model repair/fallback, heartbeat aging, API authentication, visit privacy, and preservation of the last good edition under total source failure.
+`npm test` covers source-pack policy, feed parsers, conditional 48/72-hour windows and their boundaries, source-402 fail-open generation, X exclusion, equal-source clustering, corroboration, gentle diversity, no quotas/no padding, trusted-link validation, daily idempotency, guarded republishing, model repair/fallback, heartbeat aging, API authentication, visit privacy, and preservation of the last good edition under total source failure.

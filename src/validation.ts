@@ -125,7 +125,8 @@ function collectionMetadata(value: unknown): NonNullable<Edition["collection"]> 
   const sourcePackVersion = collection.sourcePackVersion === undefined ? undefined : integer(collection.sourcePackVersion, "edition.collection.sourcePackVersion", 1, 999999);
   if (mode === "daily-pool") {
     const preferredFreshnessHours = integer(collection.preferredFreshnessHours, "edition.collection.preferredFreshnessHours", 36, 36);
-    const maxFreshnessHours = integer(collection.maxFreshnessHours, "edition.collection.maxFreshnessHours", 48, 48);
+    const maxFreshnessHours = collection.maxFreshnessHours;
+    if (maxFreshnessHours !== 48 && maxFreshnessHours !== 72) throw new ValidationError("edition.collection.maxFreshnessHours must be 48 or 72");
     const eligibleCandidates = integer(collection.eligibleCandidates, "edition.collection.eligibleCandidates", 0, 999);
     const selectedCandidates = integer(collection.selectedCandidates, "edition.collection.selectedCandidates", 0, Math.min(18, eligibleCandidates));
     return {
@@ -133,7 +134,7 @@ function collectionMetadata(value: unknown): NonNullable<Edition["collection"]> 
       sourcesChecked: list(collection.sourcesChecked, "edition.collection.sourcesChecked", 1, 12).map((item, index) => text(item, `edition.collection.sourcesChecked[${index}]`)),
       sourcesContributing: list(collection.sourcesContributing, "edition.collection.sourcesContributing", 1, 12).map((item, index) => text(item, `edition.collection.sourcesContributing[${index}]`)),
       preferredFreshnessHours: preferredFreshnessHours as 36,
-      maxFreshnessHours: maxFreshnessHours as 48,
+      maxFreshnessHours,
       eligibleCandidates,
       selectedCandidates,
       ...(sourcePackId === undefined ? {} : { sourcePackId: sourcePackId as SourcePackId }),
