@@ -2,13 +2,20 @@
 
 This is the curated engineering and production history for AI Signal. It records consequential decisions, incidents, verified runtime evidence, unresolved uncertainty, and architectural constraints. It is not a release changelog, commit log, or session transcript.
 
-## 7 September 2026 — conditional three-day source window (not deployed)
+## 7 September 2026 — conditional three-day source window
 
 - The owner approved one bounded freshness fallback: qualify and deduplicate the normal 48-hour pool first; if fewer than 10 candidates qualify for any reason, expand once to 72 hours. Preserve the 36-hour preference, zero freshness boost beyond 48 hours, equal-source ranking, evidence/relevance checks, no padding, and the existing 18-candidate/14-card caps. Ten is an expansion threshold, not a guaranteed minimum.
 - Source pack v3 collects up to 72 hours from the existing sources without a second collection pass. AlphaSignal retains its bounded enrichment budget and prioritizes normal-window inputs before older inputs. Edition coverage and source-report metadata record the actual window used. No database migration, new source, schedule, secret, model call, or publication path is introduced.
-- Read-only production evidence: the 7 September cron ran from `2026-09-06T22:15:13.160Z` to `2026-09-06T22:15:27.679Z` and published one story despite AInews returning HTTP 402. Its stored source report recorded 19 expired candidates and one eligible candidate. D1 confirms GPT OSS returned invalid JSON and Llama then succeeded, resolving the earlier pending live fallback verification. Production remains the 2 September deployment `17a77af1-6d0f-4a29-a791-e6f4034dfcf2`; the window change is local and has not been deployed or republished.
+- Read-only pre-release production evidence: the 7 September cron ran from `2026-09-06T22:15:13.160Z` to `2026-09-06T22:15:27.679Z` and published one story despite AInews returning HTTP 402. Its stored source report recorded 19 expired candidates and one eligible candidate. D1 confirms GPT OSS returned invalid JSON and Llama then succeeded, resolving the earlier pending live fallback verification.
 - Separate unresolved quality issues remain: AlphaSignal sitemap modification times are treated as publication dates, evidence-link selection can mismatch the story claim, and profile weights can exclude otherwise relevant stories. The window change does not claim to repair those issues or AInews's HTTP 402.
-- Local verification passed generated Worker types, TypeScript, all 70 tests in 10 files, dry-run packaging, and diff checks. Regression coverage includes the 9/10/11-candidate threshold, exact 48/72-hour boundaries, invalid/future/expired timestamps, deduplication, no padding, and successful mocked generation from older TLDR stories while AInews returns 402. Production verification awaits an authorized release.
+- Local verification passed generated Worker types, TypeScript, all 70 tests in 10 files, dry-run packaging, and diff checks. Regression coverage includes the 9/10/11-candidate threshold, exact 48/72-hour boundaries, invalid/future/expired timestamps, deduplication, no padding, and successful mocked generation from older TLDR stories while AInews returns 402.
+
+### Verified release evidence
+
+- Source commit `01cb053568aa59bd85d3d1e1809ffe3c0e535acc` was pushed to GitHub `main` before strict deployment. The pre-release rollback point is deployment `17a77af1-6d0f-4a29-a791-e6f4034dfcf2`, version 40 `dc129873-3360-44e0-8fb0-11d8f6bfa634` with tag `git-a0d5ce4`. No migration was pending or applied.
+- Deployment `c5cf12a7-becd-4d9a-892f-456d1e98810a` serves 100% of traffic through version 41 `a232f103-23e2-4c32-b501-1238916d3679`, created at `2026-09-07T05:27:45.975162Z`. Verified version metadata records tag `git-01cb053` and the full source SHA. The custom domain, bindings, and `15 22 * * *` UTC schedule are unchanged.
+- Health, status, latest-edition, profile, and shadow endpoints returned HTTP 200 after deployment. The latest edition remains `b4bfeb4e-a919-4351-95e4-7382bab0b97a`, issue `2026-09-07`, published at `2026-09-06T22:15:27.310Z`; profile v6 and the morning's v2 source report remain unchanged. A read-only D1 query wrote zero rows and confirmed the morning cron is still the latest run.
+- Deployment did not trigger generation or republish today's edition. Live execution of the v3 conditional window remains pending the next scheduled run, expected 8 September at 08:15 Australia/Melbourne. A 72-hour report is expected only when that run has fewer than 10 qualified candidates inside 48 hours; do not force a republish merely to verify it.
 
 ## 2 September 2026 — model output exhaustion and fallback hardening
 
