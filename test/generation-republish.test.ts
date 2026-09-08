@@ -137,7 +137,7 @@ describe("generation republish behavior", () => {
       expect(result.edition.issue.coverage).toBe("Qualified signals published in the previous 72 hours");
       expect(result.edition.signals).toHaveLength(2);
       expect(result.edition.signals.every((item) => item.date === "30 August 2026")).toBe(true);
-      expect(calls).toHaveLength(1);
+      expect(calls).toHaveLength(2);
       expect(statements.some((statement) => statement.sql.includes("manual_republish_days"))).toBe(false);
       const report = statements.find((statement) => statement.sql.startsWith("INSERT INTO supplemental_shadow_runs"));
       expect(JSON.stringify(report?.values)).toContain("RSS returned 402");
@@ -163,7 +163,7 @@ describe("generation republish behavior", () => {
       const forcedStatements: RecordedStatement[] = [];
       const forcedResult = await generateLatestEdition(fakeEnv(fakeDatabase(forcedStatements, true), forcedCalls), "manual", { forceRepublish: true });
       expect(forcedResult.status).toBe("success");
-      expect(forcedCalls).toEqual(["@cf/openai/gpt-oss-120b"]);
+      expect(forcedCalls).toEqual(["@cf/openai/gpt-oss-120b", "@cf/meta/llama-3.3-70b-instruct-fp8-fast"]);
       expect(forcedStatements.some((statement) => statement.sql.startsWith("UPDATE editions SET"))).toBe(true);
       expect(forcedStatements.some((statement) => statement.sql.startsWith("UPDATE manual_republish_days"))).toBe(true);
       expect(fetcher).toHaveBeenCalledTimes(5);

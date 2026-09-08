@@ -41,6 +41,8 @@ The collector then:
 
 The deterministic collector creates the story inventory, Hot Topics, source URLs, provenance, and individual signal dates. Workers AI receives only that bounded inventory and writes presentation copy plus cross-story synthesis. The model cannot add stories or URLs. Every generated edition is validated against the collector's permitted URL catalogue before D1 is changed.
 
+Immediately before storage, one best-effort editorial QA call reviews the finished draft against the same candidate inventory. It can correct presentation and synthesis only; story cards, ranking, dates, profile, and collection metadata stay unchanged. The review looks for leaked drafting notes, promotional content, contradictions, unsupported claims, and story/citation mismatches. Corrections must pass the existing validation without automatic source substitution. This is an evidence-consistency check, not independent fact verification.
+
 The issue header is the edition date, not a source date. Each signal retains its feed publication date. Historical AInews-base editions remain readable under backward-compatible validation.
 
 ## Failure and observability behavior
@@ -50,6 +52,8 @@ The issue header is the edition date, not a source date. Each signal retains its
 - Editorial generation makes at most one call to each configured model: `@cf/openai/gpt-oss-120b`, then non-reasoning `@cf/meta/llama-3.3-70b-instruct-fp8-fast`, then paid `@cf/moonshotai/kimi-k2.6`. Timeouts, invalid JSON, validation failures, and output-length stops switch models immediately rather than repeating the same request.
 - Reasoning models receive a 6,000-token completion allowance; Llama receives a 3,200-token non-reasoning allowance. If all three calls fail, conservative deterministic framing is built from the already validated collector inventory so a healthy source run can still publish without model-authored claims or URLs.
 - Each completed run stores a bounded JSON audit of its attempts, including model, outcome, duration, finish reason, completion/reasoning tokens, and response length when available. Output-length exhaustion is classified separately as `MODEL_OUTPUT_TRUNCATED`.
+- Editorial QA adds at most one separate call to the configured Llama fallback model, with a 3,200-token allowance and 20-second waiting limit, after either model or deterministic framing succeeds. There are no QA retries. Invalid corrections, provider errors, or timeout publish the original validated draft with a warning; a cheap leaked-note check also flags unresolved internal copy. The waiting limit does not cancel provider inference. Skipped daily runs do not invoke QA.
+- QA outcomes (`passed`, `corrected`, or `fallback`), bounded unresolved warnings, model, issue URL, and duration appear in existing Worker logs under `ai-signal editorial QA`, separately from the D1 generation-attempt audit. Card-level concerns are warnings only, never automatic removals. No extra schedule, notification service, or database migration is involved.
 - Failed runs are audit records only and cannot replace the last good edition.
 - The legacy D1 table `supplemental_shadow_runs` and endpoint `GET /api/shadow/latest` carry the latest source report. `report.mode="daily-pool"` records source health, the actual 48- or 72-hour window, eligible counts, and selected candidates. The edition's coverage label and `collection.maxFreshnessHours` reflect the same window. The reader has no separate fresh-signals section.
 - `GET /api/status` separates the latest run outcome from the latest completed cron heartbeat. The reader alerts after 26 hours without a completed cron check; a timely idempotent skip is a healthy heartbeat.
@@ -122,4 +126,4 @@ All API responses use security headers and do not enable cross-origin access. Th
 
 ## Tests
 
-`npm test` covers source-pack policy, feed parsers, conditional 48/72-hour windows and their boundaries, source-402 fail-open generation, X exclusion, equal-source clustering, corroboration, gentle diversity, no quotas/no padding, trusted-link validation, daily idempotency, guarded republishing, model repair/fallback, heartbeat aging, API authentication, visit privacy, and preservation of the last good edition under total source failure.
+`npm test` covers source-pack policy, feed parsers, conditional 48/72-hour windows and their boundaries, source-402 fail-open generation, X exclusion, equal-source clustering, corroboration, gentle diversity, no quotas/no padding, trusted-link validation, daily idempotency, guarded republishing, model repair/fallback, one-pass editorial QA correction and fail-open paths, heartbeat aging, API authentication, visit privacy, and preservation of the last good edition under total source failure.

@@ -104,6 +104,7 @@ describe("generation model fallback", () => {
         async run(model: string, input: ChatCompletionsMessagesInput) {
           modelCalls.push(model);
           modelInputs.push(input);
+          if (modelCalls.length === 3) return { response: { presentation: generatedEdition.presentation, synthesis: { ...generatedEdition.synthesis, sections: generatedEdition.synthesis.sections.map((section, index) => index === 0 ? { ...section, title: "Runtime permission boundaries" } : section) }, warnings: [] } };
           return modelCalls.length === 1
             ? { choices: [{ finish_reason: "length", message: { content: null } }], usage: { completion_tokens: 6000, completion_tokens_details: { reasoning_tokens: 5998 } } }
             : { choices: [{ finish_reason: "stop", message: { content: JSON.stringify(generatedEdition) } }] };
@@ -123,7 +124,10 @@ describe("generation model fallback", () => {
       const result = await generateLatestEdition(env, "manual");
 
       expect(result.status).toBe("success");
-      expect(modelCalls).toEqual(["@cf/openai/gpt-oss-120b", "@cf/meta/llama-3.3-70b-instruct-fp8-fast"]);
+      if (result.status !== "success") throw new Error("Expected successful generation");
+      expect(result.edition.synthesis.sections[0]?.title).toBe("Runtime permission boundaries");
+      expect(result.edition.signals).toHaveLength(2);
+      expect(modelCalls).toEqual(["@cf/openai/gpt-oss-120b", "@cf/meta/llama-3.3-70b-instruct-fp8-fast", "@cf/meta/llama-3.3-70b-instruct-fp8-fast"]);
       expect(modelInputs[0]).toHaveProperty("response_format");
       expect(modelInputs[0]).toHaveProperty("max_completion_tokens", 6000);
       expect(modelInputs[0]).toHaveProperty("reasoning_effort", "low");
@@ -131,6 +135,8 @@ describe("generation model fallback", () => {
       expect(modelInputs[1]).toHaveProperty("max_tokens", 3200);
       expect(modelInputs[1]).not.toHaveProperty("max_completion_tokens");
       expect(modelInputs[1]).not.toHaveProperty("reasoning_effort");
+      expect(modelInputs[2]).toHaveProperty("max_tokens", 3200);
+      expect(JSON.stringify(modelInputs[2])).toContain("ai_signal_editorial_review");
       expect(fetcher).toHaveBeenCalledTimes(5);
       const successfulRun = runStatements.find((statement) => statement.sql.startsWith("INSERT INTO runs"));
       expect(successfulRun?.values[4]).toBe("success");
@@ -179,7 +185,8 @@ describe("generation model fallback", () => {
       expect(modelCalls).toEqual([
         "@cf/openai/gpt-oss-120b",
         "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-        "@cf/moonshotai/kimi-k2.6"
+        "@cf/moonshotai/kimi-k2.6",
+        "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
       ]);
       expect(modelInputs[2]).toHaveProperty("response_format");
       expect(modelInputs[2]).toHaveProperty("max_completion_tokens", 6000);

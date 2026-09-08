@@ -1,4 +1,5 @@
 import type { Edition, ModelAttemptAudit, RssIssue, RunResult, Source } from "./contracts";
+import { reviewEditorialEdition } from "./editorial-qa";
 import { deterministicEditorialEdition, editorialMessages, extractGeneratedEdition, generationInput, issueFromCandidateInventory, materializeCandidateStories, ModelJsonError, ModelOutputTruncatedError, modelResponseDiagnostic, type ModelResponseDiagnostic } from "./editorial";
 import { claimManualRepublish, completeManualRepublish, errorCode, getActiveProfile, insertEdition, melbourneCalendarDay, publishedEditionState, recordRun, recordSupplementalShadowRun, releaseManualRepublish, replaceEdition, type ManualRepublishClaim } from "./repository";
 import { normalizeEditionStories } from "./story-normalization";
@@ -311,6 +312,14 @@ export async function generateLatestEdition(env: Env, trigger: Trigger, options:
         throw error;
       }
     }
+
+    const qaStarted = Date.now();
+    const qa = await reviewEditorialEdition(edition, modelIssue, profile, allowedStoryUrls,
+      (input) => askModel(env, env.AI_FALLBACK_MODEL, input));
+    edition = qa.edition;
+    const qaLog = JSON.stringify({ message: "ai-signal editorial QA", issueUrl, model: env.AI_FALLBACK_MODEL, status: qa.status, warnings: qa.warnings, durationMs: Date.now() - qaStarted });
+    if (qa.status === "fallback" || qa.warnings.length) console.warn(qaLog);
+    else console.log(qaLog);
 
     const sourceBodyHash = await hash(modelIssue.body);
     const stored = replacingExistingEdition ? await replaceEdition(env.DB, edition, issue.issueDate, sourceBodyHash) : await insertEdition(env.DB, edition, issue.issueDate, sourceBodyHash);

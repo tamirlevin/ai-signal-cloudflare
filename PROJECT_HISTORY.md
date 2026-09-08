@@ -2,6 +2,14 @@
 
 This is the curated engineering and production history for AI Signal. It records consequential decisions, incidents, verified runtime evidence, unresolved uncertainty, and architectural constraints. It is not a release changelog, commit log, or session transcript.
 
+## 9 September 2026 — lightweight editorial QA
+
+- The morning cron succeeded and published six stories, but one synthesis heading exposed an internal note: "source URL for candidate 1 not provided in allowed list; cannot include". Candidate 1's research URL was present in the inventory; the displayed section citation linked to the separate Deckard story. Structural/source-membership validation did not catch this editorial inconsistency.
+- The owner approved one best-effort pre-publication review, not a new agent service or scheduled task. It reuses the configured Llama fallback, the completed draft, and the same bounded candidate inventory. Only presentation/synthesis can change, with no new URLs, stories, ranking, dates, profile, or collection changes. Corrections pass existing validation directly, without the generation path's automatic source substitution.
+- A narrow internal-note tripwire supplements the review. One 3,200-token call waits at most 20 seconds; errors, timeout, or rejected corrections retain the original validated draft and log a warning. The wait limit does not cancel provider inference. Unfixable card concerns are warnings only. QA is evidence consistency, not external fact verification, and remains deliberately non-blocking. Existing Worker logs record its result separately from the D1 generation-attempt audit; no migration or schedule change is required.
+- Generated Worker types, TypeScript, all 93 tests in 11 files, dry-run packaging, and diff checks passed. Regression tests exercise the exact leaked-note case with a corrected research citation, unchanged good copy, immutable story/metadata fields, unknown/missing URLs, malformed output, provider failure, timeout, unresolved warnings, and accepted correction reaching the stored generation result. These are controlled model-response tests, not proof of live model judgment.
+- Pre-release rollback point: deployment `b246e2fa-18fb-40db-ab11-7867155e1bac`, version 42 `c77b2569-3130-4497-a194-6cfe2ac08765`. Read-only Wrangler checks report no pending D1 migrations. Production health and the morning's successful cron heartbeat remain healthy. No manual generation or republish is authorized for this release; live QA execution remains pending the next scheduled generation.
+
 ## 8 September 2026 — TLDR recruitment filtering
 
 - The morning edition admitted TLDR's own Product Manager job listing: the old promotional filter inspected only its headline, which lacked explicit job/ad labels, while ignoring the summary's "TLDR is hiring" and the `jobs.ashbyhq.com` destination.
