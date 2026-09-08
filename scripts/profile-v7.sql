@@ -1,5 +1,5 @@
 -- Owner-authorized September 2026 profile transition, not an automatic migration.
--- Run as one batch through Wrangler D1 execute --command; retains v6 for rollback.
+-- Run as one batch through Wrangler D1 execute --command=<sql>; retains v6 for rollback.
 -- Refuses to create v7 unless the active v6 has the expected three old weights.
 INSERT INTO profiles (id, version, profile_json, is_active)
 SELECT 'profile-v7-broader-discovery', 7,

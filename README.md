@@ -66,6 +66,8 @@ The issue header is the edition date, not a source date. Each signal retains its
 
 AI Signal ships with Profile v2 as its empty-database default; the active production profile can advance independently in D1. The reader shows seven stories by default and allows up to 14 qualified cards without padding.
 
+Production profile v7 retains v6's 14-story budget and other preferences, with coding craft at 3, new systems at 3, and research at 2. These are ranking weights, not category quotas. Read `/api/profile` for current truth; historical editions retain their own profile snapshot.
+
 `Personalise` stores sparse ranking overrides in the current browser only. Tuning links carry preferences in the URL fragment and remain previews until explicitly accepted. Synthesis stays shared while Hot Topics and All Signals can be re-ranked locally.
 
 `/admin` is absent from public navigation. `PUT /api/profile`, `POST /api/refresh`, and `GET /api/visits` require `ADMIN_TOKEN`. The token is used for one request and is never stored by the browser. The optional `POST /api/refresh?republish=1` replaces today's edition and is limited to one successful owner-initiated republish per Melbourne day; failed attempts release the claim.
