@@ -6,8 +6,11 @@ This is the curated engineering and production history for AI Signal. It records
 
 - The morning edition admitted TLDR's own Product Manager job listing: the old promotional filter inspected only its headline, which lacked explicit job/ad labels, while ignoring the summary's "TLDR is hiring" and the `jobs.ashbyhq.com` destination.
 - The existing TLDR parser now checks the headline, full parsed summary, and canonical destination before ranking. It excludes explicit recruitment calls, promotional labels, job/career subdomains and paths, and Greenhouse job boards. Recruitment text checks are targeted so ordinary reporting about jobs/hiring is retained. No model, source, schema, schedule, or publication-path change is required.
-- Generated types, TypeScript, all 81 tests in 10 files, dry-run packaging, and diff checks passed. Tests cover the exact listing, independent summary/destination exclusions, and legitimate hiring and platform news. Release verification is pending; today's stored edition is not being republished.
+- Generated types, TypeScript, all 81 tests in 10 files, dry-run packaging, and diff checks passed. Tests cover the exact listing, independent summary/destination exclusions, and legitimate hiring and platform news. A read-only local parser check of TLDR's actual 7 September HTML found the listing in the input, excluded it from the output, and retained 18 other candidates.
 - The 8 September production edition and source report confirm the preceding v3 conditional-window release ran successfully with a 72-hour window and five candidates. The promotional listing was within 48 hours; the wider window was not its cause.
+- Source commit `941edfc1d162bd8697ac598f79618aaabbe4d860` was pushed before strict deployment. Rollback point: deployment `c5cf12a7-becd-4d9a-892f-456d1e98810a`, version 41 `a232f103-23e2-4c32-b501-1238916d3679`. No migration was pending or applied.
+- Deployment `b246e2fa-18fb-40db-ab11-7867155e1bac` serves 100% through version 42 `c77b2569-3130-4497-a194-6cfe2ac08765`, created `2026-09-08T10:51:21.756663Z`, with verified tag `git-941edfc` and full SHA metadata. Health, status, latest-edition, profile and shadow endpoints returned HTTP 200. The schedule remains `15 22 * * *` UTC.
+- Today's edition `40e57691-f743-49b5-8139-f956cc0c2377` remains unchanged with five stories; the latest run remains the morning cron. No republish was triggered. Scheduled execution of the promotion fix remains pending 9 September at 08:15 Australia/Melbourne.
 
 ## 7 September 2026 — conditional three-day source window
 
