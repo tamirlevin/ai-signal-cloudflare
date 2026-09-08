@@ -50,7 +50,7 @@ function sources(value: unknown, path: string, permittedUrls?: Set<string>): Sou
 function storySource(value: unknown, path: string): StorySourceAttribution {
   const source = object(value, path);
   const id = text(source.id, `${path}.id`);
-  if (!new Set(["ainews", "tldr-ai", "alphasignal", "cloudflare-agents"]).has(id)) throw new ValidationError(`${path}.id is not a recognized source`);
+  if (!new Set(["ainews", "tldr-ai", "alphasignal", "ai-secret", "cloudflare-agents"]).has(id)) throw new ValidationError(`${path}.id is not a recognized source`);
   const layer = text(source.layer, `${path}.layer`);
   if (layer !== "editorial" && layer !== "primary") throw new ValidationError(`${path}.layer is invalid`);
   return { id: id as StorySourceAttribution["id"], name: text(source.name, `${path}.name`), layer };
@@ -58,14 +58,14 @@ function storySource(value: unknown, path: string): StorySourceAttribution {
 
 function storyCoverage(value: unknown, path: string): StoryCoverage {
   const coverage = object(value, path);
-  const permittedEditorialIds = new Set(["ainews", "tldr-ai", "alphasignal"]);
-  const editorialSourceIds = list(coverage.editorialSourceIds, `${path}.editorialSourceIds`, 0, 3).map((item, index) => {
+  const permittedEditorialIds = new Set(["ainews", "tldr-ai", "alphasignal", "ai-secret"]);
+  const editorialSourceIds = list(coverage.editorialSourceIds, `${path}.editorialSourceIds`, 0, 4).map((item, index) => {
     const id = text(item, `${path}.editorialSourceIds[${index}]`);
     if (!permittedEditorialIds.has(id)) throw new ValidationError(`${path}.editorialSourceIds[${index}] is not an editorial source`);
     return id as StoryCoverage["editorialSourceIds"][number];
   });
   if (new Set(editorialSourceIds).size !== editorialSourceIds.length) throw new ValidationError(`${path}.editorialSourceIds contains duplicates`);
-  const editorialSourceCount = integer(coverage.editorialSourceCount, `${path}.editorialSourceCount`, 0, 3);
+  const editorialSourceCount = integer(coverage.editorialSourceCount, `${path}.editorialSourceCount`, 0, 4);
   if (editorialSourceCount !== editorialSourceIds.length) throw new ValidationError(`${path}.editorialSourceCount does not match editorialSourceIds`);
   const primaryEvidenceCount = integer(coverage.primaryEvidenceCount, `${path}.primaryEvidenceCount`, 0, 6);
   const boost = integer(coverage.boost, `${path}.boost`, 0, 8);
@@ -88,7 +88,7 @@ function storyProvenance(value: unknown, path: string, permittedUrls?: Set<strin
   const reason = text(selection.reason, `${path}.selection.reason`);
   if (!new Set(["ainews-base", "cross-source", "strong-fit-supplemental", "single-source"]).has(reason)) throw new ValidationError(`${path}.selection.reason is invalid`);
   const lead = storySource(provenance.lead, `${path}.lead`);
-  const editorialCorroboration = list(provenance.editorialCorroboration, `${path}.editorialCorroboration`, 0, 3).map((raw, index) => {
+  const editorialCorroboration = list(provenance.editorialCorroboration, `${path}.editorialCorroboration`, 0, 4).map((raw, index) => {
     const source = storySource(raw, `${path}.editorialCorroboration[${index}]`);
     if (source.layer !== "editorial") throw new ValidationError(`${path}.editorialCorroboration[${index}] must be editorial`);
     return source;

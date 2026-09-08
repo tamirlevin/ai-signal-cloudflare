@@ -10,9 +10,11 @@
     "test:watch": "vitest",
     "types": "wrangler types ./worker-configuration.d.ts",
     "check": "npm run types && npm run typecheck && npm test",
-    "dry-run": "wrangler deploy --dry-run"
+    "dry-run": "wrangler deploy --dry-run",
+    "replay:ai-secret": "esbuild scripts/replay-ai-secret.ts --bundle --platform=node --format=esm --outfile=.wrangler/replay-ai-secret.mjs && node .wrangler/replay-ai-secret.mjs"
   },
   "devDependencies": {
+    "@types/node": "^26.5.0",
     "typescript": "^5.9.3",
     "vitest": "^4.0.0",
     "wrangler": "^4.121.0"

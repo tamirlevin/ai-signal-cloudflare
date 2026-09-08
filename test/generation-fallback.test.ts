@@ -137,7 +137,7 @@ describe("generation model fallback", () => {
       expect(modelInputs[1]).not.toHaveProperty("reasoning_effort");
       expect(modelInputs[2]).toHaveProperty("max_tokens", 3200);
       expect(JSON.stringify(modelInputs[2])).toContain("ai_signal_editorial_review");
-      expect(fetcher).toHaveBeenCalledTimes(5);
+      expect(fetcher).toHaveBeenCalledTimes(6);
       const successfulRun = runStatements.find((statement) => statement.sql.startsWith("INSERT INTO runs"));
       expect(successfulRun?.values[4]).toBe("success");
       expect(successfulRun?.values[5]).toBe("@cf/meta/llama-3.3-70b-instruct-fp8-fast");

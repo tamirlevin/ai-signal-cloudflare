@@ -2,6 +2,15 @@
 
 This is the curated engineering and production history for AI Signal. It records consequential decisions, incidents, verified runtime evidence, unresolved uncertainty, and architectural constraints. It is not a release changelog, commit log, or session transcript.
 
+## 9 September 2026 — AI Secret and modest profile broadening
+
+- The owner approved AI Secret as another equal discovery source, using its full-content Daily Rundown RSS rather than a crawler. Source pack v4 admits only recognized factual paragraphs and quick-news list items with non-social evidence links; sponsor/recruitment blocks and unrecognized essays are excluded. One feed request is bounded to 2 MB, six recent editions and 24 accepted items per edition. A failed or quiet source remains non-blocking. Existing 36/48/72-hour rules, deduplication, capped corroboration, 18-candidate/14-card limits, and no padding remain unchanged.
+- The ten-snapshot AI Secret-only replay (31 August–9 September at 08:15 AEST) selected 20 distinct URLs under production profile v6 versus 35 with coding craft 4→3, new systems 2→3, and research 1→2. All four baseline coding stories remained selected; these are weights, not category quotas. Fifteen additions broadened applications, forecasting, science, voice, creative tools, and systems. Removing generic-word penalties added only two more items, so those penalties remain unchanged. Other v6 settings are preserved; the empty-database v2 default is not rewritten.
+- Replay input contained 15 feed items, SHA-256 `2b374f4d231a73f09c36bad9d57cf7c15e3eccd2bb860329e9dec06a9ccf6270`. Each snapshot uses only its eligible window, including possible pre-31-August carry-in. This is source/profile sensitivity evidence, not a historical multi-source reconstruction, semantic novelty estimate, or fact check. The repository's read-only replay script records current inputs but does not archive them.
+- A current all-source rehearsal at `2026-09-08T23:15:58.666Z` found 10 eligible candidates under v6 versus 15 under the proposed weights, publishing-sized to 14; both used 48 hours. AInews returned 402 while TLDR, AlphaSignal, AI Secret, and Cloudflare completed. AI Secret supplied 25 parsed candidates in one request. No model generation or production write occurred in these comparisons.
+- Owner authorized deployment and the agreed profile changes, leaving today's edition intact. Rollback point: deployment `da2d9f78-197e-4b47-8138-4c2ca53ca9eb`, version 43 `b05461db-6411-48f0-b162-7f5f8c54f189`; profile v6 remains the profile rollback baseline. No migration is required. First scheduled production collection and editorial QA remain pending the 10 September 08:15 Melbourne run.
+- Release checks passed generated types, TypeScript (including the replay tool), 102 tests in 12 files, dry-run packaging, and diff validation. A local SQLite check verified `scripts/profile-v7.sql` retains the prior row and changes only the version and three agreed weights. This owner-only, guarded batch is separate from automatic migrations and uses existing Wrangler authorization when the application token is unavailable. The package audit reports five existing development-tool advisories (Vitest/mocker and Wrangler/Miniflare/sharp), zero production dependency advisories; unrelated toolchain updates are deferred.
+
 ## 9 September 2026 — lightweight editorial QA
 
 - The morning cron succeeded and published six stories, but one synthesis heading exposed an internal note: "source URL for candidate 1 not provided in allowed list; cannot include". Candidate 1's research URL was present in the inventory; the displayed section citation linked to the separate Deckard story. Structural/source-membership validation did not catch this editorial inconsistency.
@@ -155,7 +164,7 @@ The follow-on shadow run was healthy in 1,557 ms using `core-ai` v1. TLDR AI, Al
 - The deterministic collector, not the model, materialises the story inventory.
 - The model cannot introduce stories or source URLs.
 - Editorial corroboration is never described as proof.
-- AInews, TLDR AI, and AlphaSignal enter one equal editorial pool; no source receives seniority.
+- AInews, TLDR AI, AlphaSignal, and AI Secret enter one equal editorial pool; no source receives seniority.
 - One failed or quiet source does not block a usable pool from the others.
 - Prefer the first 36 hours; use 48 hours normally and expand once to 72 hours only when fewer than 10 qualified, deduplicated candidates remain. Never admit older material or weaken evidence/relevance rules to fill a target.
 - X/Twitter is background noise and cannot become a published card or corroborating source.

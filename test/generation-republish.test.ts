@@ -166,7 +166,7 @@ describe("generation republish behavior", () => {
       expect(forcedCalls).toEqual(["@cf/openai/gpt-oss-120b", "@cf/meta/llama-3.3-70b-instruct-fp8-fast"]);
       expect(forcedStatements.some((statement) => statement.sql.startsWith("UPDATE editions SET"))).toBe(true);
       expect(forcedStatements.some((statement) => statement.sql.startsWith("UPDATE manual_republish_days"))).toBe(true);
-      expect(fetcher).toHaveBeenCalledTimes(5);
+      expect(fetcher).toHaveBeenCalledTimes(6);
 
       const limitedCalls: string[] = [];
       const limitedStatements: RecordedStatement[] = [];

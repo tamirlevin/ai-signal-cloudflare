@@ -23,7 +23,7 @@ type Fetcher = typeof fetch;
 export type SourceResult = { candidates: SupplementalCandidate[]; health: SupplementalSourceHealth; issue?: RssIssue };
 type SourceDefinition = SourcePackSource;
 
-const AGGREGATOR_HOSTS = new Set(["alphasignal.ai", "news.smol.ai", "tldr.tech", "www.alphasignal.ai", "www.tldr.tech"]);
+const AGGREGATOR_HOSTS = new Set(["alphasignal.ai", "news.smol.ai", "tldr.tech", "aisecret.us", "www.alphasignal.ai", "www.tldr.tech", "www.aisecret.us"]);
 const NON_EVIDENCE_HOSTS = new Set(["calendly.com", "forms.gle", "tally.so", "typeform.com", "www.googletagmanager.com"]);
 const STOP_WORDS = new Set(["a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in", "is", "it", "of", "on", "or", "the", "to", "with"]);
 const MAX_FEED_BYTES = 2_000_000;
@@ -38,7 +38,7 @@ const CLOUDFLARE_PRIMARY_HOSTS = new Set(["blog.cloudflare.com"]);
 const SOCIAL_HOSTS = new Set(["x.com", "twitter.com", "www.x.com", "www.twitter.com"]);
 
 function aggregatorHost(host: string): boolean {
-  return AGGREGATOR_HOSTS.has(host) || host.endsWith(".alphasignal.ai") || host.endsWith(".tldr.tech") || host.endsWith(".news.smol.ai");
+  return AGGREGATOR_HOSTS.has(host) || host.endsWith(".alphasignal.ai") || host.endsWith(".tldr.tech") || host.endsWith(".news.smol.ai") || host.endsWith(".aisecret.us");
 }
 
 function socialHost(host: string): boolean {
@@ -97,9 +97,26 @@ async function boundedText(fetcher: Fetcher, url: string, maxBytes: number, acce
   if (!response.ok) throw new Error(`${new URL(url).hostname} returned ${response.status}`);
   const length = Number(response.headers.get("content-length") ?? "0");
   if (Number.isFinite(length) && length > maxBytes) throw new Error(`${new URL(url).hostname} response is too large`);
-  const text = await response.text();
-  if (text.length > maxBytes) throw new Error(`${new URL(url).hostname} response is too large`);
-  return text;
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let size = 0;
+  let text = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > maxBytes) {
+        await reader.cancel();
+        throw new Error(`${new URL(url).hostname} response is too large`);
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+    return text + decoder.decode();
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 function attribution(source: SourceDefinition, sourceUrl: string, kind: SupplementalAttribution["kind"] = source.kind): SupplementalAttribution {
@@ -165,6 +182,56 @@ export function parseTldrIssue(html: string, issue: { url: string; publishedAt: 
       publishedAt: issue.publishedAt,
       sourceAttributions: [attribution(source, issue.url)]
     }, profile));
+  }
+  return candidates;
+}
+
+/** Parse only recognized news sections, never sponsor blocks, images, or the footer. */
+export function parseAiSecretFeed(xml: string, now: Date, profile: Profile, source = sourceDefinition(profile, "ai-secret")): SupplementalCandidate[] {
+  if (!source) return [];
+  const cutoff = now.getTime() - (source.lookbackHours ?? 72) * 3_600_000;
+  const candidates: SupplementalCandidate[] = [];
+  const items = blocks(xml, "item").map((item) => ({
+    url: canonicalizeSupplementalUrl(plainText(tag(item, "link"))),
+    publishedAt: isoDate(tag(item, "pubDate")),
+    html: tag(item, "content:encoded")
+  })).filter((item) => item.url && new URL(item.url).hostname === "aisecret.us" && item.publishedAt
+    && Date.parse(item.publishedAt) >= cutoff && Date.parse(item.publishedAt) <= now.getTime())
+    .sort((left, right) => right.publishedAt!.localeCompare(left.publishedAt!)).slice(0, 6);
+  for (const issue of items) {
+    let accepted = 0;
+    const add = (html: string, summary: string) => {
+      if (accepted >= 24 || !summary) return;
+      // Link choice stays inside the factual paragraph/list item. Commentary and
+      // decorative image links cannot supply a replacement for missing evidence.
+      const url = [...html.matchAll(/<a\b[^>]*\bhref\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)]
+        .filter((match) => plainText(match[2] ?? ""))
+        .map((match) => canonicalizeSupplementalUrl(match[1] ?? "", issue.url))
+        .find((value) => {
+          if (!value) return false;
+          const parsed = new URL(value);
+          return !aggregatorHost(parsed.hostname) && !socialHost(parsed.hostname)
+            && !NON_EVIDENCE_HOSTS.has(parsed.hostname.replace(/^www\./, ""))
+            && !/\.(?:avif|gif|jpe?g|png|svg|webp)$/i.test(parsed.pathname);
+        });
+      if (!url || promotionalTldrStory("", summary, url)) return;
+      // Use the report's factual opening, not its often sensational section heading.
+      const sentence = summary.split(/(?<=[.!?])\s+(?=[A-Z])/)[0] ?? summary;
+      const title = sentence.length <= 180 ? sentence.replace(/[.!?]$/, "") : `${sentence.slice(0, 177).replace(/\s+\S*$/, "")}…`;
+      candidates.push(prepareCandidate({ title, summary: summary.slice(0, 600), url, publishedAt: issue.publishedAt!, sourceAttributions: [attribution(source, issue.url!)] }, profile));
+      accepted += 1;
+    };
+    for (const section of issue.html.split(/<hr\b[^>]*>/i)) {
+      const text = plainText(section);
+      if (/^(?:TOGETHER WITH|SPONSORED|ADVERTISEMENT|READ MORE)\b/i.test(text)) continue;
+      if (/^DAILY TL;DR\b/i.test(text)) {
+        for (const item of blocks(section, "li")) add(item, plainText(item));
+        continue;
+      }
+      // Essays or changed layouts without the known factual marker fail closed.
+      const paragraph = blocks(section, "p").find((value) => /^(?:👀\s*)?What's happening:/i.test(plainText(value)));
+      if (paragraph) add(paragraph, plainText(paragraph).replace(/^(?:👀\s*)?What's happening:\s*/i, ""));
+    }
   }
   return candidates;
 }
@@ -358,6 +425,27 @@ async function collectCloudflare(profile: Profile, now: Date, fetcher: Fetcher, 
   }
 }
 
+async function collectAiSecret(profile: Profile, now: Date, fetcher: Fetcher, source: SourceDefinition): Promise<SourceResult> {
+  const health = sourceHealth(source);
+  try {
+    health.requests = 1;
+    const feed = await boundedText(fetcher, source.url, MAX_FEED_BYTES, "application/rss+xml, application/xml;q=0.9");
+    if (!/<rss\b/i.test(feed)) throw new Error("AI Secret returned no RSS feed");
+    health.fetchedItems = blocks(feed, "item").length;
+    const candidates = parseAiSecretFeed(feed, now, profile, source);
+    health.acceptedCandidates = candidates.length;
+    if (!candidates.length) {
+      health.status = "degraded";
+      health.errors.push("No recognized, source-linked AI Secret news in the collection window; feed may be quiet or layout changed");
+    }
+    return { candidates, health };
+  } catch (error) {
+    health.status = "failed";
+    health.errors.push(error instanceof Error ? error.message : String(error));
+    return { candidates: [], health };
+  }
+}
+
 export async function collectSupplementalSources(input: { profile: Profile; now?: Date; fetcher?: Fetcher; rssUrl?: string }): Promise<SourceResult[]> {
   const now = input.now ?? new Date();
   const fetcher = input.fetcher ?? fetch;
@@ -367,6 +455,7 @@ export async function collectSupplementalSources(input: { profile: Profile; now?
       case "ainews": return collectAiNews(input.profile, fetcher, source);
       case "tldr-ai": return collectTldr(input.profile, fetcher, source);
       case "alphasignal": return collectAlpha(input.profile, now, fetcher, source);
+      case "ai-secret": return collectAiSecret(input.profile, now, fetcher, source);
       case "cloudflare-agents": return collectCloudflare(input.profile, now, fetcher, source);
     }
   }));
