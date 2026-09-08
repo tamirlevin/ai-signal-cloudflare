@@ -2,6 +2,13 @@
 
 This is the curated engineering and production history for AI Signal. It records consequential decisions, incidents, verified runtime evidence, unresolved uncertainty, and architectural constraints. It is not a release changelog, commit log, or session transcript.
 
+## 8 September 2026 — TLDR recruitment filtering
+
+- The morning edition admitted TLDR's own Product Manager job listing: the old promotional filter inspected only its headline, which lacked explicit job/ad labels, while ignoring the summary's "TLDR is hiring" and the `jobs.ashbyhq.com` destination.
+- The existing TLDR parser now checks the headline, full parsed summary, and canonical destination before ranking. It excludes explicit recruitment calls, promotional labels, job/career subdomains and paths, and Greenhouse job boards. Recruitment text checks are targeted so ordinary reporting about jobs/hiring is retained. No model, source, schema, schedule, or publication-path change is required.
+- Generated types, TypeScript, all 81 tests in 10 files, dry-run packaging, and diff checks passed. Tests cover the exact listing, independent summary/destination exclusions, and legitimate hiring and platform news. Release verification is pending; today's stored edition is not being republished.
+- The 8 September production edition and source report confirm the preceding v3 conditional-window release ran successfully with a 72-hour window and five candidates. The promotional listing was within 48 hours; the wider window was not its cause.
+
 ## 7 September 2026 — conditional three-day source window
 
 - The owner approved one bounded freshness fallback: qualify and deduplicate the normal 48-hour pool first; if fewer than 10 candidates qualify for any reason, expand once to 72 hours. Preserve the 36-hour preference, zero freshness boost beyond 48 hours, equal-source ranking, evidence/relevance checks, no padding, and the existing 18-candidate/14-card caps. Ten is an expansion threshold, not a guaranteed minimum.

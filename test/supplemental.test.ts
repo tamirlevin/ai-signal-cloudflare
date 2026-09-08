@@ -75,6 +75,29 @@ describe("source packs", () => {
 });
 
 describe("source parsing", () => {
+  it.each([
+    ["Product Manager, Applied AI at TLDR ($200k base + $60k bonus, Fully Remote)", "TLDR is hiring its first PM to help build the agent-first operating layer used across the company.", "https://jobs.ashbyhq.com/tldr.tech/897f4391-66ab-44ca-a8eb-65dd9809200d"],
+    ["Build practical AI products", "A new opportunity.", "https://jobs.ashbyhq.com/team/role?utm_source=tldr"],
+    ["Build practical AI products", "We're hiring an engineer. Join our team.", "https://example.com/opportunity"],
+    ["Build practical AI products", "TLDR is hiring its first PM.", "https://example.com/opportunity"],
+    ["New agent platform", "Sponsored: Try this platform today.", "https://example.com/platform"],
+    ["Engineer", "A new opportunity.", "https://boards.greenhouse.io/team/role"],
+    ["Engineer", "A new opportunity.", "https://example.com/careers/engineer"]
+  ])("excludes TLDR promotion: %s (%s)", (title, summary, url) => {
+    const html = `<article><a href="${url}"><h3>${title}</h3></a><div class="newsletter-html">${summary}</div></article>`;
+    expect(parseTldrIssue(html, { url: "https://tldr.tech/ai/2026-09-07", publishedAt: now.toISOString() }, DEFAULT_PROFILE)).toEqual([]);
+  });
+
+  it.each([
+    ["AI changes software jobs", "Research examines how hiring patterns are changing.", "https://example.com/news/jobs"],
+    ["OpenAI is hiring more researchers", "The company is expanding its research team.", "https://example.com/news/hiring"],
+    ["Agents automate batch jobs", "A platform adds new background execution tools.", "https://example.com/platform"],
+    ["Ashby adds AI integrations", "The recruiting platform launches new connectors.", "https://www.ashbyhq.com/blog/ai-integrations"]
+  ])("retains editorial news: %s", (title, summary, url) => {
+    const html = `<article><a href="${url}"><h3>${title}</h3></a><div class="newsletter-html">${summary}</div></article>`;
+    expect(parseTldrIssue(html, { url: "https://tldr.tech/ai/2026-09-07", publishedAt: now.toISOString() }, DEFAULT_PROFILE)).toHaveLength(1);
+  });
+
   it("canonicalizes HTTPS URLs without tracking parameters", () => {
     expect(canonicalizeSupplementalUrl("https://EXAMPLE.com/story/?utm_source=x&keep=yes#part")).toBe("https://example.com/story?keep=yes");
     expect(canonicalizeSupplementalUrl("http://example.com/story")).toBeUndefined();

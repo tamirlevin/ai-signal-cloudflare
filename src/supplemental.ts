@@ -132,8 +132,17 @@ export function parseTldrFeed(xml: string): Array<{ title: string; url: string; 
   })).filter((item) => item.title && item.url && item.publishedAt);
 }
 
-function promotionalTldrStory(title: string): boolean {
-  return /\b(?:sponsor|sponsored|advertisement)\b/i.test(title) || /\b(?:hiring|job|jobs)\b/i.test(title) || /^⚡/.test(title);
+function promotionalTldrStory(title: string, summary: string, url: string): boolean {
+  const destination = new URL(url); // Already canonicalized to an absolute HTTPS URL.
+  const recruitingDestination = /^(?:jobs|careers)\./i.test(destination.hostname)
+    || /^(?:boards|job-boards)\.greenhouse\.io$/i.test(destination.hostname)
+    || /^\/(?:jobs|careers)(?:\/|$)/i.test(destination.pathname);
+  const promotionalTitle = /\b(?:sponsor|sponsored|advertisement)\b/i.test(title)
+    || /^(?:we(?:'re| are) hiring|hiring\s*:|jobs?\s*:|career opportunity\b|⚡)/i.test(title);
+  // Match recruitment calls and ad labels, not editorial discussion of hiring or jobs.
+  const promotionalSummary = /\b(?:we(?:'re| are)|TLDR is)\s+(?:hiring|looking for)\b|\b(?:apply now|apply for this role|join our team)\b/i.test(summary)
+    || /^(?:sponsored\b|advertisement\b)|\((?:sponsored|advertisement)\)/i.test(summary);
+  return recruitingDestination || promotionalTitle || promotionalSummary;
 }
 
 export function parseTldrIssue(html: string, issue: { url: string; publishedAt: string }, profile: Profile, source = sourceDefinition(profile, "tldr-ai")): SupplementalCandidate[] {
@@ -142,12 +151,13 @@ export function parseTldrIssue(html: string, issue: { url: string; publishedAt: 
   for (const article of blocks(html, "article")) {
     const rawTitle = plainText(tag(article, "h3"));
     const title = rawTitle.replace(/\s*\(\d+\s+minute read\)\s*$/i, "").trim();
-    if (!title || promotionalTldrStory(rawTitle)) continue;
+    if (!title) continue;
     const anchor = article.match(/<a\b[^>]*\bhref\s*=\s*["']([^"']+)["'][^>]*>[\s\S]*?<h3\b/i) ?? article.match(/<a\b[^>]*\bhref\s*=\s*["']([^"']+)["']/i);
     const url = canonicalizeSupplementalUrl(anchor?.[1] ?? "", issue.url);
     if (!url) continue;
     const summaryBlock = article.match(/<[^>]+class=["'][^"']*newsletter-html[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/i)?.[1] ?? "";
     const summary = plainText(summaryBlock) || title;
+    if (promotionalTldrStory(rawTitle, summary, url)) continue;
     candidates.push(prepareCandidate({
       title,
       summary: summary.slice(0, 600),

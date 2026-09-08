@@ -31,7 +31,7 @@ The code-defined `core-ai` source pack v3 checks:
 
 The collector then:
 
-1. Parses each source independently. One failed or quiet feed does not block usable candidates from another.
+1. Parses each source independently. One failed or quiet feed does not block usable candidates from another. TLDR recruitment/promotional entries are excluded using headline labels, summary calls to action, and recruitment destinations before ranking; editorial discussion of jobs or hiring remains eligible.
 2. Qualifies and deduplicates the normal 48-hour pool. If fewer than 10 candidates qualify, expands once to 72 hours using the same collected inputs and eligibility rules. Items inside 36 hours receive a small freshness preference, tapering to zero at 48 hours; older fallback items receive no freshness boost. Nothing older than 72 hours is eligible.
 3. Requires a usable non-social HTTPS evidence URL. X/Twitter is not collected as a source, cannot become a published card, and does not count as corroboration.
 4. Merges duplicate URLs, fuzzy-title matches, and product-version matches into one cluster.
