@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { CandidateStory, Edition } from "../src/contracts";
 import { DEFAULT_PROFILE } from "../src/contracts";
-import { anchorsToMarkdown, parseLatestRss } from "../src/rss";
+import { anchorsToMarkdown, fetchLatestRss, parseLatestRss } from "../src/rss";
 import { validateEdition, validatePresentationDiversity, validateSynthesisDiversity, ValidationError } from "../src/validation";
 import { compactIssueForModel, compactIssueInventory, deterministicEditorialEdition, editorialMessages, extractGeneratedEdition, generationInput, isPermissionDesignSignal, issueFromCandidateInventory, materializeCandidateStories } from "../src/editorial";
 import { normalizeEditionStories } from "../src/story-normalization";
@@ -163,6 +163,10 @@ describe("editorial contracts", () => {
   it("reads only the first RSS item", () => {
     const rss = `<?xml version="1.0"?><rss><channel><item><link>https://news.smol.ai/issues/first</link><pubDate>Wed, 12 Aug 2026 00:00:00 +0000</pubDate><content:encoded><![CDATA[<a href="https://example.com/a">A</a>]]></content:encoded></item><item><link>https://news.smol.ai/issues/second</link></item></channel></rss>`;
     expect(parseLatestRss(rss).url).toBe("https://news.smol.ai/issues/first");
+  });
+  it("enforces the AInews RSS limit while streaming bytes", async () => {
+    const fetcher = (async () => new Response("é".repeat(4_000_001))) as typeof fetch;
+    await expect(fetchLatestRss("https://news.smol.ai/rss.xml", fetcher)).rejects.toThrow("read: RSS response is too large");
   });
   it("reads OpenAI-style Workers AI choice content", () => {
     const value = edition();

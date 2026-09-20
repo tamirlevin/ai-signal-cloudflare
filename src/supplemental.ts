@@ -10,6 +10,7 @@ import type {
   StorySourceAttribution,
   SupplementalAttribution,
   SupplementalCandidate,
+  SupplementalCandidateFunnel,
   SupplementalShadowReport,
   SupplementalSourceHealth,
   SupplementalSourceId
@@ -46,7 +47,21 @@ function socialHost(host: string): boolean {
 }
 
 function sourceHealth(source: SourceDefinition): SupplementalSourceHealth {
-  return { id: source.id, name: source.name, status: "healthy", requests: 0, fetchedItems: 0, acceptedCandidates: 0, errors: [] };
+  return { id: source.id, name: source.name, status: "healthy", yieldStatus: "unknown", requests: 0, fetchedItems: 0, acceptedCandidates: 0, errors: [] };
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function stagedError(stage: string, error: unknown): string {
+  const message = errorMessage(error);
+  return /^(?:fetch|read|parse|feed|sitemap|issue|yield|enrich:[^:]+):\s/i.test(message) ? message : `${stage}: ${message}`;
+}
+
+function recordYield(health: SupplementalSourceHealth, candidates: number): void {
+  health.acceptedCandidates = candidates;
+  health.yieldStatus = candidates ? "active" : "quiet";
 }
 
 function decodeEntities(value: string): string {
@@ -247,11 +262,14 @@ function titleFromAlphaUrl(value: string): string {
 
 export function parseAlphaSitemap(xml: string, now: Date, lookbackHours = ALPHA_LOOKBACK_HOURS): Array<{ title: string; url: string; publishedAt: string }> {
   const cutoff = now.getTime() - lookbackHours * 60 * 60 * 1000;
-  const available = blocks(xml, "url").map((entry) => ({
-    title: titleFromAlphaUrl(plainText(tag(entry, "loc"))),
-    url: canonicalizeSupplementalUrl(plainText(tag(entry, "loc"))) ?? "",
-    publishedAt: isoDate(tag(entry, "lastmod")) ?? ""
-  })).filter((item) => item.title && item.url && item.publishedAt).sort((left, right) => right.publishedAt.localeCompare(left.publishedAt));
+  const available = blocks(xml, "url").map((entry) => {
+    const url = canonicalizeSupplementalUrl(plainText(tag(entry, "loc"))) ?? "";
+    return {
+      title: plainText(tag(entry, "news:title")) || titleFromAlphaUrl(url),
+      url,
+      publishedAt: isoDate(tag(entry, "news:publication_date")) ?? isoDate(tag(entry, "lastmod")) ?? ""
+    };
+  }).filter((item) => item.title && item.url && item.publishedAt).sort((left, right) => right.publishedAt.localeCompare(left.publishedAt));
   const recent = available.filter((item) => new Date(item.publishedAt).getTime() >= cutoff);
   // AlphaSignal is a low-frequency editorial source rather than a daily RSS issue.
   // Keep the newest available item when the source is quiet so the blend does not
@@ -309,9 +327,11 @@ export function parseCloudflareFeed(xml: string, now: Date, profile: Profile, so
 
 async function collectAiNews(profile: Profile, fetcher: Fetcher, source: SourceDefinition): Promise<SourceResult> {
   const health = sourceHealth(source);
+  let stage = "feed";
   try {
     health.requests += 1;
     const issue = await fetchLatestRss(source.url, fetcher);
+    stage = "parse";
     const inventory = compactIssueInventory(issue, profile);
     health.fetchedItems = inventory.candidates.length;
     const candidates = inventory.candidates.flatMap((candidate): SupplementalCandidate[] => {
@@ -332,53 +352,68 @@ async function collectAiNews(profile: Profile, fetcher: Fetcher, source: SourceD
         sourceAttributions: [attribution(source, issue.url)]
       }];
     });
-    health.acceptedCandidates = candidates.length;
+    recordYield(health, candidates.length);
     if (!candidates.length) {
       health.status = "degraded";
-      health.errors.push("AInews supplied no non-social publishable candidates");
+      health.errors.push("yield: AInews supplied no non-social publishable candidates");
     }
     return { candidates, health, issue };
   } catch (error) {
     health.status = "failed";
-    health.errors.push(error instanceof Error ? error.message : String(error));
+    health.errors.push(stagedError(stage, error));
     return { candidates: [], health };
   }
 }
 
 async function collectTldr(profile: Profile, fetcher: Fetcher, source: SourceDefinition): Promise<SourceResult> {
   const health = sourceHealth(source);
+  let stage = "feed";
   try {
     health.requests += 1;
     const feed = await boundedText(fetcher, source.url, MAX_FEED_BYTES, "application/rss+xml, application/xml;q=0.9");
+    stage = "parse";
     const issue = parseTldrFeed(feed)[0];
     health.fetchedItems = issue ? 1 : 0;
     if (!issue) throw new Error("TLDR feed contains no current issue");
+    stage = "issue";
     health.requests += 1;
     const html = await boundedText(fetcher, issue.url, MAX_PAGE_BYTES, "text/html");
+    stage = "parse";
     const candidates = parseTldrIssue(html, issue, profile, source);
-    health.acceptedCandidates = candidates.length;
-    if (!candidates.length) health.status = "failed";
+    recordYield(health, candidates.length);
+    if (!candidates.length) {
+      health.status = "degraded";
+      health.errors.push("yield: TLDR issue contained no recognized non-promotional candidates");
+    }
     return { candidates, health };
   } catch (error) {
     health.status = "failed";
-    health.errors.push(error instanceof Error ? error.message : String(error));
+    health.errors.push(stagedError(stage, error));
     return { candidates: [], health };
   }
 }
 
 async function collectAlpha(profile: Profile, now: Date, fetcher: Fetcher, source: SourceDefinition): Promise<SourceResult> {
   const health = sourceHealth(source);
+  let stage = "sitemap";
   try {
     health.requests += 1;
     const sitemap = await boundedText(fetcher, source.url, MAX_FEED_BYTES, "application/xml, text/xml;q=0.9");
+    stage = "parse";
     const lookbackHours = source.lookbackHours ?? ALPHA_LOOKBACK_HOURS;
     const recent = parseAlphaSitemap(sitemap, now, lookbackHours);
     health.fetchedItems = recent.length;
+    if (!recent.length) {
+      recordYield(health, 0);
+      health.status = "degraded";
+      health.errors.push("parse: AlphaSignal sitemap contained no recognized dated news entries");
+      return { candidates: [], health };
+    }
     const freshnessCutoff = now.getTime() - lookbackHours * 60 * 60 * 1000;
     const newest = recent[0];
     if (newest && new Date(newest.publishedAt).getTime() < freshnessCutoff) {
       health.status = "degraded";
-      health.errors.push(`no ${source.name} item in the preceding ${lookbackHours} hours; using the newest available item`);
+      health.errors.push(`yield: no ${source.name} item in the preceding ${lookbackHours} hours; using the newest available item`);
     }
     const normalCutoff = now.getTime() - MAX_FRESHNESS_HOURS * 3_600_000;
     const prioritized = recent.map((item) => ({ ...item, score: scoreCandidateForProfile(item.title, profile) }))
@@ -395,53 +430,56 @@ async function collectAlpha(profile: Profile, now: Date, fetcher: Fetcher, sourc
         return prepareCandidate({ title: article.title, summary: article.summary.slice(0, 600), url: article.preferredUrl, publishedAt: item.publishedAt, sourceAttributions: [attribution(source, item.url)] }, profile);
       } catch (error) {
         health.status = "degraded";
-        health.errors.push(error instanceof Error ? error.message : String(error));
+        health.errors.push(stagedError(`enrich:${new URL(item.url).hostname}`, error));
         return prepareCandidate({ title: item.title, summary: item.title, url: item.url, publishedAt: item.publishedAt, sourceAttributions: [attribution(source, item.url)] }, profile);
       }
     }));
-    health.acceptedCandidates = enriched.length;
-    if (!enriched.length) health.status = "failed";
+    recordYield(health, enriched.length);
     return { candidates: enriched, health };
   } catch (error) {
     health.status = "failed";
-    health.errors.push(error instanceof Error ? error.message : String(error));
+    health.errors.push(stagedError(stage, error));
     return { candidates: [], health };
   }
 }
 
 async function collectCloudflare(profile: Profile, now: Date, fetcher: Fetcher, source: SourceDefinition): Promise<SourceResult> {
   const health = sourceHealth(source);
+  let stage = "feed";
   try {
     health.requests += 1;
     const feed = await boundedText(fetcher, source.url, MAX_FEED_BYTES, "application/rss+xml, application/xml;q=0.9");
+    stage = "parse";
     const candidates = parseCloudflareFeed(feed, now, profile, source);
     health.fetchedItems = blocks(feed, "item").length;
-    health.acceptedCandidates = candidates.length;
+    recordYield(health, candidates.length);
     return { candidates, health };
   } catch (error) {
     health.status = "failed";
-    health.errors.push(error instanceof Error ? error.message : String(error));
+    health.errors.push(stagedError(stage, error));
     return { candidates: [], health };
   }
 }
 
 async function collectAiSecret(profile: Profile, now: Date, fetcher: Fetcher, source: SourceDefinition): Promise<SourceResult> {
   const health = sourceHealth(source);
+  let stage = "feed";
   try {
     health.requests = 1;
     const feed = await boundedText(fetcher, source.url, MAX_FEED_BYTES, "application/rss+xml, application/xml;q=0.9");
+    stage = "parse";
     if (!/<rss\b/i.test(feed)) throw new Error("AI Secret returned no RSS feed");
     health.fetchedItems = blocks(feed, "item").length;
     const candidates = parseAiSecretFeed(feed, now, profile, source);
-    health.acceptedCandidates = candidates.length;
+    recordYield(health, candidates.length);
     if (!candidates.length) {
       health.status = "degraded";
-      health.errors.push("No recognized, source-linked AI Secret news in the collection window; feed may be quiet or layout changed");
+      health.errors.push("yield: no recognized, source-linked AI Secret news in the collection window; feed may be quiet or layout changed");
     }
     return { candidates, health };
   } catch (error) {
     health.status = "failed";
-    health.errors.push(error instanceof Error ? error.message : String(error));
+    health.errors.push(stagedError(stage, error));
     return { candidates: [], health };
   }
 }
@@ -637,14 +675,19 @@ function qualifiesForDailyPool(candidate: SupplementalCandidate, profile: Profil
   return strongProfileFit(candidate, profile) || editorialCount > 1 || (primary && categoryWeight(candidate, profile) >= 2);
 }
 
-function dailyCandidate(candidate: SupplementalCandidate, profile: Profile, id: number, now: Date): CandidateStory | undefined {
+type DailyCandidateResult =
+  | { story: CandidateStory; filtered?: undefined }
+  | { story?: undefined; filtered: "noUsableEvidence" | "weakProfileFit" };
+
+function dailyCandidateResult(candidate: SupplementalCandidate, profile: Profile, id: number, now: Date): DailyCandidateResult {
   const evidence = supplementalEvidence(candidate);
-  if (!evidence || !qualifiesForDailyPool(candidate, profile)) return undefined;
+  if (!evidence) return { filtered: "noUsableEvidence" };
+  if (!qualifiesForDailyPool(candidate, profile)) return { filtered: "weakProfileFit" };
   const references = sourceReferences(candidate);
   const lead = references.find((source) => source.id === candidate.leadSourceId)
     ?? references.find((source) => source.layer === "editorial")
     ?? references.find((source) => source.layer === "primary");
-  if (!lead) return undefined;
+  if (!lead) return { filtered: "noUsableEvidence" };
   const editorialCorroboration = references.filter((source) => source.layer === "editorial" && source.id !== lead.id);
   const coverage = coverageMetadata(lead, editorialCorroboration, [evidence]);
   const provenance: StoryProvenance = {
@@ -658,7 +701,7 @@ function dailyCandidate(candidate: SupplementalCandidate, profile: Profile, id: 
       reason: coverage.editorialSourceCount > 1 ? "cross-source" : "single-source"
     }
   };
-  return {
+  return { story: {
     id,
     title: candidate.title,
     summary: candidate.summary,
@@ -672,7 +715,7 @@ function dailyCandidate(candidate: SupplementalCandidate, profile: Profile, id: 
     publishedAt: candidate.publishedAt,
     provenance,
     modelText: candidate.summary
-  };
+  } };
 }
 
 function gentlyDiversify(stories: CandidateStory[]): CandidateStory[] {
@@ -696,8 +739,19 @@ export type DailyCandidateInventory = {
   candidates: CandidateStory[];
   eligibleCandidates: number;
   expiredCandidates: number;
+  sourceFunnels: Partial<Record<SupplementalSourceId, SupplementalCandidateFunnel>>;
   collection: DailyCollection;
 };
+
+function emptyCandidateFunnel(outsideWindow: number): SupplementalCandidateFunnel {
+  return {
+    inWindow: 0,
+    merged: 0,
+    qualified: 0,
+    selected: 0,
+    filtered: { outsideWindow, noUsableEvidence: 0, weakProfileFit: 0, rankedOut: 0 }
+  };
+}
 
 /** Builds one ranked daily pool. Feed identity never contributes source seniority. */
 export function buildDailyCandidateInventory(input: {
@@ -709,28 +763,63 @@ export function buildDailyCandidateInventory(input: {
   const allCandidates = input.sourceResults.flatMap((result) => result.candidates);
   const poolWithin = (hours: number) => {
     const cutoff = now.getTime() - hours * 3_600_000;
-    const fresh = allCandidates.filter((candidate) => {
+    const isInWindow = (candidate: SupplementalCandidate) => {
       const publishedAt = Date.parse(candidate.publishedAt);
       return Number.isFinite(publishedAt) && publishedAt <= now.getTime() && publishedAt >= cutoff;
+    };
+    const fresh = allCandidates.filter(isInWindow);
+    const funnels: Partial<Record<SupplementalSourceId, SupplementalCandidateFunnel>> = {};
+    for (const result of input.sourceResults) {
+      funnels[result.health.id] = emptyCandidateFunnel(result.candidates.filter((candidate) => !isInWindow(candidate)).length);
+    }
+    const evaluated = deduplicateSupplemental(fresh).map((candidate, index) => {
+      const sourceIds = [...new Set(candidate.sourceAttributions.map((item) => item.sourceId))];
+      for (const sourceId of sourceIds) {
+        const funnel = funnels[sourceId];
+        if (funnel) funnel.inWindow += 1;
+      }
+      const outcome = dailyCandidateResult(candidate, input.profile, index + 1, now);
+      for (const sourceId of sourceIds) {
+        const funnel = funnels[sourceId];
+        if (!funnel) continue;
+        if (outcome.story) funnel.qualified += 1;
+        else funnel.filtered[outcome.filtered] += 1;
+      }
+      return { ...outcome, sourceIds };
     });
-    const eligible = deduplicateSupplemental(fresh).flatMap((candidate, index) => {
-      const story = dailyCandidate(candidate, input.profile, index + 1, now);
-      return story ? [story] : [];
-    });
-    return { fresh, eligible };
+    for (const result of input.sourceResults) {
+      const funnel = funnels[result.health.id]!;
+      const rawInWindow = result.candidates.filter(isInWindow).length;
+      funnel.merged = Math.max(0, rawInWindow - funnel.inWindow);
+    }
+    const eligible = evaluated.flatMap((outcome) => outcome.story ? [outcome.story] : []);
+    const sourcesByCluster = new Map(evaluated.flatMap((outcome) => outcome.story
+      ? [[outcome.story.provenance!.clusterId, outcome.sourceIds] as const]
+      : []));
+    return { fresh, eligible, funnels, sourcesByCluster };
   };
   // Count qualified, distinct stories, not raw feed entries. Reuse collected
   // inputs for one bounded expansion; never weaken evidence or relevance gates.
   const normal = poolWithin(MAX_FRESHNESS_HOURS);
   const maxFreshnessHours = normal.eligible.length < MIN_DAILY_CANDIDATES
     ? EXPANDED_FRESHNESS_HOURS : MAX_FRESHNESS_HOURS;
-  const { fresh, eligible } = maxFreshnessHours === MAX_FRESHNESS_HOURS
+  const selectedPool = maxFreshnessHours === MAX_FRESHNESS_HOURS
     ? normal : poolWithin(EXPANDED_FRESHNESS_HOURS);
+  const { fresh, eligible, funnels, sourcesByCluster } = selectedPool;
   eligible.sort((left, right) => right.provenance!.selection.score - left.provenance!.selection.score
       || (right.publishedAt ?? "").localeCompare(left.publishedAt ?? "")
       || left.title.localeCompare(right.title));
   const candidates = gentlyDiversify(eligible).slice(0, MAX_BLENDED_CANDIDATES)
     .map((candidate, index) => ({ ...candidate, id: index + 1 }));
+  for (const candidate of candidates) {
+    for (const sourceId of sourcesByCluster.get(candidate.provenance!.clusterId) ?? []) {
+      const funnel = funnels[sourceId];
+      if (funnel) funnel.selected += 1;
+    }
+  }
+  for (const funnel of Object.values(funnels)) {
+    if (funnel) funnel.filtered.rankedOut = Math.max(0, funnel.qualified - funnel.selected);
+  }
   const pack = sourcePack(input.profile);
   const contributing = new Set<string>();
   for (const candidate of candidates) {
@@ -741,6 +830,7 @@ export function buildDailyCandidateInventory(input: {
     candidates,
     eligibleCandidates: eligible.length,
     expiredCandidates: allCandidates.length - fresh.length,
+    sourceFunnels: funnels,
     collection: {
       mode: "daily-pool",
       sourcesChecked: input.sourceResults.map((result) => result.health.name),
@@ -789,7 +879,10 @@ export function buildDailySourceReport(input: {
       eligibleCandidates: input.inventory.eligibleCandidates,
       expiredCandidates: input.inventory.expiredCandidates
     },
-    sources: input.sourceResults.map((result) => result.health),
+    sources: input.sourceResults.map((result) => ({
+      ...result.health,
+      ...(input.inventory.sourceFunnels[result.health.id] ? { funnel: input.inventory.sourceFunnels[result.health.id] } : {})
+    })),
     totals: {
       aiNewsCandidates,
       supplementalCandidates: allCandidates.length - aiNewsCandidates,

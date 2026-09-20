@@ -85,6 +85,6 @@ describe("AI Secret collector", () => {
 
   it("rejects an oversized chunked feed even without a content-length header", async () => {
     const results = await collectSupplementalSources({ profile, now, fetcher: async (input) => new Response(String(input).includes("aisecret.us") ? "é".repeat(1_000_001) : "<rss><channel></channel></rss>") });
-    expect(results.find((result) => result.health.id === "ai-secret")?.health).toMatchObject({ status: "failed", errors: ["aisecret.us response is too large"] });
+    expect(results.find((result) => result.health.id === "ai-secret")?.health).toMatchObject({ status: "failed", yieldStatus: "unknown", errors: ["feed: aisecret.us response is too large"] });
   });
 });

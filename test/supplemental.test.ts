@@ -68,9 +68,10 @@ function dailyIssue(): RssIssue {
 describe("source packs", () => {
   it("defines one equal-source pack with a 72-hour collection horizon", () => {
     expect(DEFAULT_PROFILE.sourcePackId).toBe(DEFAULT_SOURCE_PACK_ID);
-    expect(SOURCE_PACKS[DEFAULT_SOURCE_PACK_ID]).toMatchObject({ id: "core-ai", version: 4 });
+    expect(SOURCE_PACKS[DEFAULT_SOURCE_PACK_ID]).toMatchObject({ id: "core-ai", version: 5 });
     expect(SOURCE_PACKS[DEFAULT_SOURCE_PACK_ID].sources.map((source) => source.id)).toEqual(["ainews", "tldr-ai", "alphasignal", "ai-secret", "cloudflare-agents"]);
     expect(SOURCE_PACKS[DEFAULT_SOURCE_PACK_ID].sources.filter((source) => source.lookbackHours).every((source) => source.lookbackHours === 72)).toBe(true);
+    expect(SOURCE_PACKS[DEFAULT_SOURCE_PACK_ID].sources.find((source) => source.id === "alphasignal")?.url).toBe("https://alphasignal.ai/news-sitemap.xml");
   });
 });
 
@@ -133,6 +134,17 @@ describe("source parsing", () => {
     expect(parseAlphaArticle(article, recent[0]!.url).preferredUrl).toBe("https://openai.com/index/replayable-codex-runtime");
   });
 
+  it("uses AlphaSignal news publication dates and titles, with lastmod as a legacy fallback", () => {
+    const sitemap = `<urlset xmlns:news="http://www.google.com/schemas/sitemap-news/0.9">
+      <url><loc>https://alphasignal.ai/news/current-story</loc><news:news><news:publication_date>2026-08-15T00:30:00Z</news:publication_date><news:title>Current story from the news sitemap</news:title></news:news></url>
+      <url><loc>https://alphasignal.ai/news/legacy-story</loc><lastmod>2026-08-14T00:30:00Z</lastmod></url>
+    </urlset>`;
+    expect(parseAlphaSitemap(sitemap, now)).toEqual([
+      { title: "Current story from the news sitemap", url: "https://alphasignal.ai/news/current-story", publishedAt: "2026-08-15T00:30:00.000Z" },
+      { title: "Legacy Story", url: "https://alphasignal.ai/news/legacy-story", publishedAt: "2026-08-14T00:30:00.000Z" }
+    ]);
+  });
+
   it("keeps only recent Cloudflare posts and reserves primary status for Cloudflare", () => {
     const feed = `<rss><channel>
       <item><title>Workers AI adds agent tool contracts</title><link>https://blog.cloudflare.com/agent-tool-contracts</link><pubDate>Wed, 12 Aug 2026 14:00:00 GMT</pubDate><description>Structured tool contracts improve agent integrations.</description></item>
@@ -143,6 +155,33 @@ describe("source parsing", () => {
     expect(candidates).toHaveLength(2);
     expect(candidates[0]?.sourceAttributions[0]?.kind).toBe("primary");
     expect(candidates[1]?.sourceAttributions[0]?.kind).toBe("discovery");
+  });
+
+  it("labels the AlphaSignal sitemap stage when its first request fails", async () => {
+    const fetcher = (async (input: string | URL | Request) => {
+      if (String(input).includes("alphasignal.ai")) throw new Error("The operation was aborted due to timeout");
+      return new Response("unavailable", { status: 503 });
+    }) as typeof fetch;
+    const results = await collectSupplementalSources({ profile: DEFAULT_PROFILE, now, fetcher });
+    expect(results.find((result) => result.health.id === "alphasignal")?.health).toMatchObject({
+      status: "failed",
+      yieldStatus: "unknown",
+      requests: 1,
+      errors: ["sitemap: The operation was aborted due to timeout"]
+    });
+  });
+
+  it("separates a parsed quiet source from a failed source", async () => {
+    const fetcher = (async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url === "https://tldr.tech/api/rss/ai") return new Response(`<rss><channel><item><title>TLDR AI</title><link>https://tldr.tech/ai/quiet</link><pubDate>Sat, 15 Aug 2026 01:00:00 GMT</pubDate></item></channel></rss>`);
+      if (url === "https://tldr.tech/ai/quiet") return new Response("<html><body>No articles today</body></html>");
+      if (url.includes("blog.cloudflare.com")) return new Response("<rss><channel></channel></rss>");
+      return new Response("unavailable", { status: 503 });
+    }) as typeof fetch;
+    const results = await collectSupplementalSources({ profile: DEFAULT_PROFILE, now, fetcher });
+    expect(results.find((result) => result.health.id === "tldr-ai")?.health).toMatchObject({ status: "degraded", yieldStatus: "quiet", acceptedCandidates: 0 });
+    expect(results.find((result) => result.health.id === "cloudflare-agents")?.health).toMatchObject({ status: "healthy", yieldStatus: "quiet", acceptedCandidates: 0 });
   });
 });
 
@@ -172,6 +211,13 @@ describe("daily equal-source pool", () => {
     expect(inventory.collection.maxFreshnessHours).toBe(72);
     expect(inventory.candidates.map((item) => item.sources[0]?.url).sort()).toEqual([fresh.url, fallback.url].sort());
     expect(inventory.expiredCandidates).toBe(3);
+    expect(inventory.sourceFunnels["tldr-ai"]).toEqual({
+      inWindow: 4,
+      merged: 11,
+      qualified: 2,
+      selected: 2,
+      filtered: { outsideWindow: 3, noUsableEvidence: 1, weakProfileFit: 1, rankedOut: 0 }
+    });
   });
 
   it("includes the exact 48-hour boundary without expansion when ten qualify", () => {
@@ -247,11 +293,18 @@ describe("daily equal-source pool", () => {
     const report = buildDailySourceReport({ issue: dailyIssue(), sourceResults, inventory, generatedAt: now.toISOString(), profile: DEFAULT_PROFILE });
     expect(report).toMatchObject({
       mode: "daily-pool",
-      sourcePack: { id: "core-ai", version: 4 },
+      sourcePack: { id: "core-ai", version: 5 },
       limits: { modelCandidates: 18, publishedStories: 14 },
       freshness: { preferredHours: 36, maxHours: 72, eligibleCandidates: 2 },
       totals: { selectedForBlend: 2 }
     });
     expect(report.selectedForBlend).toHaveLength(2);
+    expect(report.sources.find((source) => source.id === "tldr-ai")?.funnel).toEqual({
+      inWindow: 1,
+      merged: 0,
+      qualified: 1,
+      selected: 1,
+      filtered: { outsideWindow: 0, noUsableEvidence: 0, weakProfileFit: 0, rankedOut: 0 }
+    });
   });
 });

@@ -218,13 +218,30 @@ export type SourcePack = {
   description: string;
   sources: SourcePackSource[];
 };
+export type SupplementalCandidateFunnel = {
+  /** Distinct in-window clusters that include this source after deduplication. */
+  inWindow: number;
+  /** Same-source candidates merged into another in-window cluster; not discarded coverage. */
+  merged: number;
+  qualified: number;
+  selected: number;
+  filtered: {
+    outsideWindow: number;
+    noUsableEvidence: number;
+    weakProfileFit: number;
+    rankedOut: number;
+  };
+};
 export type SupplementalSourceHealth = {
   id: SupplementalSourceId;
   name: string;
   status: "healthy" | "degraded" | "failed";
+  /** Candidate yield is separate from transport/parser health. */
+  yieldStatus?: "active" | "quiet" | "unknown";
   requests: number;
   fetchedItems: number;
   acceptedCandidates: number;
+  funnel?: SupplementalCandidateFunnel;
   errors: string[];
 };
 export type SupplementalAttribution = {

@@ -23,7 +23,7 @@ The compatibility date is pinned to `2026-08-11`. Move it forward only with a te
 
 Every run targets the current `Australia/Melbourne` calendar day. A normal refresh is idempotent for that date, so a repeated run skips after a successful edition already exists.
 
-The code-defined `core-ai` source pack v4 checks:
+The code-defined `core-ai` source pack v5 checks:
 
 - AInews, TLDR AI, AlphaSignal, and AI Secret as equal editorial discovery inputs;
 - Cloudflare Agents as a narrow primary-evidence lane; and
@@ -43,6 +43,8 @@ The deterministic collector creates the story inventory, Hot Topics, source URLs
 
 AI Secret uses its full-content [Daily Rundown RSS](https://aisecret.us/tag/daily-rundown/rss/) in one bounded request, with no article crawling or extra model call. It parses up to six recent editions and 24 linked news items per edition from the factual “What's happening” paragraphs and Daily TL;DR lists. Sponsor blocks, recruitment promotions, images, commentary-only links, and unrecognized essay layouts are excluded. RSS publication dates represent reporting dates, not independently verified event dates. Empty/unrecognized output degrades this source report without blocking other sources. Shared feed downloads enforce byte limits while streaming.
 
+AlphaSignal uses its small Google News sitemap rather than its unbounded historical sitemap. The collector reads `news:publication_date` and `news:title`, retains `lastmod` and URL-title parsing only for legacy compatibility, and enriches at most eight recent articles in parallel. Sitemap, parse, and individual enrichment errors are labelled separately; there is no retry on the daily critical path.
+
 Immediately before storage, one best-effort editorial QA call reviews the finished draft against the same candidate inventory. It can correct presentation and synthesis only; story cards, ranking, dates, profile, and collection metadata stay unchanged. The review looks for leaked drafting notes, promotional content, contradictions, unsupported claims, and story/citation mismatches. Corrections must pass the existing validation without automatic source substitution. This is an evidence-consistency check, not independent fact verification.
 
 The issue header is the edition date, not a source date. Each signal retains its feed publication date. Historical AInews-base editions remain readable under backward-compatible validation.
@@ -57,7 +59,7 @@ The issue header is the edition date, not a source date. Each signal retains its
 - Editorial QA adds at most one separate call to the configured Llama fallback model, with a 3,200-token allowance and 20-second waiting limit, after either model or deterministic framing succeeds. There are no QA retries. Invalid corrections, provider errors, or timeout publish the original validated draft with a warning; a cheap leaked-note check also flags unresolved internal copy. The waiting limit does not cancel provider inference. Skipped daily runs do not invoke QA.
 - QA outcomes (`passed`, `corrected`, or `fallback`), bounded unresolved warnings, model, issue URL, and duration appear in existing Worker logs under `ai-signal editorial QA`, separately from the D1 generation-attempt audit. Card-level concerns are warnings only, never automatic removals. No extra schedule, notification service, or database migration is involved.
 - Failed runs are audit records only and cannot replace the last good edition.
-- The legacy D1 table `supplemental_shadow_runs` and endpoint `GET /api/shadow/latest` carry the latest source report. `report.mode="daily-pool"` records source health, the actual 48- or 72-hour window, eligible counts, and selected candidates. The edition's coverage label and `collection.maxFreshnessHours` reflect the same window. The reader has no separate fresh-signals section.
+- The legacy D1 table `supplemental_shadow_runs` and endpoint `GET /api/shadow/latest` carry the latest source report. `report.mode="daily-pool"` records transport/parser health separately from candidate yield. Each source has a compact accepted → in-window → qualified → selected funnel, with outside-window, missing-evidence, weak-fit, merge, and ranked-out counts. The report also records the actual 48- or 72-hour window, eligible counts, and selected candidates. The edition's coverage label and `collection.maxFreshnessHours` reflect the same window. The reader has no separate fresh-signals section.
 - `GET /api/status` separates the latest run outcome from the latest completed cron heartbeat. The reader alerts after 26 hours without a completed cron check; a timely idempotent skip is a healthy heartbeat.
 
 `SUPPLEMENTAL_SHADOW_ENABLED=true` keeps the read-only source report refreshed when a same-day edition causes generation to skip. It does not create another publication path.
@@ -104,7 +106,7 @@ npm run dry-run
 git diff --check
 ```
 
-Then follow [AGENTS.md](AGENTS.md): push the reviewed commit to `main`, record the current deployment as rollback evidence, deploy with strict configuration and Git provenance, verify public and D1 state, and record consequential evidence in [PROJECT_HISTORY.md](PROJECT_HISTORY.md). No D1 migration is needed for the v4 pool; historical 48-hour and legacy editions remain readable.
+Then follow [AGENTS.md](AGENTS.md): push the reviewed commit to `main`, record the current deployment as rollback evidence, deploy with strict configuration and Git provenance, verify public and D1 state, and record consequential evidence in [PROJECT_HISTORY.md](PROJECT_HISTORY.md). No D1 migration is needed for the v5 pool; historical 48-hour and legacy editions remain readable.
 
 The bounded September 2026 profile experiment is reproducible with `npm run replay:ai-secret -- 2026-09-09` (optional `--details` or `--live-pool`). It reads the currently available feed and public profile, records their identity, and compares ten 08:15 AEST snapshots. It makes no model calls, D1 writes, or publications. This is not an immutable archive or a historical reconstruction of all sources; results change as the feed/profile changes. The optional live-pool comparison collects current sources only.
 

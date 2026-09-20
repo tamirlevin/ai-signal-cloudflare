@@ -3,6 +3,35 @@ import { ValidationError } from "./validation";
 
 const MAX_RSS_BYTES = 8_000_000;
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function boundedResponseText(response: Response): Promise<string> {
+  const size = Number(response.headers.get("content-length") ?? "0");
+  if (Number.isFinite(size) && size > MAX_RSS_BYTES) throw new ValidationError("RSS response is too large");
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let bytes = 0;
+  let xml = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > MAX_RSS_BYTES) {
+        await reader.cancel();
+        throw new ValidationError("RSS response is too large");
+      }
+      xml += decoder.decode(value, { stream: true });
+    }
+    return xml + decoder.decode();
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 function decodeEntitiesOnce(value: string): string {
   return value
     .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => String.fromCodePoint(Number.parseInt(hex, 16)))
@@ -58,11 +87,22 @@ export function parseLatestRss(xml: string): RssIssue {
 
 export async function fetchLatestRss(url: string, fetcher: typeof fetch = fetch): Promise<RssIssue> {
   const timeout = AbortSignal.timeout(15_000);
-  const response = await fetcher(url, { signal: timeout, headers: { Accept: "application/rss+xml, application/xml;q=0.9" } });
-  if (!response.ok) throw new ValidationError(`RSS returned ${response.status}`);
-  const size = Number(response.headers.get("content-length") ?? "0");
-  if (Number.isFinite(size) && size > MAX_RSS_BYTES) throw new ValidationError("RSS response is too large");
-  const xml = await response.text();
-  if (xml.length > MAX_RSS_BYTES) throw new ValidationError("RSS response is too large");
-  return parseLatestRss(xml);
+  let response: Response;
+  try {
+    response = await fetcher(url, { signal: timeout, headers: { Accept: "application/rss+xml, application/xml;q=0.9" } });
+  } catch (error) {
+    throw new ValidationError(`fetch: ${errorMessage(error)}`);
+  }
+  if (!response.ok) throw new ValidationError(`fetch: RSS returned ${response.status}`);
+  let xml: string;
+  try {
+    xml = await boundedResponseText(response);
+  } catch (error) {
+    throw new ValidationError(`read: ${errorMessage(error)}`);
+  }
+  try {
+    return parseLatestRss(xml);
+  } catch (error) {
+    throw new ValidationError(`parse: ${errorMessage(error)}`);
+  }
 }
