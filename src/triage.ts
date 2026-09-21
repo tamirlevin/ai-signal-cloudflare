@@ -1,11 +1,11 @@
-import type { Profile, ShadowCandidate } from "./contracts";
+import type { Profile, ShadowCandidate, TriageScoredItem } from "./contracts";
 
 export const TRIAGE_RERANKER_MODEL = "@cf/baai/bge-reranker-base";
 export const TRIAGE_EMBEDDING_MODEL = "@cf/qwen/qwen3-embedding-0.6b";
-const MAX_TRIAGE_TEXTS = 32;
+const MAX_TRIAGE_TEXTS = 128;
 const MAX_TRIAGE_CHARS = 600;
 
-export type TriageScores = { relevance: number | null; novelty: number | null };
+export type TriageScores = { relevance: number | null; raw: number | null; novelty: number | null };
 
 type AiRunner = { run: (model: string, input: Record<string, unknown>) => Promise<unknown> };
 
@@ -13,17 +13,18 @@ export function triageShadowEnabled(env: Env): boolean {
   return env.TRIAGE_SHADOW_ENABLED === "true";
 }
 
-/** The profile as a retrieval query: top interests first, kept short because
- *  reranker discrimination degrades with long queries. Watching topics stay. */
-export function buildProfileQuery(profile: Profile): string {
-  const interests = [...profile.weights]
-    .sort((left, right) => right.value - left.value || left.label.localeCompare(right.label))
-    .filter((weight) => weight.value > 0)
-    .slice(0, 4)
-    .map((weight) => weight.label)
-    .join("; ");
+export type ProfileInterest = { label: string; weight: number; query: string };
+
+/**
+ * One retrieval query per positive-weight interest, so equal weights are never
+ * silently dropped and magnitudes combine explicitly. Watching topics stay.
+ */
+export function buildProfileQueries(profile: Profile): ProfileInterest[] {
   const watching = [...profile.pinnedCategories, ...profile.watching].join("; ");
-  return `${interests}. Watching: ${watching}.`;
+  return [...profile.weights]
+    .filter((weight) => weight.value > 0)
+    .sort((left, right) => right.value - left.value || left.label.localeCompare(right.label))
+    .map((weight) => ({ label: weight.label, weight: weight.value, query: `${weight.label}. Watching: ${watching}.` }));
 }
 
 export function triageText(title: string, summary: string): string {
@@ -69,10 +70,21 @@ function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function responseScores(raw: unknown): Map<number, number | null> {
+  const scores = new Map<number, number | null>();
+  const response = record(raw) && Array.isArray(raw.response) ? raw.response : [];
+  for (const entry of response) {
+    if (!record(entry) || typeof entry.id !== "number") continue;
+    scores.set(entry.id, rawScore(entry.score));
+  }
+  return scores;
+}
+
 /**
- * Advisory relevance + novelty scores for the selected shortlist. One reranker
- * call and one embedding call for the whole pool; any failure yields no scores
- * rather than failing the run. Never gates selection or publication.
+ * Advisory relevance + novelty scores over the full fresh pool, including rows
+ * the keyword gates rejected. One reranker call per profile interest plus one
+ * embedding call; any failure yields no scores rather than failing the run.
+ * Never gates selection or publication.
  */
 export async function scoreTriage(
   ai: AiRunner,
@@ -84,16 +96,23 @@ export async function scoreTriage(
   const selected = items.slice(0, MAX_TRIAGE_TEXTS);
   if (!selected.length) return scores;
   try {
-    const query = buildProfileQuery(profile);
+    const interests = buildProfileQueries(profile);
     const contexts = selected.map((item) => ({ text: triageText(item.title, item.summary) }));
-    const ranked = await ai.run(TRIAGE_RERANKER_MODEL, { query, contexts });
-    const response = record(ranked) && Array.isArray(ranked.response) ? ranked.response : [];
-    const raw = new Map<number, number | null>();
-    for (const entry of response) {
-      if (!record(entry) || typeof entry.id !== "number") continue;
-      raw.set(entry.id, rawScore(entry.score));
-    }
-    const normalized = normalizeScores(selected.map((_, index) => raw.get(index) ?? null));
+    const perInterest = await Promise.all(interests.map((interest) =>
+      ai.run(TRIAGE_RERANKER_MODEL, { query: interest.query, contexts }).then(responseScores)
+    ));
+    const raws: Array<number | null> = selected.map((_, index) => {
+      let weighted = 0;
+      let weights = 0;
+      perInterest.forEach((response, interestIndex) => {
+        const value = response.get(index);
+        if (value === null || value === undefined) return;
+        weighted += value * interests[interestIndex]!.weight;
+        weights += interests[interestIndex]!.weight;
+      });
+      return weights > 0 ? Math.round((weighted / weights) * 10000) / 10000 : null;
+    });
+    const normalized = normalizeScores(raws);
     const texts = selected.map((item) => triageText(item.title, item.summary));
     const prior = priorTexts.slice(0, MAX_TRIAGE_TEXTS).map((text) => text.slice(0, MAX_TRIAGE_CHARS));
     const embedded = await ai.run(TRIAGE_EMBEDDING_MODEL, { text: [...texts, ...prior] });
@@ -114,7 +133,7 @@ export async function scoreTriage(
         for (const previous of priorVectors) maxSimilarity = Math.max(maxSimilarity, cosine(vector, previous));
         if (maxSimilarity >= 0) novelty = Math.round((1 - maxSimilarity) * 1000) / 1000;
       }
-      scores.set(item.url, { relevance: normalized[index] ?? null, novelty });
+      scores.set(item.url, { relevance: normalized[index] ?? null, raw: raws[index] ?? null, novelty });
     });
   } catch (error) {
     console.warn(JSON.stringify({ message: "ai-signal triage shadow scoring skipped", error: error instanceof Error ? error.message : String(error) }));
@@ -122,7 +141,42 @@ export async function scoreTriage(
   return scores;
 }
 
-/** Attaches advisory triage scores to a report's selected items. No-op unless enabled. */
+/**
+ * Dense ranks by relevance within one run (1 = best; unscored rank null),
+ * joined with funnel outcomes for the experiment log.
+ */
+export function rankTriageScores(items: Array<{
+  url: string; title: string; relevance: number | null; rawRelevance: number | null; novelty: number | null;
+  outcome: TriageScoredItem["outcome"]; sourceIds: TriageScoredItem["sourceIds"];
+}>): TriageScoredItem[] {
+  const ordered = [...items].sort((left, right) => (right.relevance ?? -1) - (left.relevance ?? -1));
+  let rank = 0;
+  let previous: number | null = null;
+  const ranks = new Map<string, number | null>();
+  for (const item of ordered) {
+    if (item.relevance === null) {
+      ranks.set(item.url, null);
+      continue;
+    }
+    if (previous === null || item.relevance !== previous) {
+      rank += 1;
+      previous = item.relevance;
+    }
+    ranks.set(item.url, rank);
+  }
+  return items.map((item) => ({
+    url: item.url,
+    title: item.title,
+    relevance: item.relevance,
+    rawRelevance: item.rawRelevance,
+    rank: ranks.get(item.url) ?? null,
+    novelty: item.novelty,
+    outcome: item.outcome,
+    sourceIds: item.sourceIds
+  }));
+}
+
+/** Attaches advisory triage summaries to a report's selected items. No-op unless scored. */
 export function attachTriageScores(
   report: { wouldAdd: ShadowCandidate[]; selectedForBlend?: ShadowCandidate[] },
   scores: Map<string, TriageScores>
@@ -130,6 +184,6 @@ export function attachTriageScores(
   if (!scores.size) return;
   for (const item of [...report.wouldAdd, ...(report.selectedForBlend ?? [])]) {
     const triage = scores.get(item.url);
-    if (triage) item.triage = triage;
+    if (triage) item.triage = { relevance: triage.relevance, novelty: triage.novelty };
   }
 }

@@ -19,7 +19,7 @@ import { categoryForProfile, compactIssueInventory, isPermissionDesignSignal, sc
 import { fetchLatestRss } from "./rss";
 import { getActiveProfile, latestEdition, melbourneCalendarDay, recordSupplementalShadowRun } from "./repository";
 import { getSourcePack } from "./source-packs";
-import { attachTriageScores, scoreTriage, triageShadowEnabled } from "./triage";
+import { attachTriageScores, rankTriageScores, scoreTriage, triageShadowEnabled } from "./triage";
 
 type Fetcher = typeof fetch;
 export type SourceResult = { candidates: SupplementalCandidate[]; health: SupplementalSourceHealth; issue?: RssIssue };
@@ -822,6 +822,8 @@ export type DailyCandidateInventory = {
   eligibleCandidates: number;
   expiredCandidates: number;
   sourceFunnels: Partial<Record<SupplementalSourceId, SupplementalCandidateFunnel>>;
+  /** Full fresh deduplicated pool with per-item funnel outcomes, including rejected rows for triage logging. */
+  evaluated: Array<{ url: string; title: string; summary: string; outcome: "selected" | "rankedOut" | "noUsableEvidence" | "weakProfileFit"; sourceIds: SupplementalSourceId[] }>;
   collection: DailyCollection;
 };
 
@@ -867,7 +869,7 @@ export function buildDailyCandidateInventory(input: {
         if (outcome.story) funnel.qualified += 1;
         else funnel.filtered[outcome.filtered] += 1;
       }
-      return { ...outcome, sourceIds };
+      return { ...outcome, sourceIds, candidate: { url: candidate.url, title: candidate.title, summary: candidate.summary } };
     });
     for (const result of input.sourceResults) {
       const funnel = funnels[result.health.id]!;
@@ -878,7 +880,7 @@ export function buildDailyCandidateInventory(input: {
     const sourcesByCluster = new Map(evaluated.flatMap((outcome) => outcome.story
       ? [[outcome.story.provenance!.clusterId, outcome.sourceIds] as const]
       : []));
-    return { fresh, eligible, funnels, sourcesByCluster };
+    return { fresh, eligible, funnels, sourcesByCluster, evaluated };
   };
   // Count qualified, distinct stories, not raw feed entries. Reuse collected
   // inputs for one bounded expansion; never weaken evidence or relevance gates.
@@ -887,7 +889,7 @@ export function buildDailyCandidateInventory(input: {
     ? EXPANDED_FRESHNESS_HOURS : MAX_FRESHNESS_HOURS;
   const selectedPool = maxFreshnessHours === MAX_FRESHNESS_HOURS
     ? normal : poolWithin(EXPANDED_FRESHNESS_HOURS);
-  const { fresh, eligible, funnels, sourcesByCluster } = selectedPool;
+  const { fresh, eligible, funnels, sourcesByCluster, evaluated: evaluatedPool } = selectedPool;
   eligible.sort((left, right) => right.provenance!.selection.score - left.provenance!.selection.score
       || (right.publishedAt ?? "").localeCompare(left.publishedAt ?? "")
       || left.title.localeCompare(right.title));
@@ -908,11 +910,22 @@ export function buildDailyCandidateInventory(input: {
     if (candidate.provenance?.lead.name) contributing.add(candidate.provenance.lead.name);
     for (const source of candidate.provenance?.editorialCorroboration ?? []) contributing.add(source.name);
   }
+  const selectedClusters = new Set(candidates.map((candidate) => candidate.provenance!.clusterId));
+  const evaluated = evaluatedPool.map((outcome) => ({
+    url: outcome.candidate.url,
+    title: outcome.candidate.title,
+    summary: outcome.candidate.summary,
+    outcome: (outcome.story
+      ? (selectedClusters.has(outcome.story.provenance!.clusterId) ? "selected" as const : "rankedOut" as const)
+      : outcome.filtered) as "selected" | "rankedOut" | "noUsableEvidence" | "weakProfileFit",
+    sourceIds: outcome.sourceIds
+  }));
   return {
     candidates,
     eligibleCandidates: eligible.length,
     expiredCandidates: allCandidates.length - fresh.length,
     sourceFunnels: funnels,
+    evaluated,
     collection: {
       mode: "daily-pool",
       sourcesChecked: input.sourceResults.map((result) => result.health.name),
@@ -933,6 +946,7 @@ export function buildDailySourceReport(input: {
   inventory: DailyCandidateInventory;
   generatedAt: string;
   profile: Profile;
+  triage?: Map<string, { relevance: number | null; raw: number | null; novelty: number | null }>;
 }): SupplementalShadowReport {
   const allCandidates = input.sourceResults.flatMap((result) => result.candidates);
   const selected = input.inventory.candidates.map((candidate): SupplementalShadowReport["wouldAdd"][number] => ({
@@ -948,6 +962,16 @@ export function buildDailySourceReport(input: {
   }));
   const pack = sourcePack(input.profile);
   const aiNewsCandidates = input.sourceResults.find((result) => result.health.id === "ainews")?.candidates.length ?? 0;
+  const triageScores = input.triage?.size
+    ? rankTriageScores(input.inventory.evaluated.map((item) => {
+      const scores = input.triage!.get(item.url);
+      return { ...item, relevance: scores?.relevance ?? null, rawRelevance: scores?.raw ?? null, novelty: scores?.novelty ?? null };
+    }))
+    : undefined;
+  for (const item of selected) {
+    const logged = triageScores?.find((entry) => entry.url === item.url);
+    if (logged) item.triage = { relevance: logged.relevance, novelty: logged.novelty };
+  }
   return {
     schemaVersion: 1,
     mode: "daily-pool",
@@ -976,7 +1000,8 @@ export function buildDailySourceReport(input: {
     },
     overlaps: [],
     wouldAdd: selected,
-    selectedForBlend: selected
+    selectedForBlend: selected,
+    ...(triageScores ? { triageScores } : {})
   };
 }
 
@@ -1002,13 +1027,26 @@ export async function runSupplementalShadow(env: Env, trigger: "cron" | "manual"
   const started = Date.now();
   try {
     const profile = await getActiveProfile(env.DB);
-    const report = await collectSupplementalShadow({ rssUrl: env.RSS_URL, profile });
+    const now = new Date();
+    const issueDate = melbourneCalendarDay(now);
+    const issue: RssIssue = {
+      url: `https://signal.tamirlevin.dev/?edition=${issueDate}`,
+      issueDate,
+      publicationDate: new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "long", year: "numeric", timeZone: "Australia/Melbourne" }).format(now),
+      publishedAt: now.toISOString(),
+      body: "",
+      anchors: []
+    };
+    const sourceResults = await collectSupplementalSources({ profile, now, rssUrl: env.RSS_URL });
+    const inventory = buildDailyCandidateInventory({ sourceResults, profile, now });
+    let triage: Map<string, { relevance: number | null; raw: number | null; novelty: number | null }> | undefined;
     if (triageShadowEnabled(env)) {
       const prior = await latestEdition(env.DB).catch(() => null);
       const priorTexts = prior ? prior.signals.map((signal) => `${signal.title} — ${signal.summary}`) : [];
-      const scores = await scoreTriage(env.AI, profile, report.wouldAdd, priorTexts);
-      attachTriageScores(report, scores);
+      triage = await scoreTriage(env.AI, profile, inventory.evaluated, priorTexts);
     }
+    const report = buildDailySourceReport({ issue, sourceResults, inventory, generatedAt: new Date().toISOString(), profile, triage });
+    if (triage?.size) attachTriageScores(report, triage);
     const failedSources = report.sources.filter((source) => source.status === "failed").length;
     const degradedSources = report.sources.filter((source) => source.status === "degraded").length;
     const status = failedSources === report.sources.length ? "failed" : failedSources || degradedSources ? "degraded" : "healthy";

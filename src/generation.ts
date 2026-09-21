@@ -235,12 +235,14 @@ export async function generateLatestEdition(env: Env, trigger: Trigger, options:
       anchors: inventory.candidates.flatMap((candidate) => candidate.sources)
     };
     const sourceCatalog = buildPermittedSourceCatalog(sourceIssue);
-    const report = buildDailySourceReport({ issue, sourceResults, inventory, generatedAt: new Date().toISOString(), profile });
+    let triage: Map<string, { relevance: number | null; raw: number | null; novelty: number | null }> | undefined;
     if (triageShadowEnabled(env)) {
       const prior = await latestEdition(env.DB).catch(() => null);
       const priorTexts = prior ? prior.signals.map((signal) => `${signal.title} — ${signal.summary}`) : [];
-      attachTriageScores(report, await scoreTriage(env.AI, profile, report.wouldAdd, priorTexts));
+      triage = await scoreTriage(env.AI, profile, inventory.evaluated, priorTexts);
     }
+    const report = buildDailySourceReport({ issue, sourceResults, inventory, generatedAt: new Date().toISOString(), profile, triage });
+    if (triage?.size) attachTriageScores(report, triage);
     const failedSources = report.sources.filter((source) => source.status === "failed").length;
     const degradedSources = report.sources.filter((source) => source.status === "degraded").length;
     const sourceStatus = failedSources === report.sources.length ? "failed" : failedSources || degradedSources ? "degraded" : "healthy";

@@ -232,6 +232,18 @@ export type SupplementalCandidateFunnel = {
     rankedOut: number;
   };
 };
+export type TriageScoredItem = {
+  url: string;
+  title: string;
+  relevance: number | null;
+  /** Raw combined reranker score before per-run normalization; comparable only within its run. */
+  rawRelevance: number | null;
+  /** Dense rank by relevance within the run (1 = best); null when unscored. */
+  rank: number | null;
+  novelty: number | null;
+  outcome: "selected" | "rankedOut" | "noUsableEvidence" | "weakProfileFit";
+  sourceIds: SupplementalSourceId[];
+};
 export type SupplementalSourceHealth = {
   id: SupplementalSourceId;
   name: string;
@@ -290,6 +302,8 @@ export type SupplementalShadowReport = {
   overlaps: Array<{ supplementalTitle: string; aiNewsTitle: string; preferredUrl: string; sourceIds: SupplementalSourceId[] }>;
   wouldAdd: ShadowCandidate[];
   selectedForBlend?: ShadowCandidate[];
+  /** Advisory per-item triage log over the full fresh pool, not just the selected. Absent unless triage shadow scoring ran. */
+  triageScores?: TriageScoredItem[];
 };
 export type SupplementalShadowRun = {
   id: string;
