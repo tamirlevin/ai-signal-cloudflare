@@ -200,7 +200,7 @@ export type DailyCollection = {
   sourcePackVersion?: number;
 };
 
-export type SupplementalSourceId = "ainews" | "tldr-ai" | "alphasignal" | "ai-secret" | "cloudflare-agents";
+export type SupplementalSourceId = "ainews" | "tldr-ai" | "alphasignal" | "ai-secret" | "mts-situations" | "cloudflare-agents";
 export type SourcePackSource = {
   id: SupplementalSourceId;
   name: string;
@@ -266,6 +266,8 @@ export type SupplementalCandidate = {
 export type ShadowCandidate = Pick<SupplementalCandidate, "title" | "summary" | "url" | "publishedAt" | "category" | "categoryLabel" | "score"> & {
   sourceIds: SupplementalSourceId[];
   sourceNames: string[];
+  /** Advisory classifier scores; never gates selection. Absent unless triage shadow scoring ran. */
+  triage?: { relevance: number | null; novelty: number | null };
 };
 export type SupplementalShadowReport = {
   schemaVersion: 1;

@@ -16,6 +16,7 @@
     "AI_QUALITY_FALLBACK_MODEL": "@cf/moonshotai/kimi-k2.6",
     "AI_GATEWAY_ID": "",
     "SUPPLEMENTAL_SHADOW_ENABLED": "true",
+    "TRIAGE_SHADOW_ENABLED": "false",
     "RSS_URL": "https://news.smol.ai/rss.xml"
   },
   "d1_databases": [
@@ -36,5 +37,32 @@
   "routes": [
     { "pattern": "signal.tamirlevin.dev", "custom_domain": true }
   ],
-  "triggers": { "crons": ["15 22 * * *"] }
+  "triggers": { "crons": ["15 22 * * *"] },
+  "env": {
+    "staging": {
+      "vars": {
+        "ENVIRONMENT": "staging",
+        "AI_MODEL": "@cf/openai/gpt-oss-120b",
+        "AI_FALLBACK_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+        "AI_QUALITY_FALLBACK_MODEL": "@cf/moonshotai/kimi-k2.6",
+        "AI_GATEWAY_ID": "",
+        "SUPPLEMENTAL_SHADOW_ENABLED": "true",
+        "TRIAGE_SHADOW_ENABLED": "true",
+        "RSS_URL": "https://news.smol.ai/rss.xml"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "ai-signal-staging",
+          "database_id": "d1d32bf8-9edf-463a-b151-8ea54abc2e4d",
+          "migrations_dir": "./migrations"
+        }
+      ],
+      "ai": { "binding": "AI" },
+      "triggers": { "crons": ["15 */2 * * *"] },
+      "routes": [
+        { "pattern": "testsignal.tamirlevin.dev", "custom_domain": true }
+      ]
+    }
+  }
 }

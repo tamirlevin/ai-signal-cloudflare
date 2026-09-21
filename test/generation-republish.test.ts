@@ -112,6 +112,7 @@ function fakeEnv(db: D1Database, modelCalls: string[]): Env {
     AI_QUALITY_FALLBACK_MODEL: "@cf/moonshotai/kimi-k2.6",
     AI_GATEWAY_ID: "",
     SUPPLEMENTAL_SHADOW_ENABLED: "false",
+    TRIAGE_SHADOW_ENABLED: "false",
     RSS_URL: "https://news.smol.ai/rss.xml"
   } as unknown as Env;
 }
@@ -166,7 +167,7 @@ describe("generation republish behavior", () => {
       expect(forcedCalls).toEqual(["@cf/openai/gpt-oss-120b", "@cf/meta/llama-3.3-70b-instruct-fp8-fast"]);
       expect(forcedStatements.some((statement) => statement.sql.startsWith("UPDATE editions SET"))).toBe(true);
       expect(forcedStatements.some((statement) => statement.sql.startsWith("UPDATE manual_republish_days"))).toBe(true);
-      expect(fetcher).toHaveBeenCalledTimes(6);
+      expect(fetcher).toHaveBeenCalledTimes(7);
 
       const limitedCalls: string[] = [];
       const limitedStatements: RecordedStatement[] = [];

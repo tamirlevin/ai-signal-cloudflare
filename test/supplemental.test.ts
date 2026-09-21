@@ -68,8 +68,8 @@ function dailyIssue(): RssIssue {
 describe("source packs", () => {
   it("defines one equal-source pack with a 72-hour collection horizon", () => {
     expect(DEFAULT_PROFILE.sourcePackId).toBe(DEFAULT_SOURCE_PACK_ID);
-    expect(SOURCE_PACKS[DEFAULT_SOURCE_PACK_ID]).toMatchObject({ id: "core-ai", version: 5 });
-    expect(SOURCE_PACKS[DEFAULT_SOURCE_PACK_ID].sources.map((source) => source.id)).toEqual(["ainews", "tldr-ai", "alphasignal", "ai-secret", "cloudflare-agents"]);
+    expect(SOURCE_PACKS[DEFAULT_SOURCE_PACK_ID]).toMatchObject({ id: "core-ai", version: 6 });
+    expect(SOURCE_PACKS[DEFAULT_SOURCE_PACK_ID].sources.map((source) => source.id)).toEqual(["ainews", "tldr-ai", "alphasignal", "ai-secret", "mts-situations", "cloudflare-agents"]);
     expect(SOURCE_PACKS[DEFAULT_SOURCE_PACK_ID].sources.filter((source) => source.lookbackHours).every((source) => source.lookbackHours === 72)).toBe(true);
     expect(SOURCE_PACKS[DEFAULT_SOURCE_PACK_ID].sources.find((source) => source.id === "alphasignal")?.url).toBe("https://alphasignal.ai/news-sitemap.xml");
   });
@@ -277,7 +277,7 @@ describe("daily equal-source pool", () => {
     const fetcher = (async () => new Response("unavailable", { status: 503 })) as typeof fetch;
     const sourceResults = await collectSupplementalSources({ profile: DEFAULT_PROFILE, now, fetcher });
     const inventory = buildDailyCandidateInventory({ sourceResults, profile: DEFAULT_PROFILE, now });
-    expect(sourceResults).toHaveLength(5);
+    expect(sourceResults).toHaveLength(6);
     expect(sourceResults.every((result) => result.health.status === "failed")).toBe(true);
     expect(inventory.candidates).toEqual([]);
   });
@@ -293,7 +293,7 @@ describe("daily equal-source pool", () => {
     const report = buildDailySourceReport({ issue: dailyIssue(), sourceResults, inventory, generatedAt: now.toISOString(), profile: DEFAULT_PROFILE });
     expect(report).toMatchObject({
       mode: "daily-pool",
-      sourcePack: { id: "core-ai", version: 5 },
+      sourcePack: { id: "core-ai", version: 6 },
       limits: { modelCandidates: 18, publishedStories: 14 },
       freshness: { preferredHours: 36, maxHours: 72, eligibleCandidates: 2 },
       totals: { selectedForBlend: 2 }

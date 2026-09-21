@@ -23,9 +23,9 @@ The compatibility date is pinned to `2026-08-11`. Move it forward only with a te
 
 Every run targets the current `Australia/Melbourne` calendar day. A normal refresh is idempotent for that date, so a repeated run skips after a successful edition already exists.
 
-The code-defined `core-ai` source pack v5 checks:
+The code-defined `core-ai` source pack v6 checks:
 
-- AInews, TLDR AI, AlphaSignal, and AI Secret as equal editorial discovery inputs;
+- AInews, TLDR AI, AlphaSignal, AI Secret, and MTS Situations as equal editorial discovery inputs;
 - Cloudflare Agents as a narrow primary-evidence lane; and
 - future feeds under the same timestamp, evidence, and ranking rules—never through source seniority.
 
@@ -44,6 +44,8 @@ The deterministic collector creates the story inventory, Hot Topics, source URLs
 AI Secret uses its full-content [Daily Rundown RSS](https://aisecret.us/tag/daily-rundown/rss/) in one bounded request, with no article crawling or extra model call. It parses up to six recent editions and 24 linked news items per edition from the factual “What's happening” paragraphs and Daily TL;DR lists. Sponsor blocks, recruitment promotions, images, commentary-only links, and unrecognized essay layouts are excluded. RSS publication dates represent reporting dates, not independently verified event dates. Empty/unrecognized output degrades this source report without blocking other sources. Shared feed downloads enforce byte limits while streaming.
 
 AlphaSignal uses its small Google News sitemap rather than its unbounded historical sitemap. The collector reads `news:publication_date` and `news:title`, retains `lastmod` and URL-title parsing only for legacy compatibility, and enriches at most eight recent articles in parallel. Sitemap, parse, and individual enrichment errors are labelled separately; there is no retry on the daily critical path.
+
+MTS Situations uses its public JSON briefing in one bounded request, with no article crawling or extra model call. Only `confirmed`/`developing` stories with a usable non-social evidence link become candidates; X-only stories are excluded under the unchanged no-X-cards rule. Lifecycle, timestamp, and evidence filtering happen before ranking; empty or unrecognized output degrades this source report without blocking other sources.
 
 Immediately before storage, one best-effort editorial QA call reviews the finished draft against the same candidate inventory. It can correct presentation and synthesis only; story cards, ranking, dates, profile, and collection metadata stay unchanged. The review looks for leaked drafting notes, promotional content, contradictions, unsupported claims, and story/citation mismatches. Corrections must pass the existing validation without automatic source substitution. This is an evidence-consistency check, not independent fact verification.
 
@@ -106,11 +108,21 @@ npm run dry-run
 git diff --check
 ```
 
-Then follow [AGENTS.md](AGENTS.md): push the reviewed commit to `main`, record the current deployment as rollback evidence, deploy with strict configuration and Git provenance, verify public and D1 state, and record consequential evidence in [PROJECT_HISTORY.md](PROJECT_HISTORY.md). No D1 migration is needed for the v5 pool; historical 48-hour and legacy editions remain readable.
+Then follow [AGENTS.md](AGENTS.md): push the reviewed commit to `main`, record the current deployment as rollback evidence, deploy with strict configuration and Git provenance, verify public and D1 state, and record consequential evidence in [PROJECT_HISTORY.md](PROJECT_HISTORY.md). No D1 migration is needed for the v6 pool; historical 48-hour and legacy editions remain readable.
 
 The bounded September 2026 profile experiment is reproducible with `npm run replay:ai-secret -- 2026-09-09` (optional `--details` or `--live-pool`). It reads the currently available feed and public profile, records their identity, and compares ten 08:15 AEST snapshots. It makes no model calls, D1 writes, or publications. This is not an immutable archive or a historical reconstruction of all sources; results change as the feed/profile changes. The optional live-pool comparison collects current sources only.
 
 The configured cron is `15 22 * * *` UTC: 08:15 Melbourne during AEST and 09:15 during AEDT. Cloudflare cron has no Melbourne timezone setting.
+
+## Staging environment
+
+`env.staging` in `wrangler.jsonc` deploys the same worker to `testsignal.tamirlevin.dev` with its own D1 database (`ai-signal-staging`), its own `ADMIN_TOKEN` secret, and a 2-hour test schedule (`15 */2 * * *` UTC) instead of the daily production cron:
+
+```bash
+npx wrangler deploy --env staging --tag git-<short-sha>-staging --message "Git <full-sha>; <summary>"
+```
+
+Staging exists so experiment branches run against real Cloudflare egress without touching production data, schedule, or spend: the 2-hour cadence yields same-day idempotent skips plus fresh shadow/funnel reads, and any extra generation is an explicit owner `POST /api/refresh`. `ENVIRONMENT=staging` unlocks the `/__scheduled` and `/__shadow` test routes. Promote to production only by merging to `main` and following the release rules in [AGENTS.md](AGENTS.md).
 
 ## API
 

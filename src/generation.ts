@@ -1,9 +1,10 @@
 import type { Edition, ModelAttemptAudit, RssIssue, RunResult, Source } from "./contracts";
 import { reviewEditorialEdition } from "./editorial-qa";
 import { deterministicEditorialEdition, editorialMessages, extractGeneratedEdition, generationInput, issueFromCandidateInventory, materializeCandidateStories, ModelJsonError, ModelOutputTruncatedError, modelResponseDiagnostic, type ModelResponseDiagnostic } from "./editorial";
-import { claimManualRepublish, completeManualRepublish, errorCode, getActiveProfile, insertEdition, melbourneCalendarDay, publishedEditionState, recordRun, recordSupplementalShadowRun, releaseManualRepublish, replaceEdition, type ManualRepublishClaim } from "./repository";
+import { claimManualRepublish, completeManualRepublish, errorCode, getActiveProfile, insertEdition, latestEdition, melbourneCalendarDay, publishedEditionState, recordRun, recordSupplementalShadowRun, releaseManualRepublish, replaceEdition, type ManualRepublishClaim } from "./repository";
 import { normalizeEditionStories } from "./story-normalization";
 import { buildDailyCandidateInventory, buildDailySourceReport, collectSupplementalSources } from "./supplemental";
+import { attachTriageScores, scoreTriage, triageShadowEnabled } from "./triage";
 import { ValidationError, validateEdition, validatePresentationDiversity, validateSynthesisDiversity } from "./validation";
 
 type Trigger = "cron" | "manual" | "local-scheduled";
@@ -235,6 +236,11 @@ export async function generateLatestEdition(env: Env, trigger: Trigger, options:
     };
     const sourceCatalog = buildPermittedSourceCatalog(sourceIssue);
     const report = buildDailySourceReport({ issue, sourceResults, inventory, generatedAt: new Date().toISOString(), profile });
+    if (triageShadowEnabled(env)) {
+      const prior = await latestEdition(env.DB).catch(() => null);
+      const priorTexts = prior ? prior.signals.map((signal) => `${signal.title} — ${signal.summary}`) : [];
+      attachTriageScores(report, await scoreTriage(env.AI, profile, report.wouldAdd, priorTexts));
+    }
     const failedSources = report.sources.filter((source) => source.status === "failed").length;
     const degradedSources = report.sources.filter((source) => source.status === "degraded").length;
     const sourceStatus = failedSources === report.sources.length ? "failed" : failedSources || degradedSources ? "degraded" : "healthy";

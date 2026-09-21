@@ -17,8 +17,9 @@ import type {
 } from "./contracts";
 import { categoryForProfile, compactIssueInventory, isPermissionDesignSignal, scoreCandidateForProfile } from "./editorial";
 import { fetchLatestRss } from "./rss";
-import { getActiveProfile, melbourneCalendarDay, recordSupplementalShadowRun } from "./repository";
+import { getActiveProfile, latestEdition, melbourneCalendarDay, recordSupplementalShadowRun } from "./repository";
 import { getSourcePack } from "./source-packs";
+import { attachTriageScores, scoreTriage, triageShadowEnabled } from "./triage";
 
 type Fetcher = typeof fetch;
 export type SourceResult = { candidates: SupplementalCandidate[]; health: SupplementalSourceHealth; issue?: RssIssue };
@@ -484,6 +485,86 @@ async function collectAiSecret(profile: Profile, now: Date, fetcher: Fetcher, so
   }
 }
 
+type MtsStorySource = { name?: unknown; url?: unknown; postedAt?: unknown };
+type MtsStory = { name?: unknown; description?: unknown; lifecycle?: unknown; createdAt?: unknown; sources?: unknown };
+
+const MTS_ELIGIBLE_LIFECYCLES = new Set(["confirmed", "developing"]);
+const MTS_SITUATIONS_URL = "https://www.mts.now/situations";
+
+function mtsEvidenceUrl(sources: MtsStorySource[]): string | undefined {
+  const urls = sources
+    .map((item) => typeof item.url === "string" ? canonicalizeSupplementalUrl(item.url) : undefined)
+    .filter((value): value is string => Boolean(value));
+  const usable = urls.filter((value) => {
+    try {
+      const host = new URL(value).hostname.toLowerCase();
+      return !socialHost(host) && !aggregatorHost(host);
+    } catch {
+      return false;
+    }
+  });
+  // Prefer a direct article link; a Google News redirect wrapper stays eligible
+  // as non-social evidence but never outranks a direct link.
+  return usable.find((value) => !/news\.google\.com$/i.test(new URL(value).hostname)) ?? usable[0];
+}
+
+/** Parse the MTS Situations JSON briefing. X-only stories without a usable
+ *  evidence link are skipped here, under the unchanged no-X-only-cards rule. */
+export function parseMtsSituations(json: string, now: Date, profile: Profile, source = sourceDefinition(profile, "mts-situations")): SupplementalCandidate[] {
+  if (!source) return [];
+  const cutoff = now.getTime() - (source.lookbackHours ?? 72) * 3_600_000;
+  let payload: unknown;
+  try {
+    payload = JSON.parse(json);
+  } catch {
+    throw new Error("MTS Situations returned no JSON briefing");
+  }
+  const stories = (payload !== null && typeof payload === "object" && Array.isArray((payload as { stories?: unknown }).stories)
+    ? (payload as { stories: unknown }).stories as MtsStory[]
+    : []);
+  return stories.flatMap((story): SupplementalCandidate[] => {
+    if (!story || typeof story !== "object") return [];
+    if (!MTS_ELIGIBLE_LIFECYCLES.has(typeof story.lifecycle === "string" ? story.lifecycle : "")) return [];
+    const publishedAt = typeof story.createdAt === "string" ? isoDate(story.createdAt) : undefined;
+    if (!publishedAt || Date.parse(publishedAt) < cutoff || Date.parse(publishedAt) > now.getTime()) return [];
+    const title = typeof story.name === "string" ? story.name.trim() : "";
+    if (!title) return [];
+    const summary = typeof story.description === "string" && story.description.trim() ? story.description.trim().slice(0, 600) : title;
+    const url = mtsEvidenceUrl(Array.isArray(story.sources) ? story.sources as MtsStorySource[] : []);
+    if (!url) return [];
+    return [prepareCandidate({
+      title,
+      summary,
+      url,
+      publishedAt,
+      sourceAttributions: [attribution(source, MTS_SITUATIONS_URL)]
+    }, profile)];
+  });
+}
+
+async function collectMts(profile: Profile, now: Date, fetcher: Fetcher, source: SourceDefinition): Promise<SourceResult> {
+  const health = sourceHealth(source);
+  let stage = "feed";
+  try {
+    health.requests = 1;
+    const body = await boundedText(fetcher, source.url, MAX_FEED_BYTES, "application/json");
+    stage = "parse";
+    const parsed = JSON.parse(body) as { stories?: unknown[] };
+    health.fetchedItems = Array.isArray(parsed?.stories) ? parsed.stories.length : 0;
+    const candidates = parseMtsSituations(body, now, profile, source);
+    recordYield(health, candidates.length);
+    if (!candidates.length) {
+      health.status = "degraded";
+      health.errors.push("yield: no lifecycle-eligible MTS stories with usable non-social evidence in the collection window");
+    }
+    return { candidates, health };
+  } catch (error) {
+    health.status = "failed";
+    health.errors.push(stagedError(stage, error));
+    return { candidates: [], health };
+  }
+}
+
 export async function collectSupplementalSources(input: { profile: Profile; now?: Date; fetcher?: Fetcher; rssUrl?: string }): Promise<SourceResult[]> {
   const now = input.now ?? new Date();
   const fetcher = input.fetcher ?? fetch;
@@ -494,6 +575,7 @@ export async function collectSupplementalSources(input: { profile: Profile; now?
       case "tldr-ai": return collectTldr(input.profile, fetcher, source);
       case "alphasignal": return collectAlpha(input.profile, now, fetcher, source);
       case "ai-secret": return collectAiSecret(input.profile, now, fetcher, source);
+      case "mts-situations": return collectMts(input.profile, now, fetcher, source);
       case "cloudflare-agents": return collectCloudflare(input.profile, now, fetcher, source);
     }
   }));
@@ -921,6 +1003,12 @@ export async function runSupplementalShadow(env: Env, trigger: "cron" | "manual"
   try {
     const profile = await getActiveProfile(env.DB);
     const report = await collectSupplementalShadow({ rssUrl: env.RSS_URL, profile });
+    if (triageShadowEnabled(env)) {
+      const prior = await latestEdition(env.DB).catch(() => null);
+      const priorTexts = prior ? prior.signals.map((signal) => `${signal.title} — ${signal.summary}`) : [];
+      const scores = await scoreTriage(env.AI, profile, report.wouldAdd, priorTexts);
+      attachTriageScores(report, scores);
+    }
     const failedSources = report.sources.filter((source) => source.status === "failed").length;
     const degradedSources = report.sources.filter((source) => source.status === "degraded").length;
     const status = failedSources === report.sources.length ? "failed" : failedSources || degradedSources ? "degraded" : "healthy";

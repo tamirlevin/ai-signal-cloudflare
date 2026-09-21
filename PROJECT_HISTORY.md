@@ -172,13 +172,16 @@ The follow-on shadow run was healthy in 1,557 ms using `core-ai` v1. TLDR AI, Al
 3. Anchor synthesis sections to validated candidate IDs and derive their source links server-side.
 4. Revisit fallback structured-output support only if the new diagnostics show another real GLM output failure; preserve model-family diversity unless evidence justifies changing it.
 5. Optionally correct the Melbourne summer-time shift with two UTC schedules plus an in-handler local-time gate; leave it alone if 09:15 AEDT is acceptable.
+6. Trial MTS Situations as an equal discovery source (source-pack v6 candidate): admit only confirmed/developing stories with direct non-social evidence links under the unchanged evidence, freshness, and profile-fit gates; disable it if the per-source funnel shows no selected cards within days.
+7. Add a read-only public distribution layer over published editions only: versioned JSON endpoints with CORS and edge-cacheable headers plus an llms.txt discovery document, after the AlphaSignal v5 live run confirms green. No admin, visits, shadow, or write surface; no new product system until consumers appear.
+8. Select the AInews issue by validated URL-slug date across the first several RSS items only if the publisher's pubDate disorder persists; the shared issue timestamp remains accepted behavior otherwise.
 
 ### Architectural guardrails
 
 - The deterministic collector, not the model, materialises the story inventory.
 - The model cannot introduce stories or source URLs.
 - Editorial corroboration is never described as proof.
-- AInews, TLDR AI, AlphaSignal, and AI Secret enter one equal editorial pool; no source receives seniority.
+- AInews, TLDR AI, AlphaSignal, AI Secret, and MTS Situations enter one equal editorial pool; no source receives seniority.
 - One failed or quiet source does not block a usable pool from the others.
 - Prefer the first 36 hours; use 48 hours normally and expand once to 72 hours only when fewer than 10 qualified, deduplicated candidates remain. Never admit older material or weaken evidence/relevance rules to fill a target.
 - X/Twitter is background noise and cannot become a published card or corroborating source.

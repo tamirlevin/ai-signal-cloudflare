@@ -12,6 +12,7 @@ const fakeEnv = (adminToken?: string) => ({
   AI_QUALITY_FALLBACK_MODEL: "@cf/moonshotai/kimi-k2.6" as const,
   AI_GATEWAY_ID: "" as const,
   SUPPLEMENTAL_SHADOW_ENABLED: "true" as const,
+  TRIAGE_SHADOW_ENABLED: "false" as const,
   RSS_URL: "https://news.smol.ai/rss.xml" as const
 });
 

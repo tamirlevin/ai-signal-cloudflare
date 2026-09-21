@@ -117,6 +117,7 @@ describe("generation model fallback", () => {
       AI_QUALITY_FALLBACK_MODEL: "@cf/moonshotai/kimi-k2.6",
       AI_GATEWAY_ID: "",
       SUPPLEMENTAL_SHADOW_ENABLED: "true",
+      TRIAGE_SHADOW_ENABLED: "false",
       RSS_URL: "https://news.smol.ai/rss.xml"
     } as unknown as Env;
 
@@ -137,7 +138,7 @@ describe("generation model fallback", () => {
       expect(modelInputs[1]).not.toHaveProperty("reasoning_effort");
       expect(modelInputs[2]).toHaveProperty("max_tokens", 3200);
       expect(JSON.stringify(modelInputs[2])).toContain("ai_signal_editorial_review");
-      expect(fetcher).toHaveBeenCalledTimes(6);
+      expect(fetcher).toHaveBeenCalledTimes(7);
       const successfulRun = runStatements.find((statement) => statement.sql.startsWith("INSERT INTO runs"));
       expect(successfulRun?.values[4]).toBe("success");
       expect(successfulRun?.values[5]).toBe("@cf/meta/llama-3.3-70b-instruct-fp8-fast");
@@ -175,6 +176,7 @@ describe("generation model fallback", () => {
       AI_QUALITY_FALLBACK_MODEL: "@cf/moonshotai/kimi-k2.6",
       AI_GATEWAY_ID: "",
       SUPPLEMENTAL_SHADOW_ENABLED: "true",
+      TRIAGE_SHADOW_ENABLED: "false",
       RSS_URL: "https://news.smol.ai/rss.xml"
     } as unknown as Env;
 
