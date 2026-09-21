@@ -32,9 +32,9 @@ function fakeDb() {
   } as unknown as D1Database;
 }
 
-function fakeEnv(adminToken?: string) {
+function fakeEnv(adminToken = "test-token") {
   return {
-    ...(adminToken ? { ADMIN_TOKEN: adminToken } : {}),
+    ADMIN_TOKEN: adminToken,
     DB: fakeDb(),
     AI: {} as Ai,
     ASSETS: { fetch: async () => new Response("<!doctype html><title>AI Signal</title>", { headers: { "Content-Type": "text/html" } }) } as unknown as Fetcher,

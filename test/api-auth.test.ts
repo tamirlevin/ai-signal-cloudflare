@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import worker from "../src/index";
 
-const fakeEnv = (adminToken?: string) => ({
-  ...(adminToken ? { ADMIN_TOKEN: adminToken } : {}),
+const fakeEnv = (adminToken = "test-token") => ({
+  ADMIN_TOKEN: adminToken,
   DB: {} as D1Database,
   AI: {} as Ai,
   ASSETS: {} as Fetcher,
