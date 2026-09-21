@@ -4,7 +4,7 @@ import { deterministicEditorialEdition, editorialMessages, extractGeneratedEditi
 import { claimManualRepublish, completeManualRepublish, errorCode, getActiveProfile, insertEdition, latestEdition, melbourneCalendarDay, publishedEditionState, recordRun, recordSupplementalShadowRun, releaseManualRepublish, replaceEdition, type ManualRepublishClaim } from "./repository";
 import { normalizeEditionStories } from "./story-normalization";
 import { buildDailyCandidateInventory, buildDailySourceReport, collectSupplementalSources } from "./supplemental";
-import { attachTriageScores, scoreTriage, triageShadowEnabled } from "./triage";
+import { attachTriageScores, scoreTriage, triageShadowEnabled, type TriageScores } from "./triage";
 import { ValidationError, validateEdition, validatePresentationDiversity, validateSynthesisDiversity } from "./validation";
 
 type Trigger = "cron" | "manual" | "local-scheduled";
@@ -235,7 +235,7 @@ export async function generateLatestEdition(env: Env, trigger: Trigger, options:
       anchors: inventory.candidates.flatMap((candidate) => candidate.sources)
     };
     const sourceCatalog = buildPermittedSourceCatalog(sourceIssue);
-    let triage: Map<string, { relevance: number | null; raw: number | null; novelty: number | null }> | undefined;
+    let triage: Map<string, TriageScores> | undefined;
     if (triageShadowEnabled(env)) {
       const prior = await latestEdition(env.DB).catch(() => null);
       const priorTexts = prior ? prior.signals.map((signal) => `${signal.title} — ${signal.summary}`) : [];

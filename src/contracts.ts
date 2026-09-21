@@ -238,6 +238,8 @@ export type TriageScoredItem = {
   relevance: number | null;
   /** Raw combined reranker score before per-run normalization; comparable only within its run. */
   rawRelevance: number | null;
+  /** Per-interest query with the highest raw score; null when unscored. Weights gate queries, never scale scores. */
+  winningInterest: string | null;
   /** Dense rank by relevance within the run (1 = best); null when unscored. */
   rank: number | null;
   novelty: number | null;

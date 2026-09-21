@@ -19,7 +19,7 @@ import { categoryForProfile, compactIssueInventory, isPermissionDesignSignal, sc
 import { fetchLatestRss } from "./rss";
 import { getActiveProfile, latestEdition, melbourneCalendarDay, recordSupplementalShadowRun } from "./repository";
 import { getSourcePack } from "./source-packs";
-import { attachTriageScores, rankTriageScores, scoreTriage, triageShadowEnabled } from "./triage";
+import { attachTriageScores, rankTriageScores, scoreTriage, triageShadowEnabled, type TriageScores } from "./triage";
 
 type Fetcher = typeof fetch;
 export type SourceResult = { candidates: SupplementalCandidate[]; health: SupplementalSourceHealth; issue?: RssIssue };
@@ -946,7 +946,7 @@ export function buildDailySourceReport(input: {
   inventory: DailyCandidateInventory;
   generatedAt: string;
   profile: Profile;
-  triage?: Map<string, { relevance: number | null; raw: number | null; novelty: number | null }>;
+  triage?: Map<string, TriageScores>;
 }): SupplementalShadowReport {
   const allCandidates = input.sourceResults.flatMap((result) => result.candidates);
   const selected = input.inventory.candidates.map((candidate): SupplementalShadowReport["wouldAdd"][number] => ({
@@ -965,7 +965,7 @@ export function buildDailySourceReport(input: {
   const triageScores = input.triage?.size
     ? rankTriageScores(input.inventory.evaluated.map((item) => {
       const scores = input.triage!.get(item.url);
-      return { ...item, relevance: scores?.relevance ?? null, rawRelevance: scores?.raw ?? null, novelty: scores?.novelty ?? null };
+      return { ...item, relevance: scores?.relevance ?? null, rawRelevance: scores?.raw ?? null, winningInterest: scores?.winningInterest ?? null, novelty: scores?.novelty ?? null };
     }))
     : undefined;
   for (const item of selected) {
@@ -1039,7 +1039,7 @@ export async function runSupplementalShadow(env: Env, trigger: "cron" | "manual"
     };
     const sourceResults = await collectSupplementalSources({ profile, now, rssUrl: env.RSS_URL });
     const inventory = buildDailyCandidateInventory({ sourceResults, profile, now });
-    let triage: Map<string, { relevance: number | null; raw: number | null; novelty: number | null }> | undefined;
+    let triage: Map<string, TriageScores> | undefined;
     if (triageShadowEnabled(env)) {
       const prior = await latestEdition(env.DB).catch(() => null);
       const priorTexts = prior ? prior.signals.map((signal) => `${signal.title} — ${signal.summary}`) : [];

@@ -5,7 +5,7 @@ export const TRIAGE_EMBEDDING_MODEL = "@cf/qwen/qwen3-embedding-0.6b";
 const MAX_TRIAGE_TEXTS = 128;
 const MAX_TRIAGE_CHARS = 600;
 
-export type TriageScores = { relevance: number | null; raw: number | null; novelty: number | null };
+export type TriageScores = { relevance: number | null; raw: number | null; novelty: number | null; winningInterest: string | null };
 
 type AiRunner = { run: (model: string, input: Record<string, unknown>) => Promise<unknown> };
 
@@ -16,15 +16,19 @@ export function triageShadowEnabled(env: Env): boolean {
 export type ProfileInterest = { label: string; weight: number; query: string };
 
 /**
- * One retrieval query per positive-weight interest, so equal weights are never
- * silently dropped and magnitudes combine explicitly. Watching topics stay.
+ * One short retrieval query per positive-weight interest, so equal weights are
+ * never silently dropped and each interest is measured on its own. Watching
+ * topics run as their own weight-1 queries instead of an identical tail on
+ * every interest, which previously collapsed per-interest discrimination.
+ * Weights gate which queries run; they never scale scores.
  */
 export function buildProfileQueries(profile: Profile): ProfileInterest[] {
-  const watching = [...profile.pinnedCategories, ...profile.watching].join("; ");
-  return [...profile.weights]
+  const interests = [...profile.weights]
     .filter((weight) => weight.value > 0)
     .sort((left, right) => right.value - left.value || left.label.localeCompare(right.label))
-    .map((weight) => ({ label: weight.label, weight: weight.value, query: `${weight.label}. Watching: ${watching}.` }));
+    .map((weight) => ({ label: weight.label, weight: weight.value, query: `${weight.label}.` }));
+  const topics = [...new Set([...profile.pinnedCategories, ...profile.watching])].sort((left, right) => left.localeCompare(right));
+  return [...interests, ...topics.map((topic) => ({ label: `Watching: ${topic}`, weight: 1, query: `${topic}.` }))];
 }
 
 export function triageText(title: string, summary: string): string {
@@ -38,8 +42,8 @@ function rawScore(value: unknown): number | null {
 
 /**
  * The reranker compresses absolute scores near zero, so only ordering carries
- * signal. Min-max normalize one run's raw scores into [0,1]; a pool with no
- * spread carries no information and normalizes to 0.5.
+ * signal. Min-max normalize one run's raw scores into [0,1] at full precision;
+ * a pool with no spread carries no information and normalizes to 0.5.
  */
 export function normalizeScores(raw: Array<number | null>): Array<number | null> {
   const present = raw.filter((value): value is number => value !== null);
@@ -47,7 +51,7 @@ export function normalizeScores(raw: Array<number | null>): Array<number | null>
   const min = Math.min(...present);
   const max = Math.max(...present);
   if (max === min) return raw.map((value) => (value === null ? null : 0.5));
-  return raw.map((value) => (value === null ? null : Math.round(((value - min) / (max - min)) * 1000) / 1000));
+  return raw.map((value) => (value === null ? null : (value - min) / (max - min)));
 }
 
 function cosine(left: number[], right: number[]): number {
@@ -84,7 +88,10 @@ function responseScores(raw: unknown): Map<number, number | null> {
  * Advisory relevance + novelty scores over the full fresh pool, including rows
  * the keyword gates rejected. One reranker call per profile interest plus one
  * embedding call; any failure yields no scores rather than failing the run.
- * Never gates selection or publication.
+ * Relevance means relevant to any interest: the combined raw is the max over
+ * per-interest scores at full precision, with the winning query recorded so
+ * the log shows which interests actually fire. Never gates selection or
+ * publication.
  */
 export async function scoreTriage(
   ai: AiRunner,
@@ -101,17 +108,20 @@ export async function scoreTriage(
     const perInterest = await Promise.all(interests.map((interest) =>
       ai.run(TRIAGE_RERANKER_MODEL, { query: interest.query, contexts }).then(responseScores)
     ));
-    const raws: Array<number | null> = selected.map((_, index) => {
-      let weighted = 0;
-      let weights = 0;
+    const combined = selected.map((_, index) => {
+      let best: number | null = null;
+      let winner: string | null = null;
       perInterest.forEach((response, interestIndex) => {
         const value = response.get(index);
         if (value === null || value === undefined) return;
-        weighted += value * interests[interestIndex]!.weight;
-        weights += interests[interestIndex]!.weight;
+        if (best === null || value > best) {
+          best = value;
+          winner = interests[interestIndex]!.label;
+        }
       });
-      return weights > 0 ? Math.round((weighted / weights) * 10000) / 10000 : null;
+      return { raw: best, winner };
     });
+    const raws = combined.map((entry) => entry.raw);
     const normalized = normalizeScores(raws);
     const texts = selected.map((item) => triageText(item.title, item.summary));
     const prior = priorTexts.slice(0, MAX_TRIAGE_TEXTS).map((text) => text.slice(0, MAX_TRIAGE_CHARS));
@@ -131,9 +141,9 @@ export async function scoreTriage(
           maxSimilarity = Math.max(maxSimilarity, cosine(vector, vectors[other]!));
         }
         for (const previous of priorVectors) maxSimilarity = Math.max(maxSimilarity, cosine(vector, previous));
-        if (maxSimilarity >= 0) novelty = Math.round((1 - maxSimilarity) * 1000) / 1000;
+        if (maxSimilarity >= 0) novelty = 1 - maxSimilarity;
       }
-      scores.set(item.url, { relevance: normalized[index] ?? null, raw: raws[index] ?? null, novelty });
+      scores.set(item.url, { relevance: normalized[index] ?? null, raw: raws[index] ?? null, winningInterest: combined[index]!.winner, novelty });
     });
   } catch (error) {
     console.warn(JSON.stringify({ message: "ai-signal triage shadow scoring skipped", error: error instanceof Error ? error.message : String(error) }));
@@ -147,6 +157,7 @@ export async function scoreTriage(
  */
 export function rankTriageScores(items: Array<{
   url: string; title: string; relevance: number | null; rawRelevance: number | null; novelty: number | null;
+  winningInterest: string | null;
   outcome: TriageScoredItem["outcome"]; sourceIds: TriageScoredItem["sourceIds"];
 }>): TriageScoredItem[] {
   const ordered = [...items].sort((left, right) => (right.relevance ?? -1) - (left.relevance ?? -1));
@@ -169,6 +180,7 @@ export function rankTriageScores(items: Array<{
     title: item.title,
     relevance: item.relevance,
     rawRelevance: item.rawRelevance,
+    winningInterest: item.winningInterest,
     rank: ranks.get(item.url) ?? null,
     novelty: item.novelty,
     outcome: item.outcome,
