@@ -1,4 +1,5 @@
 import { generateLatestEdition } from "./generation";
+import { runJev } from "./jev";
 import { getActiveProfile, getEdition, latestEdition, latestRunStatus, latestScheduledRunStatus, latestSupplementalShadowRun, listEditions, scheduledHeartbeat, updateProfile } from "./repository";
 import { runSupplementalShadow } from "./supplemental";
 import { ValidationError } from "./validation";
@@ -139,7 +140,7 @@ async function api(request: Request, env: Env, url: URL, ctx: ExecutionContext):
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
-    if ((url.pathname === "/__scheduled" || url.pathname === "/__shadow") && env.ENVIRONMENT === "production") return error("not found", 404);
+    if ((url.pathname === "/__scheduled" || url.pathname === "/__shadow" || url.pathname === "/__jev-probe") && env.ENVIRONMENT === "production") return error("not found", 404);
     try {
       if (url.pathname === "/__scheduled" && env.ENVIRONMENT !== "production") {
         if (!(await isAdmin(request, env))) return error("unauthorized", 401);
@@ -147,6 +148,13 @@ export default {
       }
       if (url.pathname === "/__shadow" && env.ENVIRONMENT !== "production") {
         return json(await runSupplementalShadow(env, "local-scheduled"));
+      }
+      if (url.pathname === "/__jev-probe" && env.ENVIRONMENT !== "production") {
+        if (request.method !== "POST") return error("method not allowed", 405);
+        const started = Date.now();
+        const input = await request.json();
+        const response = await runJev(env.AI, input as { state: unknown; questions: Record<string, { type: "noul" | "choice" | "score"; instructions: string }> });
+        return json({ response, durationMs: Date.now() - started });
       }
       const response = await api(request, env, url, ctx);
       if (response) return response;
