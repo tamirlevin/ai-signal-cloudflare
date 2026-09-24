@@ -23,9 +23,10 @@ The compatibility date is pinned to `2026-08-11`. Move it forward only with a te
 
 Every run targets the current `Australia/Melbourne` calendar day. A normal refresh is idempotent for that date, so a repeated run skips after a successful edition already exists.
 
-The code-defined `core-ai` source pack v6 checks:
+The code-defined `core-ai` source pack v7 checks:
 
 - AInews, TLDR AI, AlphaSignal, AI Secret, and MTS Situations as equal editorial discovery inputs;
+- AI Brief (daily runs API) as an equal discovery input carrying pre-triaged community signal (Hacker News, InfoQ, practitioner blogs);
 - Cloudflare Agents as a narrow primary-evidence lane; and
 - future feeds under the same timestamp, evidence, and ranking rules—never through source seniority.
 
@@ -108,7 +109,7 @@ npm run dry-run
 git diff --check
 ```
 
-Then follow [AGENTS.md](AGENTS.md): push the reviewed commit to `main`, record the current deployment as rollback evidence, deploy with strict configuration and Git provenance, verify public and D1 state, and record consequential evidence in [PROJECT_HISTORY.md](PROJECT_HISTORY.md). No D1 migration is needed for the v6 pool; historical 48-hour and legacy editions remain readable.
+Then follow [AGENTS.md](AGENTS.md): push the reviewed commit to `main`, record the current deployment as rollback evidence, deploy with strict configuration and Git provenance, verify public and D1 state, and record consequential evidence in [PROJECT_HISTORY.md](PROJECT_HISTORY.md). No D1 migration is needed for the v7 pool; historical 48-hour and legacy editions remain readable.
 
 The bounded September 2026 profile experiment is reproducible with `npm run replay:ai-secret -- 2026-09-09` (optional `--details` or `--live-pool`). It reads the currently available feed and public profile, records their identity, and compares ten 08:15 AEST snapshots. It makes no model calls, D1 writes, or publications. This is not an immutable archive or a historical reconstruction of all sources; results change as the feed/profile changes. The optional live-pool comparison collects current sources only.
 

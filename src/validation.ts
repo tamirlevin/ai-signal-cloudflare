@@ -50,7 +50,7 @@ function sources(value: unknown, path: string, permittedUrls?: Set<string>): Sou
 function storySource(value: unknown, path: string): StorySourceAttribution {
   const source = object(value, path);
   const id = text(source.id, `${path}.id`);
-  if (!new Set(["ainews", "tldr-ai", "alphasignal", "ai-secret", "mts-situations", "cloudflare-agents"]).has(id)) throw new ValidationError(`${path}.id is not a recognized source`);
+  if (!new Set(["ainews", "tldr-ai", "alphasignal", "ai-secret", "mts-situations", "ai-brief", "cloudflare-agents"]).has(id)) throw new ValidationError(`${path}.id is not a recognized source`);
   const layer = text(source.layer, `${path}.layer`);
   if (layer !== "editorial" && layer !== "primary") throw new ValidationError(`${path}.layer is invalid`);
   return { id: id as StorySourceAttribution["id"], name: text(source.name, `${path}.name`), layer };
@@ -58,7 +58,7 @@ function storySource(value: unknown, path: string): StorySourceAttribution {
 
 function storyCoverage(value: unknown, path: string): StoryCoverage {
   const coverage = object(value, path);
-  const permittedEditorialIds = new Set(["ainews", "tldr-ai", "alphasignal", "ai-secret", "mts-situations"]);
+  const permittedEditorialIds = new Set(["ainews", "tldr-ai", "alphasignal", "ai-secret", "mts-situations", "ai-brief"]);
   const editorialSourceIds = list(coverage.editorialSourceIds, `${path}.editorialSourceIds`, 0, 4).map((item, index) => {
     const id = text(item, `${path}.editorialSourceIds[${index}]`);
     if (!permittedEditorialIds.has(id)) throw new ValidationError(`${path}.editorialSourceIds[${index}] is not an editorial source`);

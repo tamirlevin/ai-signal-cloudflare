@@ -565,6 +565,112 @@ async function collectMts(profile: Profile, now: Date, fetcher: Fetcher, source:
   }
 }
 
+type AiBriefItem = { title?: unknown; url?: unknown; canonicalUrl?: unknown; publishedAt?: unknown; summary?: unknown; briefSummary?: unknown };
+type AiBriefRun = { runId?: unknown; issueDate?: unknown; items?: unknown };
+
+const AI_BRIEF_MAX_RUNS = 3;
+
+function aiBriefOrigin(source: SourceDefinition): string {
+  try {
+    return new URL(source.url).origin;
+  } catch {
+    return "https://ai-weekly-brief.tamirlevin300024.chatgpt.site";
+  }
+}
+
+/** Parse one AI Brief daily run. Items need a verifiable non-social evidence
+ *  URL; social-only items are skipped under the unchanged evidence rule. */
+export function parseAiBriefRun(json: string, now: Date, profile: Profile, source = sourceDefinition(profile, "ai-brief")): { candidates: SupplementalCandidate[]; fetched: number } {
+  if (!source) return { candidates: [], fetched: 0 };
+  const cutoff = now.getTime() - (source.lookbackHours ?? 72) * 3_600_000;
+  let payload: unknown;
+  try {
+    payload = JSON.parse(json);
+  } catch {
+    throw new Error("AI Brief returned no JSON run");
+  }
+  const run = (payload !== null && typeof payload === "object" && "run" in payload
+    ? (payload as { run?: unknown }).run
+    : payload) as AiBriefRun | null;
+  const items = run !== null && typeof run === "object" && Array.isArray(run.items) ? run.items as AiBriefItem[] : [];
+  const runUrl = run !== null && typeof run === "object" && typeof run.runId === "string"
+    ? `${aiBriefOrigin(source)}/api/runs/${encodeURIComponent(run.runId)}`
+    : source.url;
+  const candidates: SupplementalCandidate[] = [];
+  for (const item of items) {
+    if (!item || typeof item !== "object") continue;
+    const title = typeof item.title === "string" ? item.title.trim() : "";
+    if (!title) continue;
+    const publishedAt = typeof item.publishedAt === "string" ? isoDate(item.publishedAt) : undefined;
+    if (!publishedAt || Date.parse(publishedAt) < cutoff || Date.parse(publishedAt) > now.getTime()) continue;
+    const url = canonicalizeSupplementalUrl(typeof item.canonicalUrl === "string" && item.canonicalUrl ? item.canonicalUrl : typeof item.url === "string" ? item.url : "");
+    if (!url) continue;
+    try {
+      const host = new URL(url).hostname.toLowerCase();
+      if (socialHost(host) || aggregatorHost(host)) continue;
+    } catch {
+      continue;
+    }
+    const summary = (typeof item.summary === "string" && item.summary.trim()
+      ? item.summary.trim()
+      : typeof item.briefSummary === "string" ? item.briefSummary.trim() : "").slice(0, 600) || title;
+    candidates.push(prepareCandidate({
+      title,
+      summary,
+      url,
+      publishedAt,
+      sourceAttributions: [attribution(source, runUrl)]
+    }, profile));
+  }
+  return { candidates, fetched: items.length };
+}
+
+async function collectAiBrief(profile: Profile, now: Date, fetcher: Fetcher, source: SourceDefinition): Promise<SourceResult> {
+  const health = sourceHealth(source);
+  let stage = "runs";
+  try {
+    const listBody = await boundedText(fetcher, source.url, MAX_FEED_BYTES, "application/json");
+    stage = "parse";
+    let list: unknown;
+    try {
+      list = JSON.parse(listBody);
+    } catch {
+      throw new Error("AI Brief returned no JSON run list");
+    }
+    const runs = (list !== null && typeof list === "object" && Array.isArray((list as { runs?: unknown }).runs)
+      ? (list as { runs: unknown }).runs as AiBriefRun[]
+      : []);
+    const cutoff = now.getTime() - (source.lookbackHours ?? 72) * 3_600_000;
+    const fresh = runs
+      .filter((run) => run !== null && typeof run === "object" && typeof run.issueDate === "string" && Date.parse(run.issueDate) >= cutoff)
+      .sort((left, right) => String(right.issueDate).localeCompare(String(left.issueDate)))
+      .slice(0, AI_BRIEF_MAX_RUNS);
+    const origin = aiBriefOrigin(source);
+    health.requests = 1;
+    health.fetchedItems = 0;
+    const candidates: SupplementalCandidate[] = [];
+    for (const run of fresh) {
+      if (typeof run.runId !== "string") continue;
+      stage = `run ${run.runId}`;
+      const body = await boundedText(fetcher, `${origin}/api/runs/${encodeURIComponent(run.runId)}`, MAX_FEED_BYTES, "application/json");
+      health.requests += 1;
+      const parsed = parseAiBriefRun(body, now, profile, source);
+      health.fetchedItems += parsed.fetched;
+      candidates.push(...parsed.candidates);
+    }
+    recordYield(health, candidates.length);
+    if (!candidates.length) {
+      health.status = "degraded";
+      health.errors.push("yield: no AI Brief stories with usable non-social evidence in the collection window");
+    }
+    return { candidates, health };
+  } catch (error) {
+    health.status = "failed";
+    health.errors.push(stagedError(stage, error));
+    return { candidates: [], health };
+  }
+}
+
 export async function collectSupplementalSources(input: { profile: Profile; now?: Date; fetcher?: Fetcher; rssUrl?: string }): Promise<SourceResult[]> {
   const now = input.now ?? new Date();
   const fetcher = input.fetcher ?? fetch;
@@ -576,6 +682,7 @@ export async function collectSupplementalSources(input: { profile: Profile; now?
       case "alphasignal": return collectAlpha(input.profile, now, fetcher, source);
       case "ai-secret": return collectAiSecret(input.profile, now, fetcher, source);
       case "mts-situations": return collectMts(input.profile, now, fetcher, source);
+      case "ai-brief": return collectAiBrief(input.profile, now, fetcher, source);
       case "cloudflare-agents": return collectCloudflare(input.profile, now, fetcher, source);
     }
   }));

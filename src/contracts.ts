@@ -208,7 +208,7 @@ export type DailyCollection = {
   sourcePackVersion?: number;
 };
 
-export type SupplementalSourceId = "ainews" | "tldr-ai" | "alphasignal" | "ai-secret" | "mts-situations" | "cloudflare-agents";
+export type SupplementalSourceId = "ainews" | "tldr-ai" | "alphasignal" | "ai-secret" | "mts-situations" | "ai-brief" | "cloudflare-agents";
 export type SourcePackSource = {
   id: SupplementalSourceId;
   name: string;
