@@ -63,6 +63,8 @@ The issue header is the edition date, not a source date. Each signal retains its
 - QA outcomes (`passed`, `corrected`, or `fallback`), bounded unresolved warnings, model, issue URL, and duration appear in existing Worker logs under `ai-signal editorial QA`, separately from the D1 generation-attempt audit. Card-level concerns are warnings only, never automatic removals. No extra schedule, notification service, or database migration is involved.
 - Failed runs are audit records only and cannot replace the last good edition.
 - The legacy D1 table `supplemental_shadow_runs` and endpoint `GET /api/shadow/latest` carry the latest source report. `report.mode="daily-pool"` records transport/parser health separately from candidate yield. Each source has a compact accepted → in-window → qualified → selected funnel, with outside-window, missing-evidence, weak-fit, merge, and ranked-out counts. The report also records the actual 48- or 72-hour window, eligible counts, and selected candidates. The edition's coverage label and `collection.maxFreshnessHours` reflect the same window. The reader has no separate fresh-signals section.
+- Every selected candidate is accounted before publication: published cards, recorded merges (`duplicate-url`, `duplicate-title`, `duplicate-text`, `product-version` with the surviving target), or invalid rejections with reasons. Any other loss throws a coverage gap that fails the run loudly instead of publishing silently; the decision record is logged per run.
+- `TRIAGE_SHADOW_ENABLED=true` adds the advisory reranker judge (full-precision raw scores, weighted maximum over per-interest queries, winning interest logged) without gating anything. `JEV_SHADOW_ENABLED=true` (requires the `TYPESAFE_API_KEY` secret) adds the advisory Jev judge in the same shadow runs: an interest choice over reader interests plus watching topics, pre-today novelty, and substantive scoring, each with confidence. Rows where Jev and the gates disagree are decided by the owner in `/admin`; verdict snapshots and the sided-with-Jev/confident-miss stats drive the fixed promotion rule for replacing the taste gate.
 - `GET /api/status` separates the latest run outcome from the latest completed cron heartbeat. The reader alerts after 26 hours without a completed cron check; a timely idempotent skip is a healthy heartbeat.
 
 `SUPPLEMENTAL_SHADOW_ENABLED=true` keeps the read-only source report refreshed when a same-day edition causes generation to skip. It does not create another publication path.
@@ -117,13 +119,13 @@ The configured cron is `15 22 * * *` UTC: 08:15 Melbourne during AEST and 09:15 
 
 ## Staging environment
 
-`env.staging` in `wrangler.jsonc` deploys the same worker to `testsignal.tamirlevin.dev` with its own D1 database (`ai-signal-staging`), its own `ADMIN_TOKEN` secret, and a 2-hour test schedule (`15 */2 * * *` UTC) instead of the daily production cron:
+`env.staging` in `wrangler.jsonc` deploys the same worker to `testsignal.tamirlevin.dev` with its own D1 database (`ai-signal-staging`), its own `ADMIN_TOKEN` secret, and an 8-hour test schedule (`15 */8 * * *` UTC) instead of the daily production cron:
 
 ```bash
 npx wrangler deploy --env staging --tag git-<short-sha>-staging --message "Git <full-sha>; <summary>"
 ```
 
-Staging exists so experiment branches run against real Cloudflare egress without touching production data, schedule, or spend: the 2-hour cadence yields same-day idempotent skips plus fresh shadow/funnel reads, and any extra generation is an explicit owner `POST /api/refresh`. `ENVIRONMENT=staging` unlocks the `/__scheduled` and `/__shadow` test routes. Promote to production only by merging to `main` and following the release rules in [AGENTS.md](AGENTS.md).
+Staging exists so experiment branches run against real Cloudflare egress without touching production data, schedule, or spend: the 8-hour cadence yields same-day idempotent skips plus fresh shadow/funnel reads, and any extra generation is an explicit owner `POST /api/refresh`. `ENVIRONMENT=staging` unlocks the `/__scheduled`, `/__shadow`, and `/__jev-probe` test routes. Promote to production only by merging to `main` and following the release rules in [AGENTS.md](AGENTS.md).
 
 ## API
 
@@ -142,9 +144,12 @@ Owner-only endpoints:
 - `POST /api/refresh` (normal daily generation; add `?republish=1` only for the guarded replacement path)
 - `PUT /api/profile`
 - `GET /api/visits?limit=50`
+- `GET /api/jev-disagreements` (open Jev/gate disagreements from the latest shadow run)
+- `POST /api/jev-verdicts` (`{ story_url, verdict: 1 | -1 }`, snapshotted server-side)
+- `GET /api/jev-verdicts/stats` (sided-with-Jev share and confident-reject misses)
 
 All API responses use security headers and do not enable cross-origin access. The Worker is attached only to `signal.tamirlevin.dev`; `workers.dev` is disabled.
 
 ## Tests
 
-`npm test` covers source-pack policy, feed parsers, conditional 48/72-hour windows and their boundaries, source-402 fail-open generation, X exclusion, equal-source clustering, corroboration, gentle diversity, no quotas/no padding, trusted-link validation, daily idempotency, guarded republishing, model repair/fallback, one-pass editorial QA correction and fail-open paths, heartbeat aging, API authentication, visit privacy, and preservation of the last good edition under total source failure.
+`npm test` covers source-pack policy, feed parsers, conditional 48/72-hour windows and their boundaries, source-402 fail-open generation, X exclusion, equal-source clustering, corroboration, gentle diversity, no quotas/no padding, candidate merge-decision accounting and coverage enforcement, AI Brief parsing, Jev shadow scoring, owner-verdict agreement stats, trusted-link validation, daily idempotency, guarded republishing, model repair/fallback, one-pass editorial QA correction and fail-open paths, heartbeat aging, API authentication, visit privacy, and preservation of the last good edition under total source failure.

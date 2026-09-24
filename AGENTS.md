@@ -89,7 +89,7 @@ For experiment branches, deploy to staging instead (same checks first):
 npx wrangler deploy --env staging --tag git-<short-sha>-staging --message "Git <full-sha>; <summary>"
 ```
 
-Staging (`testsignal.tamirlevin.dev`, D1 `ai-signal-staging`) runs a 2-hour test schedule instead of the daily production cron and never shares production data or secrets. Verify staging at its own endpoints; promote to production only via `main`.
+Staging (`testsignal.tamirlevin.dev`, D1 `ai-signal-staging`) runs an 8-hour test schedule instead of the daily production cron and never shares production data or secrets. Verify staging at its own endpoints; promote to production only via `main`.
 
 5. Verify the resulting deployment and version metadata, public endpoints, and relevant D1 state.
 6. Record consequential verified evidence and any pending verification in `PROJECT_HISTORY.md`, then commit and push that record.

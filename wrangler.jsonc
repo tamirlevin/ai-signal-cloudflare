@@ -61,7 +61,7 @@
         }
       ],
       "ai": { "binding": "AI" },
-      "triggers": { "crons": ["15 */2 * * *"] },
+      "triggers": { "crons": ["15 */8 * * *"] },
       "routes": [
         { "pattern": "testsignal.tamirlevin.dev", "custom_domain": true }
       ]
