@@ -1,5 +1,5 @@
 import { generateLatestEdition } from "./generation";
-import { runJev } from "./jev";
+import { runJev, runJevDirect } from "./jev";
 import { getActiveProfile, getEdition, latestEdition, latestRunStatus, latestScheduledRunStatus, latestSupplementalShadowRun, listEditions, scheduledHeartbeat, updateProfile } from "./repository";
 import { runSupplementalShadow } from "./supplemental";
 import { ValidationError } from "./validation";
@@ -153,8 +153,12 @@ export default {
         if (request.method !== "POST") return error("method not allowed", 405);
         const started = Date.now();
         const input = await request.json();
-        const response = await runJev(env.AI, input as { state: unknown; questions: Record<string, { type: "noul" | "choice" | "score"; instructions: string }> });
-        return json({ response, durationMs: Date.now() - started });
+        const apiKey = (env as Env & { TYPESAFE_API_KEY?: string }).TYPESAFE_API_KEY;
+        const via = apiKey ? "direct" : "workers-ai";
+        const response = apiKey
+          ? await runJevDirect(input as { state: unknown; questions: Record<string, { type: "noul" | "choice" | "score"; instructions: string }> }, apiKey)
+          : await runJev(env.AI, input as { state: unknown; questions: Record<string, { type: "noul" | "choice" | "score"; instructions: string }> });
+        return json({ via, response, durationMs: Date.now() - started });
       }
       const response = await api(request, env, url, ctx);
       if (response) return response;
