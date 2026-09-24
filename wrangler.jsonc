@@ -17,6 +17,7 @@
     "AI_GATEWAY_ID": "",
     "SUPPLEMENTAL_SHADOW_ENABLED": "true",
     "TRIAGE_SHADOW_ENABLED": "false",
+    "JEV_SHADOW_ENABLED": "false",
     "RSS_URL": "https://news.smol.ai/rss.xml"
   },
   "d1_databases": [
@@ -48,6 +49,7 @@
         "AI_GATEWAY_ID": "",
         "SUPPLEMENTAL_SHADOW_ENABLED": "true",
         "TRIAGE_SHADOW_ENABLED": "true",
+        "JEV_SHADOW_ENABLED": "true",
         "RSS_URL": "https://news.smol.ai/rss.xml"
       },
       "d1_databases": [

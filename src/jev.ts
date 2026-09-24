@@ -1,3 +1,5 @@
+import type { Profile } from "./contracts";
+
 /**
  * Thin client for TypeSafe's Jev structured-evaluation model on Workers AI.
  * Phase 1 is schema discovery only: one call shape in, raw answers out.
@@ -11,7 +13,7 @@ export type JevQuestionType = "noul" | "choice" | "score";
 
 export type JevQuestion = {
   type: JevQuestionType;
-  instructions: string;
+  instructions: string | Record<string, unknown> | unknown[];
   criteria?: Record<string, string> | string[];
 };
 
@@ -39,4 +41,121 @@ export async function runJevDirect(input: JevProbeInput, apiKey: string): Promis
   });
   if (!response.ok) throw new Error(`Jev direct API ${response.status}: ${(await response.text()).slice(0, 300)}`);
   return response.json();
+}
+
+const MAX_JEV_TEXTS = 128;
+const MAX_JEV_PRIOR_TITLES = 20;
+const JEV_CONCURRENCY = 8;
+
+export type JevShadowScores = {
+  interest: string | null;
+  interestConfidence: number | null;
+  novel: number | null;
+  substantive: number | null;
+};
+
+export function jevShadowEnabled(env: Env): boolean {
+  return (env as Env & { JEV_SHADOW_ENABLED?: string }).JEV_SHADOW_ENABLED === "true";
+}
+
+/**
+ * One Choice over every positive-weight interest plus watching topics (with an
+ * explicit none option), one novelty Noul scoped to pre-today editions, and
+ * one substantive-vs-promotional Noul. Weights gate which options appear;
+ * they never scale scores.
+ */
+export function buildJevQuestions(profile: Profile, priorTitles: string[]): Record<string, JevQuestion> {
+  const interests = [...profile.weights]
+    .filter((weight) => weight.value > 0)
+    .sort((left, right) => right.value - left.value || left.label.localeCompare(right.label))
+    .map((weight) => weight.label);
+  const watching = [...new Set([...profile.pinnedCategories, ...profile.watching])].sort((left, right) => left.localeCompare(right));
+  const options: Record<string, string> = {};
+  for (const label of interests) options[label] = `Stories about ${label}`;
+  for (const topic of watching.filter((topic) => !interests.includes(topic))) {
+    options[`Watching: ${topic}`] = `Stories about ${topic}`;
+  }
+  options.none = "Does not fit any listed interest";
+  return {
+    interest: {
+      type: "choice",
+      instructions: `Which reader interest does this story fit best? The reader tracks ${interests.join("; ")}.`,
+      criteria: options
+    },
+    novel: {
+      type: "noul",
+      instructions: {
+        question: "Is this materially new compared with the previously published stories below?",
+        previously_published: priorTitles.slice(0, MAX_JEV_PRIOR_TITLES)
+      },
+      criteria: { true: "Reports something not previously established", false: "Restates or recaps known developments" }
+    },
+    substantive: {
+      type: "noul",
+      instructions: "Is this substantive news rather than promotional or marketing content?",
+      criteria: { true: "Factual development with verifiable detail", false: "Promotional, vague, or marketing-led" }
+    }
+  };
+}
+
+function record(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function finite(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function parseJevAnswers(raw: unknown): JevShadowScores {
+  const empty: JevShadowScores = { interest: null, interestConfidence: null, novel: null, substantive: null };
+  if (!record(raw)) return empty;
+  const answers = record(raw.answers) ? raw.answers : {};
+  const interest = record(answers.interest) ? answers.interest : {};
+  const novel = record(answers.novel) ? answers.novel : {};
+  const substantive = record(answers.substantive) ? answers.substantive : {};
+  return {
+    interest: typeof interest.choice === "string" ? interest.choice : null,
+    interestConfidence: finite(interest.confidence),
+    novel: finite(novel.noul),
+    substantive: finite(substantive.noul)
+  };
+}
+
+/**
+ * Advisory Jev scores over the full fresh pool, shadowing the reranker judge.
+ * One direct-API call per story with bounded concurrency; per-item failures
+ * yield nulls rather than failing the run. Skipped entirely without an API key.
+ */
+export async function scoreJevShadow(
+  apiKey: string,
+  profile: Profile,
+  items: Array<{ url: string; title: string; summary: string }>,
+  priorTitles: string[],
+  fetchImpl: typeof fetch = fetch
+): Promise<Map<string, JevShadowScores>> {
+  const scores = new Map<string, JevShadowScores>();
+  const selected = items.slice(0, MAX_JEV_TEXTS);
+  if (!selected.length || !apiKey) return scores;
+  const questions = buildJevQuestions(profile, priorTitles);
+  const runOne = async (item: { url: string; title: string; summary: string }): Promise<void> => {
+    try {
+      const response = await fetchImpl(JEV_DIRECT_URL, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          state: { title: item.title, summary: item.summary, url: item.url },
+          model: JEV_DIRECT_MODEL,
+          questions
+        })
+      });
+      if (!response.ok) return;
+      scores.set(item.url, parseJevAnswers(await response.json()));
+    } catch {
+      return;
+    }
+  };
+  for (let index = 0; index < selected.length; index += JEV_CONCURRENCY) {
+    await Promise.all(selected.slice(index, index + JEV_CONCURRENCY).map(runOne));
+  }
+  return scores;
 }

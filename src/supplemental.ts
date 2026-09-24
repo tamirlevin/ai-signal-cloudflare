@@ -17,7 +17,8 @@ import type {
 } from "./contracts";
 import { categoryForProfile, compactIssueInventory, isPermissionDesignSignal, scoreCandidateForProfile } from "./editorial";
 import { fetchLatestRss } from "./rss";
-import { getActiveProfile, latestEdition, melbourneCalendarDay, recordSupplementalShadowRun } from "./repository";
+import { getActiveProfile, getEdition, latestEdition, listEditions, melbourneCalendarDay, recordSupplementalShadowRun } from "./repository";
+import { jevShadowEnabled, scoreJevShadow, type JevShadowScores } from "./jev";
 import { getSourcePack } from "./source-packs";
 import { attachTriageScores, rankTriageScores, scoreTriage, triageShadowEnabled, type TriageScores } from "./triage";
 
@@ -1054,6 +1055,7 @@ export function buildDailySourceReport(input: {
   generatedAt: string;
   profile: Profile;
   triage?: Map<string, TriageScores>;
+  jev?: Map<string, JevShadowScores>;
 }): SupplementalShadowReport {
   const allCandidates = input.sourceResults.flatMap((result) => result.candidates);
   const selected = input.inventory.candidates.map((candidate): SupplementalShadowReport["wouldAdd"][number] => ({
@@ -1074,6 +1076,12 @@ export function buildDailySourceReport(input: {
       const scores = input.triage!.get(item.url);
       return { ...item, relevance: scores?.relevance ?? null, rawRelevance: scores?.raw ?? null, winningInterest: scores?.winningInterest ?? null, novelty: scores?.novelty ?? null };
     }))
+    : undefined;
+  const jevScores = input.jev?.size
+    ? input.inventory.evaluated.map((item) => {
+      const scores = input.jev!.get(item.url);
+      return { url: item.url, title: item.title, interest: scores?.interest ?? null, interestConfidence: scores?.interestConfidence ?? null, novel: scores?.novel ?? null, substantive: scores?.substantive ?? null, outcome: item.outcome };
+    })
     : undefined;
   for (const item of selected) {
     const logged = triageScores?.find((entry) => entry.url === item.url);
@@ -1108,7 +1116,8 @@ export function buildDailySourceReport(input: {
     overlaps: [],
     wouldAdd: selected,
     selectedForBlend: selected,
-    ...(triageScores ? { triageScores } : {})
+    ...(triageScores ? { triageScores } : {}),
+    ...(jevScores ? { jevScores } : {})
   };
 }
 
@@ -1127,6 +1136,18 @@ export async function collectSupplementalShadow(input: { rssUrl: string; profile
   const sourceResults = await collectSupplementalSources({ profile: input.profile, now, fetcher, rssUrl: input.rssUrl });
   const inventory = buildDailyCandidateInventory({ sourceResults, profile: input.profile, now });
   return buildDailySourceReport({ issue, sourceResults, inventory, generatedAt: now.toISOString(), profile: input.profile });
+}
+
+/** Titles from the latest edition before today, so Jev novelty is judged on the
+ *  right timescale instead of the same-day republish loop. */
+export async function preTodayPriorTitles(db: D1Database, today: string): Promise<string[]> {
+  const latest = await latestEdition(db).catch(() => null);
+  if (latest && latest.issueDate < today) return latest.signals.map((signal) => `${signal.title} — ${signal.summary}`);
+  const older = await listEditions(db).catch(() => []);
+  const previous = older.find((edition) => edition.issueDate < today);
+  if (!previous) return latest ? latest.signals.map((signal) => `${signal.title} — ${signal.summary}`) : [];
+  const full = await getEdition(db, previous.issueDate).catch(() => null);
+  return full ? full.signals.map((signal) => `${signal.title} — ${signal.summary}`) : [];
 }
 
 export async function runSupplementalShadow(env: Env, trigger: "cron" | "manual" | "local-scheduled"): Promise<{ status: "healthy" | "degraded" | "failed"; report?: SupplementalShadowReport; error?: string }> {
@@ -1152,7 +1173,14 @@ export async function runSupplementalShadow(env: Env, trigger: "cron" | "manual"
       const priorTexts = prior ? prior.signals.map((signal) => `${signal.title} — ${signal.summary}`) : [];
       triage = await scoreTriage(env.AI, profile, inventory.evaluated, priorTexts);
     }
-    const report = buildDailySourceReport({ issue, sourceResults, inventory, generatedAt: new Date().toISOString(), profile, triage });
+    let jev: Map<string, JevShadowScores> | undefined;
+    const jevKey = (env as Env & { TYPESAFE_API_KEY?: string }).TYPESAFE_API_KEY;
+    if (jevShadowEnabled(env) && jevKey) {
+      const priorTitles = await preTodayPriorTitles(env.DB, issueDate).catch(() => [] as string[]);
+      jev = await scoreJevShadow(jevKey, profile, inventory.evaluated, priorTitles);
+      console.log(JSON.stringify({ message: "ai-signal jev shadow completed", issueUrl: issue.url, scored: jev.size, pool: inventory.evaluated.length }));
+    }
+    const report = buildDailySourceReport({ issue, sourceResults, inventory, generatedAt: new Date().toISOString(), profile, triage, jev });
     if (triage?.size) attachTriageScores(report, triage);
     const failedSources = report.sources.filter((source) => source.status === "failed").length;
     const degradedSources = report.sources.filter((source) => source.status === "degraded").length;

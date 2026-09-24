@@ -254,6 +254,18 @@ export type TriageScoredItem = {
   outcome: "selected" | "rankedOut" | "noUsableEvidence" | "weakProfileFit";
   sourceIds: SupplementalSourceId[];
 };
+export type JevScoredItem = {
+  url: string;
+  title: string;
+  /** Best-fit reader interest, or "none"; null when unscored. */
+  interest: string | null;
+  interestConfidence: number | null;
+  /** Probability the story is materially new vs pre-today editions; null when unscored. */
+  novel: number | null;
+  /** Probability the story is substantive rather than promotional; null when unscored. */
+  substantive: number | null;
+  outcome: TriageScoredItem["outcome"];
+};
 export type SupplementalSourceHealth = {
   id: SupplementalSourceId;
   name: string;
@@ -314,6 +326,8 @@ export type SupplementalShadowReport = {
   selectedForBlend?: ShadowCandidate[];
   /** Advisory per-item triage log over the full fresh pool, not just the selected. Absent unless triage shadow scoring ran. */
   triageScores?: TriageScoredItem[];
+  /** Advisory per-item Jev log over the full fresh pool. Absent unless Jev shadow scoring ran. */
+  jevScores?: JevScoredItem[];
 };
 export type SupplementalShadowRun = {
   id: string;
