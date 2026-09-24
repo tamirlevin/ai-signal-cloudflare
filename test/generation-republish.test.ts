@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { generateLatestEdition } from "../src/generation";
+import { generateLatestEdition, repairSourceList } from "../src/generation";
 
 const issueUrl = "https://news.smol.ai/issues/republish-test";
 const firstSource = "https://example.com/agent-permissions";
@@ -179,5 +179,24 @@ describe("generation republish behavior", () => {
       vi.unstubAllGlobals();
       vi.useRealTimers();
     }
+  });
+});
+
+describe("source label repair", () => {
+  const catalog = {
+    permittedUrls: new Set(["https://example.com/story"]),
+    labelByUrl: new Map([["https://example.com/story", "Example News"]]),
+    orderedUrls: ["https://example.com/story"]
+  };
+  const opts = { maxItems: 3 };
+  it("prefers the collector label over model text such as ...", () => {
+    expect(repairSourceList([{ label: "...", url: "https://example.com/story" }], "https://signal.tamirlevin.dev/", catalog, opts))
+      .toEqual([{ label: "Example News", url: "https://example.com/story" }]);
+  });
+  it("keeps the model label only when the catalog has none, else Source", () => {
+    expect(repairSourceList([{ label: "Model Name", url: "https://example.com/other" }], "https://signal.tamirlevin.dev/", { permittedUrls: new Set(["https://example.com/other"]), labelByUrl: new Map(), orderedUrls: [] }, opts))
+      .toEqual([{ label: "Model Name", url: "https://example.com/other" }]);
+    expect(repairSourceList([{ label: "", url: "https://example.com/story" }], "https://signal.tamirlevin.dev/", catalog, opts))
+      .toEqual([{ label: "Example News", url: "https://example.com/story" }]);
   });
 });

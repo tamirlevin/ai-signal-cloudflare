@@ -48,7 +48,7 @@ function buildPermittedSourceCatalog(issue: RssIssue): { permittedUrls: Set<stri
   return { permittedUrls, labelByUrl, orderedUrls };
 }
 
-function repairSourceList(
+export function repairSourceList(
   sources: Source[] | undefined,
   issueUrl: string,
   catalog: ReturnType<typeof buildPermittedSourceCatalog>,
@@ -64,7 +64,7 @@ function repairSourceList(
     if (!catalog.permittedUrls.has(normalized)) continue;
     if (reserved?.has(normalized)) continue;
     if (seen.has(normalized)) continue;
-    repaired.push({ label: source.label || catalog.labelByUrl.get(normalized) || "Source", url: normalized });
+    repaired.push({ label: catalog.labelByUrl.get(normalized) || source.label || "Source", url: normalized });
     seen.add(normalized);
     reserved?.add(normalized);
     if (repaired.length >= opts.maxItems) break;

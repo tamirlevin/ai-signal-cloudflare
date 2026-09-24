@@ -286,6 +286,7 @@ describe("editorial contracts", () => {
     expect(prompt).toContain("return that number rather than padding");
     expect(prompt).toContain("Every section must have a unique concrete title");
     expect(prompt).toContain("Do not describe agreement between newsletters as verification or proof");
+    expect(prompt).toContain("without category tags such as (Codex)");
   });
   it("labels editorial corroboration as discovery context in model input", () => {
     const issue = { url: "https://news.smol.ai/issues/test", issueDate: "2026-08-12", publicationDate: "12 August 2026", publishedAt: "2026-08-12T00:00:00.000Z", body: "Issue", anchors: [] };
