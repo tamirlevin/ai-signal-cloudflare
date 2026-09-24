@@ -3,6 +3,7 @@ import { DEFAULT_PROFILE } from "./contracts";
 import { ModelJsonError, ModelOutputTruncatedError } from "./editorial";
 import { normalizeEditionStories } from "./story-normalization";
 import { synthesisNeedsRepair, ValidationError, validateEdition, validateProfile } from "./validation";
+import type { JevVerdictRow } from "./verdicts";
 
 type EditionRow = {
   id: string;
@@ -265,4 +266,58 @@ export function errorCode(error: unknown): string {
   if (error instanceof SyntaxError || error instanceof ModelJsonError) return "MODEL_JSON_INVALID";
   if (error instanceof Error && /(?:3007|3046|request timeout|timed out)/i.test(error.message)) return "MODEL_TIMEOUT";
   return "GENERATION_FAILED";
+}
+
+type JevVerdictDbRow = {
+  story_url: string;
+  story_title: string;
+  issue_date: string;
+  reranker_relevance: number | null;
+  reranker_rank: number | null;
+  reranker_interest: string | null;
+  jev_interest: string | null;
+  jev_interest_confidence: number | null;
+  jev_novel: number | null;
+  jev_substantive: number | null;
+  jev_recommendation: "publish" | "reject";
+  jev_confident: number;
+  gate_outcome: string;
+  verdict: 1 | -1;
+  created_at: string;
+  updated_at: string;
+};
+
+function toVerdictRow(row: JevVerdictDbRow): JevVerdictRow {
+  return {
+    storyUrl: row.story_url,
+    storyTitle: row.story_title,
+    issueDate: row.issue_date,
+    rerankerRelevance: row.reranker_relevance,
+    rerankerRank: row.reranker_rank,
+    rerankerInterest: row.reranker_interest,
+    jevInterest: row.jev_interest,
+    jevInterestConfidence: row.jev_interest_confidence,
+    jevNovel: row.jev_novel,
+    jevSubstantive: row.jev_substantive,
+    jevRecommendation: row.jev_recommendation,
+    jevConfident: row.jev_confident === 1,
+    gateOutcome: row.gate_outcome,
+    verdict: row.verdict,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+/** Owner verdict on one Jev/gate disagreement, snapshotted so later code or
+ *  pack changes cannot rewrite history. Re-verdicting overwrites. */
+export async function recordJevVerdict(db: D1Database, row: Omit<JevVerdictRow, "createdAt" | "updatedAt">): Promise<void> {
+  const now = new Date().toISOString();
+  await db.prepare("INSERT INTO jev_verdicts (story_url, story_title, issue_date, reranker_relevance, reranker_rank, reranker_interest, jev_interest, jev_interest_confidence, jev_novel, jev_substantive, jev_recommendation, jev_confident, gate_outcome, verdict, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16) ON CONFLICT(story_url) DO UPDATE SET story_title = excluded.story_title, issue_date = excluded.issue_date, reranker_relevance = excluded.reranker_relevance, reranker_rank = excluded.reranker_rank, reranker_interest = excluded.reranker_interest, jev_interest = excluded.jev_interest, jev_interest_confidence = excluded.jev_interest_confidence, jev_novel = excluded.jev_novel, jev_substantive = excluded.jev_substantive, jev_recommendation = excluded.jev_recommendation, jev_confident = excluded.jev_confident, gate_outcome = excluded.gate_outcome, verdict = excluded.verdict, updated_at = excluded.updated_at")
+    .bind(row.storyUrl, row.storyTitle, row.issueDate, row.rerankerRelevance, row.rerankerRank, row.rerankerInterest, row.jevInterest, row.jevInterestConfidence, row.jevNovel, row.jevSubstantive, row.jevRecommendation, row.jevConfident ? 1 : 0, row.gateOutcome, row.verdict, now, now)
+    .run();
+}
+
+export async function listJevVerdicts(db: D1Database): Promise<JevVerdictRow[]> {
+  const result = await db.prepare("SELECT story_url, story_title, issue_date, reranker_relevance, reranker_rank, reranker_interest, jev_interest, jev_interest_confidence, jev_novel, jev_substantive, jev_recommendation, jev_confident, gate_outcome, verdict, created_at, updated_at FROM jev_verdicts ORDER BY updated_at DESC").all<JevVerdictDbRow>();
+  return result.results.map(toVerdictRow);
 }

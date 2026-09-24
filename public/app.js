@@ -305,15 +305,20 @@ function visitPanel() {
   return `<section class="visit-panel"><h2>Anonymous visit entries</h2><p class="muted">One entry per anonymous browser per UTC day. Country, region and city are recorded when Cloudflare can provide them. No names, IP addresses, clicks, or reading time are stored.</p><div class="visit-actions"><button class="button secondary" id="load-visits" type="button">Load recent visits</button><p class="visit-total" id="visit-status" aria-live="polite"></p></div><div class="visit-summary" id="visit-summary" hidden></div><div class="visit-list" id="visit-list" hidden></div></section>`;
 }
 
+function verdictPanel() {
+  return `<section class="visit-panel"><h2>Judge verdicts</h2><p class="muted">Stories where Jev and the gates disagree. Your verdict records whether the story should have been published; snapshots are frozen so later code changes cannot rewrite history.</p><div class="visit-actions"><button class="button secondary" id="load-disagreements" type="button">Load disagreements</button><p class="visit-total" id="verdict-stats" aria-live="polite"></p></div><div class="visit-list" id="verdict-list" hidden></div><p class="status" id="verdict-status" aria-live="polite"></p></section>`;
+}
+
 function renderAdmin(profile) {
   state.adminProfile = profile;
-  app.innerHTML = `<section class="admin"><div class="banner"><p class="eyebrow">Owner controls</p><h1>AI Signal administration</h1><p>Global profile changes affect future generation only. Browser personalisation remains local and is not shown here.</p></div><div class="admin-panel"><label>Admin token <input id="admin-token" type="password" autocomplete="off"></label><p class="muted">Used only for the request you submit below; it is not stored in the browser.</p>${adminControls(profile)}<div class="admin-actions"><button class="button" id="save-global-profile" type="button">Save global Profile v${profile.version + 1}</button><button class="button secondary" id="run-refresh" type="button">Build today's edition</button><button class="button secondary" id="run-republish" type="button">Republish today's edition (once daily)</button></div><p class="muted">Normal refresh skips today's edition after it has been published. Republish replaces that daily edition so you can test a code or profile change; one successful republish is allowed per Melbourne calendar day.</p><p class="status" id="admin-status" aria-live="polite"></p></div>${visitPanel()}</section>`;
+  app.innerHTML = `<section class="admin"><div class="banner"><p class="eyebrow">Owner controls</p><h1>AI Signal administration</h1><p>Global profile changes affect future generation only. Browser personalisation remains local and is not shown here.</p></div><div class="admin-panel"><label>Admin token <input id="admin-token" type="password" autocomplete="off"></label><p class="muted">Used only for the request you submit below; it is not stored in the browser.</p>${adminControls(profile)}<div class="admin-actions"><button class="button" id="save-global-profile" type="button">Save global Profile v${profile.version + 1}</button><button class="button secondary" id="run-refresh" type="button">Build today's edition</button><button class="button secondary" id="run-republish" type="button">Republish today's edition (once daily)</button></div><p class="muted">Normal refresh skips today's edition after it has been published. Republish replaces that daily edition so you can test a code or profile change; one successful republish is allowed per Melbourne calendar day.</p><p class="status" id="admin-status" aria-live="polite"></p></div>${verdictPanel()}${visitPanel()}</section>`;
   app.querySelectorAll("[data-admin-weight]").forEach((input) => input.addEventListener("input", () => { input.previousElementSibling.querySelector("output").textContent = weightLabel(Number(input.value)); }));
   app.querySelector("#admin-story-budget").addEventListener("input", (event) => { app.querySelector("#admin-budget-value").textContent = event.target.value; });
   app.querySelector("#save-global-profile").addEventListener("click", saveGlobalProfile);
   app.querySelector("#run-refresh").addEventListener("click", runRefresh);
   app.querySelector("#run-republish").addEventListener("click", () => runRefresh(true));
   app.querySelector("#load-visits").addEventListener("click", loadVisits);
+  app.querySelector("#load-disagreements").addEventListener("click", loadDisagreements);
 }
 
 function globalProfileCandidate() {
@@ -328,6 +333,57 @@ function globalProfileCandidate() {
 }
 
 function adminToken() { return app.querySelector("#admin-token").value; }
+function setVerdictStatus(message) { app.querySelector("#verdict-status").textContent = message; }
+
+function disagreementRow(entry) {
+  const jev = `Jev ${escape(entry.jevRecommendation)}${entry.jevConfident ? " (confident)" : ""}: interest ${escape(entry.jevInterest ?? "unscored")} · novel ${escape(entry.jevNovel ?? "—")} · substantive ${escape(entry.jevSubstantive ?? "—")}`;
+  const reranker = entry.rerankerRank === null ? "reranker unscored" : `reranker rank ${escape(entry.rerankerRank)} (${escape(entry.rerankerInterest ?? "—")})`;
+  return `<div class="visit-entry"><div><strong>${escape(entry.title)}</strong><br><span class="muted">gates ${escape(entry.gateOutcome)} · ${reranker} · ${jev}</span><br><a href="${escape(entry.url)}" target="_blank" rel="noreferrer">${escape(entry.url.slice(0, 80))}</a></div><div class="visit-actions"><button class="button secondary" data-verdict="1" data-url="${escape(entry.url)}" type="button">Should publish</button><button class="button secondary" data-verdict="-1" data-url="${escape(entry.url)}" type="button">Correctly rejected</button></div></div>`;
+}
+
+async function refreshVerdictStats(token) {
+  try {
+    const data = await request("/api/jev-verdicts/stats", { headers: { Authorization: `Bearer ${token}` } });
+    app.querySelector("#verdict-stats").textContent = `${data.stats.total} verdicts · sided with Jev ${Math.round(data.stats.sidedWithJev * 100)}% (needs ≥70%) · confident-reject misses ${data.stats.confidentRejectMisses} (needs <1)`;
+  } catch (caught) { app.querySelector("#verdict-stats").textContent = caught.message; }
+}
+
+async function loadDisagreements() {
+  const token = adminToken();
+  if (!token) { setVerdictStatus("Enter the admin token first."); return; }
+  setVerdictStatus("Loading disagreements…");
+  try {
+    const data = await request("/api/jev-disagreements", { headers: { Authorization: `Bearer ${token}` } });
+    const list = app.querySelector("#verdict-list");
+    list.innerHTML = data.disagreements.length
+      ? data.disagreements.map(disagreementRow).join("")
+      : `<p class="muted">No open disagreements in the latest shadow run.</p>`;
+    list.hidden = false;
+    list.querySelectorAll("[data-verdict]").forEach((button) => button.addEventListener("click", () => castVerdict(button.dataset.url, Number(button.dataset.verdict))));
+    setVerdictStatus(data.disagreements.length ? `${data.disagreements.length} open disagreements.` : "All disagreements decided.");
+    await refreshVerdictStats(token);
+  } catch (caught) { setVerdictStatus(caught.message); }
+}
+
+async function castVerdict(url, verdict) {
+  const token = adminToken();
+  if (!token) { setVerdictStatus("Enter the admin token first."); return; }
+  try {
+    const data = await request("/api/jev-verdicts", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ story_url: url, verdict }) });
+    setVerdictStatus(`Verdict recorded. Sided with Jev ${Math.round(data.stats.sidedWithJev * 100)}% over ${data.stats.total}.`);
+    await loadDisagreementsKeepToken(token);
+  } catch (caught) { setVerdictStatus(caught.message); }
+}
+
+async function loadDisagreementsKeepToken(token) {
+  try {
+    const data = await request("/api/jev-disagreements", { headers: { Authorization: `Bearer ${token}` } });
+    const list = app.querySelector("#verdict-list");
+    list.innerHTML = data.disagreements.length ? data.disagreements.map(disagreementRow).join("") : `<p class="muted">No open disagreements in the latest shadow run.</p>`;
+    list.querySelectorAll("[data-verdict]").forEach((button) => button.addEventListener("click", () => castVerdict(button.dataset.url, Number(button.dataset.verdict))));
+    await refreshVerdictStats(token);
+  } catch (caught) { setVerdictStatus(caught.message); }
+}
 function setAdminStatus(message) { app.querySelector("#admin-status").textContent = message; }
 function clearAdminToken() { app.querySelector("#admin-token").value = ""; }
 function setVisitStatus(message) { app.querySelector("#visit-status").textContent = message; }

@@ -1,6 +1,7 @@
 import { generateLatestEdition } from "./generation";
 import { runJev, runJevDirect } from "./jev";
-import { getActiveProfile, getEdition, latestEdition, latestRunStatus, latestScheduledRunStatus, latestSupplementalShadowRun, listEditions, scheduledHeartbeat, updateProfile } from "./repository";
+import { getActiveProfile, getEdition, latestEdition, latestRunStatus, latestScheduledRunStatus, latestSupplementalShadowRun, listEditions, listJevVerdicts, recordJevVerdict, scheduledHeartbeat, updateProfile } from "./repository";
+import { findJevDisagreements, jevVerdictStats } from "./verdicts";
 import { runSupplementalShadow } from "./supplemental";
 import { ValidationError } from "./validation";
 import { listVisits, recordVisit, requestLocation, visitorIdentity, visitorSetCookie } from "./visits";
@@ -133,6 +134,51 @@ async function api(request: Request, env: Env, url: URL, ctx: ExecutionContext):
     if (!(await isAdmin(request, env))) return error("unauthorized", 401);
     const body = await readJson(request);
     return json({ profile: await updateProfile(env.DB, body) });
+  }
+  if (request.method === "GET" && url.pathname === "/api/jev-disagreements") {
+    if (!(await isAdmin(request, env))) return error("unauthorized", 401);
+    const shadow = await latestSupplementalShadowRun(env.DB);
+    if (!shadow?.report) return error("no supplemental shadow run has completed yet", 404);
+    const decided = new Set((await listJevVerdicts(env.DB)).map((row) => row.storyUrl));
+    return json({ generatedAt: shadow.report.generatedAt, disagreements: findJevDisagreements(shadow.report, decided) });
+  }
+  if (request.method === "POST" && url.pathname === "/api/jev-verdicts") {
+    if (!(await isAdmin(request, env))) return error("unauthorized", 401);
+    const raw = await readJson(request);
+    const body = raw !== null && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
+    const storyUrl = typeof body?.story_url === "string" ? body.story_url : "";
+    const verdict = body?.verdict === 1 || body?.verdict === -1 ? body.verdict : 0;
+    if (!storyUrl || !verdict) return error("body must be { story_url: string, verdict: 1 | -1 }", 400);
+    const existing = (await listJevVerdicts(env.DB)).find((row) => row.storyUrl === storyUrl);
+    if (existing) {
+      await recordJevVerdict(env.DB, { ...existing, verdict });
+      return json({ ok: true, stats: jevVerdictStats(await listJevVerdicts(env.DB)) });
+    }
+    const shadow = await latestSupplementalShadowRun(env.DB);
+    if (!shadow?.report) return error("no supplemental shadow run has completed yet", 404);
+    const entry = findJevDisagreements(shadow.report).find((row) => row.url === storyUrl);
+    if (!entry) return error("story is not a current Jev/gate disagreement", 404);
+    await recordJevVerdict(env.DB, {
+      storyUrl: entry.url,
+      storyTitle: entry.title,
+      issueDate: entry.issueDate,
+      rerankerRelevance: entry.rerankerRelevance,
+      rerankerRank: entry.rerankerRank,
+      rerankerInterest: entry.rerankerInterest,
+      jevInterest: entry.jevInterest,
+      jevInterestConfidence: entry.jevInterestConfidence,
+      jevNovel: entry.jevNovel,
+      jevSubstantive: entry.jevSubstantive,
+      jevRecommendation: entry.jevRecommendation,
+      jevConfident: entry.jevConfident,
+      gateOutcome: entry.gateOutcome,
+      verdict
+    });
+    return json({ ok: true, stats: jevVerdictStats(await listJevVerdicts(env.DB)) });
+  }
+  if (request.method === "GET" && url.pathname === "/api/jev-verdicts/stats") {
+    if (!(await isAdmin(request, env))) return error("unauthorized", 401);
+    return json({ stats: jevVerdictStats(await listJevVerdicts(env.DB)) });
   }
   return error("not found", 404);
 }
