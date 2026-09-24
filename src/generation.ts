@@ -268,6 +268,15 @@ export async function generateLatestEdition(env: Env, trigger: Trigger, options:
       generated.collection = inventory.collection;
       const repaired = repairEditionSources(generated, issue.url, sourceCatalog);
       const normalized = normalizeEditionStories(repaired, profile, inventory.candidates);
+      const decidedIds = new Set<number>([...normalized.merged.map((entry) => entry.id), ...normalized.invalidCandidateIds]);
+      const publishedIds = new Set(normalized.edition.signals.map((signal) => signal.candidateId).filter((id): id is number => id !== undefined));
+      const materializedIds = stories.signals.map((signal) => signal.candidateId).filter((id): id is number => id !== undefined);
+      const omitted = materializedIds.filter((id) => !publishedIds.has(id) && !decidedIds.has(id));
+      const decisions = [...stories.merged, ...normalized.merged];
+      if (decisions.length || normalized.invalidCandidateIds.length || normalized.titlesRewritten) {
+        console.log(JSON.stringify({ message: "ai-signal candidate decisions", issueUrl, merged: decisions, invalidCandidateIds: normalized.invalidCandidateIds, omitted, remaining: normalized.edition.signals.length }));
+      }
+      if (omitted.length) throw new Error(`ai-signal coverage gap: candidate ids [${omitted.join(", ")}] materialized but neither published nor decided (${issueUrl})`);
       if (normalized.duplicateSignalsRemoved || normalized.invalidCandidateSignalsRemoved || normalized.titlesRewritten) {
         console.warn(JSON.stringify({ message: "ai-signal edition stories normalized", issueUrl, duplicatesRemoved: normalized.duplicateSignalsRemoved, invalidCandidatesRemoved: normalized.invalidCandidateSignalsRemoved, titlesRewritten: normalized.titlesRewritten, remaining: normalized.edition.signals.length }));
       }

@@ -1,4 +1,4 @@
-import type { CandidateStory, Edition, HotTopic, Profile, RssIssue, Signal, Source } from "./contracts";
+import type { CandidateMerge, CandidateStory, Edition, HotTopic, Profile, RssIssue, Signal, Source } from "./contracts";
 
 const MAX_CANDIDATE_BLOCKS = 18;
 const PRIORITY_BLOCKS = 15;
@@ -143,26 +143,44 @@ function productVersionKey(title: string): string | undefined {
   return tokens.slice(Math.max(0, versionIndex - 1), versionIndex + 1).join(":");
 }
 
-function distinctCandidates(candidates: CandidateStory[]): CandidateStory[] {
-  const seenUrls = new Set<string>();
-  const seenTitles = new Set<string>();
-  const seenProducts = new Set<string>();
-  return candidates.filter((candidate) => {
+export function distinctCandidates(candidates: CandidateStory[]): { selected: CandidateStory[]; merged: CandidateMerge[] } {
+  const seenUrls = new Map<string, number>();
+  const seenTitles = new Map<string, number>();
+  const seenProducts = new Map<string, number>();
+  const selected: CandidateStory[] = [];
+  const merged: CandidateMerge[] = [];
+  for (const candidate of candidates) {
     const urls = candidate.sources.map((source) => source.url).filter(Boolean);
     const title = candidate.title.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, " ").trim();
     const product = productVersionKey(candidate.title);
-    if (urls.some((url) => seenUrls.has(url)) || seenTitles.has(title) || (product && seenProducts.has(product))) return false;
-    for (const url of urls) seenUrls.add(url);
-    seenTitles.add(title);
-    if (product) seenProducts.add(product);
-    return true;
-  });
+    const urlHit = urls.map((url) => seenUrls.get(url)).find((id) => id !== undefined);
+    if (urlHit !== undefined) {
+      merged.push({ id: candidate.id, intoId: urlHit, reason: "duplicate-url", key: urls.find((url) => seenUrls.get(url) === urlHit) ?? "" });
+      continue;
+    }
+    const titleHit = seenTitles.get(title);
+    if (titleHit !== undefined) {
+      merged.push({ id: candidate.id, intoId: titleHit, reason: "duplicate-title", key: title });
+      continue;
+    }
+    const productHit = product ? seenProducts.get(product) : undefined;
+    if (product && productHit !== undefined) {
+      merged.push({ id: candidate.id, intoId: productHit, reason: "product-version", key: product });
+      continue;
+    }
+    selected.push(candidate);
+    for (const url of urls) if (!seenUrls.has(url)) seenUrls.set(url, candidate.id);
+    if (!seenTitles.has(title)) seenTitles.set(title, candidate.id);
+    if (product && !seenProducts.has(product)) seenProducts.set(product, candidate.id);
+  }
+  return { selected, merged };
 }
 
-/** Builds source-bound story cards without asking the model to enumerate or relabel them. */
-export function materializeCandidateStories(candidates: CandidateStory[], profile: Profile, publicationDate: string): { signals: Signal[]; hotTopics: HotTopic[] } {
-  const selected = distinctCandidates(candidates).slice(0, Math.min(profile.storyBudgetRange[1], 14));
-  const signals = selected.map((candidate, index): Signal => {
+/** Builds source-bound story cards without asking the model to enumerate or relabel them. Merges are recorded, never silent. */
+export function materializeCandidateStories(candidates: CandidateStory[], profile: Profile, publicationDate: string): { signals: Signal[]; hotTopics: HotTopic[]; merged: CandidateMerge[] } {
+  const { selected, merged } = distinctCandidates(candidates);
+  const capped = selected.slice(0, Math.min(profile.storyBudgetRange[1], 14));
+  const signals = capped.map((candidate, index): Signal => {
     const source = candidate.sources[0]!;
     const displayedSource = displaySource(source);
     return {
@@ -183,7 +201,7 @@ export function materializeCandidateStories(candidates: CandidateStory[], profil
       ...(candidate.provenance ? { provenance: candidate.provenance } : {})
     };
   });
-  const hotTopics = selected.slice(0, Math.min(3, selected.length)).map((candidate, index): HotTopic => ({
+  const hotTopics = capped.slice(0, Math.min(3, capped.length)).map((candidate, index): HotTopic => ({
     title: candidate.title,
     summary: candidate.summary,
     category: candidate.category,
@@ -194,7 +212,7 @@ export function materializeCandidateStories(candidates: CandidateStory[], profil
     sources: candidate.sources.slice(0, 3).map(displaySource),
     ...(candidate.provenance ? { provenance: candidate.provenance } : {})
   }));
-  return { signals, hotTopics };
+  return { signals, hotTopics, merged };
 }
 
 /** Selects and orders a profile-aware candidate inventory before invoking Workers AI. */
@@ -512,7 +530,7 @@ function clipWords(value: string, maxWords: number): string {
 /** Produces conservative, source-bound framing when every model attempt fails. */
 export function deterministicEditorialEdition(issue: RssIssue, candidates: CandidateStory[], profile: Profile): Edition {
   const stories = materializeCandidateStories(candidates, profile, issue.publicationDate);
-  const selected = distinctCandidates(candidates).slice(0, Math.min(profile.storyBudgetRange[1], 14));
+  const selected = distinctCandidates(candidates).selected.slice(0, Math.min(profile.storyBudgetRange[1], 14));
   const allSources: Source[] = [];
   const allSourceUrls = new Set<string>();
   for (const candidate of selected) {

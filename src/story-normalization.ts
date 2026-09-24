@@ -1,10 +1,14 @@
-import type { CandidateStory, Edition, HotTopic, Profile, Signal, Source } from "./contracts";
+import type { CandidateMerge, CandidateStory, Edition, HotTopic, Profile, Signal, Source } from "./contracts";
 
 export type StoryNormalization = {
   edition: Edition;
   duplicateSignalsRemoved: number;
   invalidCandidateSignalsRemoved: number;
   titlesRewritten: number;
+  /** Every pre-publication merge/drop decision with its surviving target, in order. */
+  merged: CandidateMerge[];
+  /** Candidate ids rejected for missing candidates or sourceless candidates. */
+  invalidCandidateIds: number[];
 };
 
 function normalizedText(value: string): string {
@@ -52,27 +56,30 @@ function mergeSources(left: Source[], right: Source[]): Source[] {
   return result;
 }
 
-function deduplicateSignals(signals: Signal[]): { signals: Signal[]; removed: number } {
+function deduplicateSignals(signals: Signal[]): { signals: Signal[]; removed: number; merged: CandidateMerge[] } {
   const result: Signal[] = [];
   const indexByKey = new Map<string, number>();
+  const merged: CandidateMerge[] = [];
   let removed = 0;
   for (const signal of signals) {
     const keys = storyKeys(signal);
-    const duplicateIndex = keys.map((key) => indexByKey.get(key)).find((index) => index !== undefined);
-    if (duplicateIndex === undefined) {
+    const hit = keys.map((key) => ({ key, index: indexByKey.get(key) })).find((entry) => entry.index !== undefined);
+    if (hit?.index === undefined) {
       const index = result.length;
       result.push(signal);
       for (const key of keys) indexByKey.set(key, index);
       continue;
     }
     removed += 1;
-    const existing = result[duplicateIndex];
+    const existing = result[hit.index];
+    const kind = hit.key.startsWith("candidate:") ? "duplicate-candidate" : hit.key.startsWith("url:") ? "duplicate-url" : hit.key.startsWith("title:") ? "duplicate-title" : "duplicate-text";
+    if (signal.candidateId !== undefined) merged.push({ id: signal.candidateId, intoId: existing?.candidateId ?? null, reason: kind as CandidateMerge["reason"], key: hit.key });
     if (existing && signal.base > existing.base) {
-      result[duplicateIndex] = signal;
-      for (const key of keys) indexByKey.set(key, duplicateIndex);
+      result[hit.index] = signal;
+      for (const key of keys) indexByKey.set(key, hit.index);
     }
   }
-  return { signals: result, removed };
+  return { signals: result, removed, merged };
 }
 
 function deduplicateHotTopics(topics: HotTopic[]): HotTopic[] {
@@ -96,12 +103,13 @@ function deduplicateHotTopics(topics: HotTopic[]): HotTopic[] {
 }
 
 export function normalizeEditionStories(generated: Edition, profile: Profile, candidates?: CandidateStory[]): StoryNormalization {
-  if (!Array.isArray(generated.signals)) return { edition: generated, duplicateSignalsRemoved: 0, invalidCandidateSignalsRemoved: 0, titlesRewritten: 0 };
+  if (!Array.isArray(generated.signals)) return { edition: generated, duplicateSignalsRemoved: 0, invalidCandidateSignalsRemoved: 0, titlesRewritten: 0, merged: [], invalidCandidateIds: [] };
   const candidateMap = candidates ? new Map(candidates.map((candidate) => [candidate.id, candidate])) : undefined;
   const titleCounts = repeatedTitleCounts(generated.signals);
   const categoryLabels = new Map(profile.weights.map((weight) => [weight.id, weight.label]));
   const preparedSignals: Signal[] = [];
   let invalidCandidateSignalsRemoved = 0;
+  const invalidCandidateIds: number[] = [];
   let titlesRewritten = 0;
 
   for (const signal of generated.signals) {
@@ -110,6 +118,7 @@ export function normalizeEditionStories(generated: Edition, profile: Profile, ca
       const candidate = signal.candidateId === undefined ? undefined : candidateMap.get(signal.candidateId);
       if (!candidate?.sources.length) {
         invalidCandidateSignalsRemoved += 1;
+        if (signal.candidateId !== undefined) invalidCandidateIds.push(signal.candidateId);
         continue;
       }
       const source = candidate.sources.find((item) => item.url === signal.url) ?? candidate.sources[0]!;
@@ -143,6 +152,20 @@ export function normalizeEditionStories(generated: Edition, profile: Profile, ca
     },
     duplicateSignalsRemoved: deduplicated.removed,
     invalidCandidateSignalsRemoved,
-    titlesRewritten
+    titlesRewritten,
+    merged: deduplicated.merged,
+    invalidCandidateIds
   };
+}
+
+/**
+ * Selected candidate ids with no published card and no recorded merge/drop
+ * decision. Any entry here is a silent loss: dedup merges and invalid
+ * rejections are accounted in the normalization record, so leftovers mean a
+ * story vanished between selection and publication.
+ */
+export function unaccountedCandidates(candidates: CandidateStory[], normalization: Pick<StoryNormalization, "edition" | "merged"> & Partial<Pick<StoryNormalization, "invalidCandidateIds">>): number[] {
+  const published = new Set(normalization.edition.signals.map((signal) => signal.candidateId).filter((id): id is number => id !== undefined));
+  const decided = new Set([...normalization.merged.map((entry) => entry.id), ...(normalization.invalidCandidateIds ?? [])]);
+  return candidates.map((candidate) => candidate.id).filter((id) => !published.has(id) && !decided.has(id));
 }

@@ -3,8 +3,8 @@ import type { CandidateStory, Edition } from "../src/contracts";
 import { DEFAULT_PROFILE } from "../src/contracts";
 import { anchorsToMarkdown, fetchLatestRss, parseLatestRss } from "../src/rss";
 import { validateEdition, validatePresentationDiversity, validateSynthesisDiversity, ValidationError } from "../src/validation";
-import { compactIssueForModel, compactIssueInventory, deterministicEditorialEdition, editorialMessages, extractGeneratedEdition, generationInput, isPermissionDesignSignal, issueFromCandidateInventory, materializeCandidateStories } from "../src/editorial";
-import { normalizeEditionStories } from "../src/story-normalization";
+import { compactIssueForModel, compactIssueInventory, deterministicEditorialEdition, distinctCandidates, editorialMessages, extractGeneratedEdition, generationInput, isPermissionDesignSignal, issueFromCandidateInventory, materializeCandidateStories } from "../src/editorial";
+import { normalizeEditionStories, unaccountedCandidates } from "../src/story-normalization";
 
 function edition(): Edition {
   const url = "https://example.com/story";
@@ -147,6 +147,30 @@ describe("editorial contracts", () => {
     expect(normalized.edition.signals).toHaveLength(1);
     expect(normalized.edition.signals[0]).toMatchObject({ title: "GitHub introduces Agent Plugins 1.0", source: "GitHub", url: "https://example.com/github-agent-plugins" });
     expect(normalized.edition.issue.quiet).toBe(true);
+  });
+  it("records product-version merges instead of silently dropping candidates (staging 2026-09-24 candidate 8)", () => {
+    const candidates: CandidateStory[] = [
+      { id: 4, title: "GPT-6 Sol and Luna", summary: "OpenAI introduced GPT-6 Sol and Luna as faster counterparts.", category: "frontier", categoryLabel: "Frontier signals", score: 40, exceptional: false, watchPermission: false, watchGeography: false, sources: [{ label: "OpenAI", url: "https://openai.com/index/introducing-gpt-6-sol-and-luna" }] },
+      { id: 8, title: "Better GPT-6 Prompt Caching", summary: "OpenAI improved prompt caching for GPT-6 with higher hit rates.", category: "frontier", categoryLabel: "Frontier signals", score: 30, exceptional: false, watchPermission: false, watchGeography: false, sources: [{ label: "OpenAI", url: "https://openai.com/index/better-prompt-caching-for-gpt-6" }] }
+    ];
+    const { selected, merged } = distinctCandidates(candidates);
+    expect(selected.map((candidate) => candidate.id)).toEqual([4]);
+    expect(merged).toEqual([{ id: 8, intoId: 4, reason: "product-version", key: "gpt:6" }]);
+    expect(unaccountedCandidates(candidates, { edition: { signals: selected.map((candidate) => ({ candidateId: candidate.id })) }, merged } as never)).toEqual([]);
+  });
+  it("flags selected candidates with no card and no recorded decision", () => {
+    const candidates: CandidateStory[] = [1, 2].map((id) => ({
+      id, title: `Story ${id} with a distinct headline`, summary: `Summary ${id} with entirely distinct body content here.`,
+      category: "agents", categoryLabel: "Agents in practice", score: 30, exceptional: false,
+      watchPermission: false, watchGeography: false, sources: [{ label: `Source ${id}`, url: `https://example.com/story-${id}` }]
+    }));
+    const value = edition();
+    value.signals = [{ title: "Story 1 with a distinct headline", summary: "Summary 1 with entirely distinct body content here.", source: "Source 1", url: "https://example.com/story-1", category: "agents", categoryLabel: "Agents in practice", base: 90, candidateId: 1 }];
+    value.hotTopics = [{ title: "Topic", summary: "Summary", category: "agents", base: 90, sources: [{ label: "Story", url: "https://example.com/story" }] }];
+    const normalized = normalizeEditionStories(value, DEFAULT_PROFILE, candidates);
+    expect(normalized.duplicateSignalsRemoved).toBe(0);
+    expect(normalized.invalidCandidateSignalsRemoved).toBe(0);
+    expect(unaccountedCandidates(candidates, normalized)).toEqual([2]);
   });
   it("keeps source reading time at least as long as the brief", () => {
     const value = edition();

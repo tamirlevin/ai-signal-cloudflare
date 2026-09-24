@@ -140,6 +140,14 @@ export type CandidateStory = {
   /** Compact collector context used only for synthesis input; it is not published. */
   modelText?: string;
 };
+/** One recorded merge/drop decision: a selected candidate folded into another card (or rejected) before publication. */
+export type CandidateMerge = {
+  id: number;
+  /** Surviving candidate id, or null when rejected outright. */
+  intoId: number | null;
+  reason: "duplicate-url" | "duplicate-title" | "duplicate-text" | "product-version" | "invalid-candidate";
+  key: string;
+};
 
 export type RunResult =
   | { status: "success"; edition: StoredEdition }
