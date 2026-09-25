@@ -279,6 +279,7 @@ type JevVerdictDbRow = {
   jev_interest_confidence: number | null;
   jev_novel: number | null;
   jev_substantive: number | null;
+  jev_reader_wants: number | null;
   jev_recommendation: "publish" | "reject";
   jev_confident: number;
   gate_outcome: string;
@@ -299,6 +300,7 @@ function toVerdictRow(row: JevVerdictDbRow): JevVerdictRow {
     jevInterestConfidence: row.jev_interest_confidence,
     jevNovel: row.jev_novel,
     jevSubstantive: row.jev_substantive,
+    jevReaderWants: row.jev_reader_wants,
     jevRecommendation: row.jev_recommendation,
     jevConfident: row.jev_confident === 1,
     gateOutcome: row.gate_outcome,
@@ -312,12 +314,12 @@ function toVerdictRow(row: JevVerdictDbRow): JevVerdictRow {
  *  pack changes cannot rewrite history. Re-verdicting overwrites. */
 export async function recordJevVerdict(db: D1Database, row: Omit<JevVerdictRow, "createdAt" | "updatedAt">): Promise<void> {
   const now = new Date().toISOString();
-  await db.prepare("INSERT INTO jev_verdicts (story_url, story_title, issue_date, reranker_relevance, reranker_rank, reranker_interest, jev_interest, jev_interest_confidence, jev_novel, jev_substantive, jev_recommendation, jev_confident, gate_outcome, verdict, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16) ON CONFLICT(story_url) DO UPDATE SET story_title = excluded.story_title, issue_date = excluded.issue_date, reranker_relevance = excluded.reranker_relevance, reranker_rank = excluded.reranker_rank, reranker_interest = excluded.reranker_interest, jev_interest = excluded.jev_interest, jev_interest_confidence = excluded.jev_interest_confidence, jev_novel = excluded.jev_novel, jev_substantive = excluded.jev_substantive, jev_recommendation = excluded.jev_recommendation, jev_confident = excluded.jev_confident, gate_outcome = excluded.gate_outcome, verdict = excluded.verdict, updated_at = excluded.updated_at")
-    .bind(row.storyUrl, row.storyTitle, row.issueDate, row.rerankerRelevance, row.rerankerRank, row.rerankerInterest, row.jevInterest, row.jevInterestConfidence, row.jevNovel, row.jevSubstantive, row.jevRecommendation, row.jevConfident ? 1 : 0, row.gateOutcome, row.verdict, now, now)
+  await db.prepare("INSERT INTO jev_verdicts (story_url, story_title, issue_date, reranker_relevance, reranker_rank, reranker_interest, jev_interest, jev_interest_confidence, jev_novel, jev_substantive, jev_reader_wants, jev_recommendation, jev_confident, gate_outcome, verdict, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17) ON CONFLICT(story_url) DO UPDATE SET story_title = excluded.story_title, issue_date = excluded.issue_date, reranker_relevance = excluded.reranker_relevance, reranker_rank = excluded.reranker_rank, reranker_interest = excluded.reranker_interest, jev_interest = excluded.jev_interest, jev_interest_confidence = excluded.jev_interest_confidence, jev_novel = excluded.jev_novel, jev_substantive = excluded.jev_substantive, jev_reader_wants = excluded.jev_reader_wants, jev_recommendation = excluded.jev_recommendation, jev_confident = excluded.jev_confident, gate_outcome = excluded.gate_outcome, verdict = excluded.verdict, updated_at = excluded.updated_at")
+    .bind(row.storyUrl, row.storyTitle, row.issueDate, row.rerankerRelevance, row.rerankerRank, row.rerankerInterest, row.jevInterest, row.jevInterestConfidence, row.jevNovel, row.jevSubstantive, row.jevReaderWants, row.jevRecommendation, row.jevConfident ? 1 : 0, row.gateOutcome, row.verdict, now, now)
     .run();
 }
 
 export async function listJevVerdicts(db: D1Database): Promise<JevVerdictRow[]> {
-  const result = await db.prepare("SELECT story_url, story_title, issue_date, reranker_relevance, reranker_rank, reranker_interest, jev_interest, jev_interest_confidence, jev_novel, jev_substantive, jev_recommendation, jev_confident, gate_outcome, verdict, created_at, updated_at FROM jev_verdicts ORDER BY updated_at DESC").all<JevVerdictDbRow>();
+  const result = await db.prepare("SELECT story_url, story_title, issue_date, reranker_relevance, reranker_rank, reranker_interest, jev_interest, jev_interest_confidence, jev_novel, jev_substantive, jev_reader_wants, jev_recommendation, jev_confident, gate_outcome, verdict, created_at, updated_at FROM jev_verdicts ORDER BY updated_at DESC").all<JevVerdictDbRow>();
   return result.results.map(toVerdictRow);
 }

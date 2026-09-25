@@ -21,21 +21,23 @@ function report(): SupplementalShadowReport {
       { url: "https://example.com/quiet", title: "Quiet", relevance: 0.1, rawRelevance: 0.01, winningInterest: "New systems", rank: 9, novelty: 0.5, outcome: "weakProfileFit", sourceIds: [] }
     ],
     jevScores: [
-      { url: "https://example.com/kept", title: "Kept", interest: "New systems", interestConfidence: 0.9, novel: 0.9, substantive: 0.9, outcome: "selected" },
-      { url: "https://example.com/dropped", title: "Dropped", interest: "New systems", interestConfidence: 0.9, novel: 0.9, substantive: 0.9, outcome: "weakProfileFit" },
-      { url: "https://example.com/quiet", title: "Quiet", interest: "none", interestConfidence: 0.9, novel: 0.1, substantive: 0.1, outcome: "weakProfileFit" }
+      { url: "https://example.com/kept", title: "Kept", interest: "New systems", interestConfidence: 0.9, novel: 0.9, substantive: 0.9, readerWants: 0.9, outcome: "selected" },
+      { url: "https://example.com/dropped", title: "Dropped", interest: "New systems", interestConfidence: 0.9, novel: 0.9, substantive: 0.9, readerWants: 0.9, outcome: "weakProfileFit" },
+      { url: "https://example.com/quiet", title: "Quiet", interest: "none", interestConfidence: 0.9, novel: 0.1, substantive: 0.1, readerWants: 0.1, outcome: "weakProfileFit" }
     ]
   };
 }
 
 describe("jev recommendation", () => {
-  it("publishes only on substantive, novel, fitted answers and fails closed unscored", () => {
-    expect(jevRecommendation({ substantive: 0.9, novel: 0.9, interest: "New systems" })).toEqual({ recommendation: "publish", confident: true });
-    expect(jevRecommendation({ substantive: 0.6, novel: 0.6, interest: "New systems" }).recommendation).toBe("publish");
-    expect(jevRecommendation({ substantive: 0.9, novel: 0.9, interest: "none" })).toEqual({ recommendation: "reject", confident: true });
-    expect(jevRecommendation({ substantive: 0.1, novel: 0.9, interest: "New systems" })).toEqual({ recommendation: "reject", confident: true });
-    expect(jevRecommendation({ substantive: 0.4, novel: 0.4, interest: "New systems" })).toEqual({ recommendation: "reject", confident: false });
-    expect(jevRecommendation({ substantive: null, novel: null, interest: null })).toEqual({ recommendation: "reject", confident: true });
+  it("publishes only on substantive, novel, fitted, wanted answers and fails closed unscored", () => {
+    expect(jevRecommendation({ substantive: 0.9, novel: 0.9, interest: "New systems", readerWants: 0.9 })).toEqual({ recommendation: "publish", confident: true });
+    expect(jevRecommendation({ substantive: 0.6, novel: 0.6, interest: "New systems", readerWants: 0.6 }).recommendation).toBe("publish");
+    expect(jevRecommendation({ substantive: 0.9, novel: 0.9, interest: "New systems", readerWants: 0.1 })).toEqual({ recommendation: "reject", confident: true });
+    expect(jevRecommendation({ substantive: 0.9, novel: 0.9, interest: "none", readerWants: 0.9 })).toEqual({ recommendation: "reject", confident: true });
+    expect(jevRecommendation({ substantive: 0.1, novel: 0.9, interest: "New systems", readerWants: 0.9 })).toEqual({ recommendation: "reject", confident: true });
+    expect(jevRecommendation({ substantive: 0.4, novel: 0.4, interest: "New systems", readerWants: 0.4 })).toEqual({ recommendation: "reject", confident: false });
+    expect(jevRecommendation({ substantive: null, novel: null, interest: null, readerWants: null })).toEqual({ recommendation: "reject", confident: false });
+    expect(jevRecommendation({ substantive: null, novel: null, interest: "none", readerWants: null })).toEqual({ recommendation: "reject", confident: true });
   });
 });
 
@@ -55,7 +57,7 @@ describe("verdict stats", () => {
   const row = (verdict: 1 | -1, jevRecommendation: "publish" | "reject", jevConfident: boolean): JevVerdictRow => ({
     storyUrl: `https://example.com/${verdict}-${jevRecommendation}`, storyTitle: "T", issueDate: "2026-09-24",
     rerankerRelevance: null, rerankerRank: null, rerankerInterest: null,
-    jevInterest: null, jevInterestConfidence: null, jevNovel: null, jevSubstantive: null,
+    jevInterest: null, jevInterestConfidence: null, jevNovel: null, jevSubstantive: null, jevReaderWants: null,
     jevRecommendation, jevConfident, gateOutcome: "selected", verdict,
     createdAt: "2026-09-24T10:00:00.000Z", updatedAt: "2026-09-24T10:00:00.000Z"
   });
@@ -74,7 +76,7 @@ function fakeDb(initial: Record<string, Record<string, unknown>[]> = {}) {
     run: async () => {
       statements.push(sql);
       if (sql.includes("INSERT INTO jev_verdicts")) {
-        const cols = ["story_url", "story_title", "issue_date", "reranker_relevance", "reranker_rank", "reranker_interest", "jev_interest", "jev_interest_confidence", "jev_novel", "jev_substantive", "jev_recommendation", "jev_confident", "gate_outcome", "verdict", "created_at", "updated_at"];
+        const cols = ["story_url", "story_title", "issue_date", "reranker_relevance", "reranker_rank", "reranker_interest", "jev_interest", "jev_interest_confidence", "jev_novel", "jev_substantive", "jev_reader_wants", "jev_recommendation", "jev_confident", "gate_outcome", "verdict", "created_at", "updated_at"];
         const record = Object.fromEntries(cols.map((col, index) => [col, values[index]]));
         const table = tables.jev_verdicts!;
         const at = table.findIndex((entry) => entry.story_url === record.story_url);
@@ -101,13 +103,13 @@ describe("verdict storage", () => {
     await recordJevVerdict(db, {
       storyUrl: "https://example.com/a", storyTitle: "A", issueDate: "2026-09-24",
       rerankerRelevance: 0.9, rerankerRank: 1, rerankerInterest: "New systems",
-      jevInterest: "New systems", jevInterestConfidence: 0.8, jevNovel: 0.9, jevSubstantive: 0.9,
+      jevInterest: "New systems", jevInterestConfidence: 0.8, jevNovel: 0.9, jevSubstantive: 0.9, jevReaderWants: 0.9,
       jevRecommendation: "publish", jevConfident: true, gateOutcome: "weakProfileFit", verdict: 1
     });
     await recordJevVerdict(db, {
       storyUrl: "https://example.com/a", storyTitle: "A", issueDate: "2026-09-24",
       rerankerRelevance: 0.9, rerankerRank: 1, rerankerInterest: "New systems",
-      jevInterest: "New systems", jevInterestConfidence: 0.8, jevNovel: 0.9, jevSubstantive: 0.9,
+      jevInterest: "New systems", jevInterestConfidence: 0.8, jevNovel: 0.9, jevSubstantive: 0.9, jevReaderWants: 0.9,
       jevRecommendation: "publish", jevConfident: true, gateOutcome: "weakProfileFit", verdict: -1
     });
     expect(tables.jev_verdicts).toHaveLength(1);

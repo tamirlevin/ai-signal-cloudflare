@@ -169,6 +169,7 @@ async function api(request: Request, env: Env, url: URL, ctx: ExecutionContext):
       jevInterestConfidence: entry.jevInterestConfidence,
       jevNovel: entry.jevNovel,
       jevSubstantive: entry.jevSubstantive,
+      jevReaderWants: entry.jevReaderWants,
       jevRecommendation: entry.jevRecommendation,
       jevConfident: entry.jevConfident,
       gateOutcome: entry.gateOutcome,

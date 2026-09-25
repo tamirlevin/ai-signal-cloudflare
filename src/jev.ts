@@ -52,6 +52,9 @@ export type JevShadowScores = {
   interestConfidence: number | null;
   novel: number | null;
   substantive: number | null;
+  /** Probability the reader would want this story. Taste shifts over time, so
+   *  this is recorded per row and never folded into the other answers. */
+  readerWants: number | null;
 };
 
 export function jevShadowEnabled(env: Env): boolean {
@@ -94,6 +97,11 @@ export function buildJevQuestions(profile: Profile, priorTitles: string[]): Reco
       type: "noul",
       instructions: "Is this substantive news rather than promotional or marketing content?",
       criteria: { true: "Factual development with verifiable detail", false: "Promotional, vague, or marketing-led" }
+    },
+    reader_wants: {
+      type: "noul",
+      instructions: `Would a reader tracking ${interests.join("; ")} want to spend attention on this story? Judge want, not fit: a story can match a topic without deserving attention.`,
+      criteria: { true: "Worth this reader's attention", false: "Not worth this reader's attention" }
     }
   };
 }
@@ -107,17 +115,19 @@ function finite(value: unknown): number | null {
 }
 
 function parseJevAnswers(raw: unknown): JevShadowScores {
-  const empty: JevShadowScores = { interest: null, interestConfidence: null, novel: null, substantive: null };
+  const empty: JevShadowScores = { interest: null, interestConfidence: null, novel: null, substantive: null, readerWants: null };
   if (!record(raw)) return empty;
   const answers = record(raw.answers) ? raw.answers : {};
   const interest = record(answers.interest) ? answers.interest : {};
   const novel = record(answers.novel) ? answers.novel : {};
   const substantive = record(answers.substantive) ? answers.substantive : {};
+  const readerWants = record(answers.reader_wants) ? answers.reader_wants : {};
   return {
     interest: typeof interest.choice === "string" ? interest.choice : null,
     interestConfidence: finite(interest.confidence),
     novel: finite(novel.noul),
-    substantive: finite(substantive.noul)
+    substantive: finite(substantive.noul),
+    readerWants: finite(readerWants.noul)
   };
 }
 

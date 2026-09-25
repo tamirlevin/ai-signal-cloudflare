@@ -15,7 +15,8 @@ function fakeFetch() {
   return vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => jevResponse({
     interest: { type: "choice", choice: "New systems", confidence: 0.82, probabilities: { "New systems": 0.82 } },
     novel: { type: "noul", noul: 0.71 },
-    substantive: { type: "noul", noul: 0.93 }
+    substantive: { type: "noul", noul: 0.93 },
+    reader_wants: { type: "noul", noul: 0.64 }
   }));
 }
 
@@ -41,12 +42,12 @@ describe("jev shadow scoring", () => {
     const fetchImpl = fakeFetch();
     const scores = await scoreJevShadow("key", DEFAULT_PROFILE, items, ["Prior story"], fetchImpl as unknown as typeof fetch);
     expect(fetchImpl).toHaveBeenCalledTimes(2);
-    expect(scores.get("https://example.com/agents")).toEqual({ interest: "New systems", interestConfidence: 0.82, novel: 0.71, substantive: 0.93 });
+    expect(scores.get("https://example.com/agents")).toEqual({ interest: "New systems", interestConfidence: 0.82, novel: 0.71, substantive: 0.93, readerWants: 0.64 });
     const firstCall = fetchImpl.mock.calls[0];
     expect(firstCall).toBeDefined();
     const body = JSON.parse(String((firstCall![1] as RequestInit).body));
     expect(body.model).toBe("jev-latest");
-    expect(Object.keys(body.questions)).toEqual(["interest", "novel", "substantive"]);
+    expect(Object.keys(body.questions)).toEqual(["interest", "novel", "substantive", "reader_wants"]);
   });
 
   it("fails open per item and skips entirely without a key", async () => {
@@ -60,7 +61,7 @@ describe("jev shadow scoring", () => {
     expect(noKey).not.toHaveBeenCalled();
     const flaky = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       if (String((init?.body as string) ?? "").includes("gossip")) return new Response("unavailable", { status: 500 });
-      return jevResponse({ interest: { type: "choice", choice: "Agents in practice", confidence: 0.6 }, novel: { type: "noul", noul: 0.5 }, substantive: { type: "noul", noul: 0.5 } });
+      return jevResponse({ interest: { type: "choice", choice: "Agents in practice", confidence: 0.6 }, novel: { type: "noul", noul: 0.5 }, substantive: { type: "noul", noul: 0.5 }, reader_wants: { type: "noul", noul: 0.5 } });
     });
     const scores = await scoreJevShadow("key", DEFAULT_PROFILE, items, [], flaky as unknown as typeof fetch);
     expect(scores.has("https://example.com/agents")).toBe(true);

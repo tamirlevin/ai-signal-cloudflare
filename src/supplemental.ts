@@ -1080,7 +1080,7 @@ export function buildDailySourceReport(input: {
   const jevScores = input.jev?.size
     ? input.inventory.evaluated.map((item) => {
       const scores = input.jev!.get(item.url);
-      return { url: item.url, title: item.title, interest: scores?.interest ?? null, interestConfidence: scores?.interestConfidence ?? null, novel: scores?.novel ?? null, substantive: scores?.substantive ?? null, outcome: item.outcome };
+      return { url: item.url, title: item.title, interest: scores?.interest ?? null, interestConfidence: scores?.interestConfidence ?? null, novel: scores?.novel ?? null, substantive: scores?.substantive ?? null, readerWants: scores?.readerWants ?? null, outcome: item.outcome };
     })
     : undefined;
   for (const item of selected) {

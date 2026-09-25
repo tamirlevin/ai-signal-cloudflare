@@ -4,18 +4,24 @@ export type JevRecommendation = { recommendation: "publish" | "reject"; confiden
 
 /**
  * Jev's implied publish/reject recommendation from one row's answers.
- * Publish needs all three: substantive, novel, and a real interest fit.
- * Unscored rows fail closed to a non-confident reject. Thresholds are the
- * v1 calibration knobs for the promotion rule, not editorial truth.
+ * Publish needs all four: substantive, novel, a real interest fit, and the
+ * reader's want. Fit and want are separate on purpose: a story can match a
+ * topic without deserving attention, and taste shifts over time while topics
+ * stay put. Unscored rows fail closed to a non-confident reject, except a
+ * missing want alone is not confident (the taste model may simply not know yet).
+ * Thresholds are the v1 calibration knobs for the promotion rule.
  */
-export function jevRecommendation(scores: { substantive: number | null; novel: number | null; interest: string | null }): JevRecommendation {
+export function jevRecommendation(scores: { substantive: number | null; novel: number | null; interest: string | null; readerWants: number | null }): JevRecommendation {
   const substantive = scores.substantive ?? -1;
   const novel = scores.novel ?? -1;
+  const wants = scores.readerWants ?? -1;
   const fit = scores.interest !== null && scores.interest !== "none";
-  if (substantive >= 0.5 && novel >= 0.5 && fit) {
-    return { recommendation: "publish", confident: substantive >= 0.8 && novel >= 0.8 };
+  if (substantive >= 0.5 && novel >= 0.5 && fit && wants >= 0.5) {
+    return { recommendation: "publish", confident: substantive >= 0.8 && novel >= 0.8 && wants >= 0.8 };
   }
-  return { recommendation: "reject", confident: substantive < 0.2 || !fit };
+  const measuredLow = (scores.substantive !== null && scores.substantive < 0.2)
+    || (scores.readerWants !== null && scores.readerWants < 0.2);
+  return { recommendation: "reject", confident: measuredLow || scores.interest === "none" };
 }
 
 export type JevDisagreement = {
@@ -30,6 +36,7 @@ export type JevDisagreement = {
   jevInterestConfidence: number | null;
   jevNovel: number | null;
   jevSubstantive: number | null;
+  jevReaderWants: number | null;
   jevRecommendation: "publish" | "reject";
   jevConfident: boolean;
 };
@@ -49,7 +56,7 @@ export function findJevDisagreements(
   const found: JevDisagreement[] = [];
   for (const jev of report.jevScores ?? []) {
     if (decidedUrls.has(jev.url)) continue;
-    const rec = jevRecommendation({ substantive: jev.substantive, novel: jev.novel, interest: jev.interest });
+    const rec = jevRecommendation({ substantive: jev.substantive, novel: jev.novel, interest: jev.interest, readerWants: jev.readerWants });
     const published = jev.outcome === "selected";
     if ((rec.recommendation === "publish") === published) continue;
     const triage = triageByUrl.get(jev.url);
@@ -65,6 +72,7 @@ export function findJevDisagreements(
       jevInterestConfidence: jev.interestConfidence,
       jevNovel: jev.novel,
       jevSubstantive: jev.substantive,
+      jevReaderWants: jev.readerWants,
       jevRecommendation: rec.recommendation,
       jevConfident: rec.confident
     });
@@ -86,6 +94,7 @@ export type JevVerdictRow = {
   jevInterestConfidence: number | null;
   jevNovel: number | null;
   jevSubstantive: number | null;
+  jevReaderWants: number | null;
   jevRecommendation: "publish" | "reject";
   jevConfident: boolean;
   gateOutcome: string;

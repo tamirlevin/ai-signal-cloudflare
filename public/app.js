@@ -336,7 +336,7 @@ function adminToken() { return app.querySelector("#admin-token").value; }
 function setVerdictStatus(message) { app.querySelector("#verdict-status").textContent = message; }
 
 function disagreementRow(entry) {
-  const jev = `Jev ${escape(entry.jevRecommendation)}${entry.jevConfident ? " (confident)" : ""}: interest ${escape(entry.jevInterest ?? "unscored")} · novel ${escape(entry.jevNovel ?? "—")} · substantive ${escape(entry.jevSubstantive ?? "—")}`;
+  const jev = `Jev ${escape(entry.jevRecommendation)}${entry.jevConfident ? " (confident)" : ""}: interest ${escape(entry.jevInterest ?? "unscored")} · novel ${escape(entry.jevNovel ?? "—")} · substantive ${escape(entry.jevSubstantive ?? "—")} · want ${escape(entry.jevReaderWants ?? "—")}`;
   const reranker = entry.rerankerRank === null ? "reranker unscored" : `reranker rank ${escape(entry.rerankerRank)} (${escape(entry.rerankerInterest ?? "—")})`;
   return `<div class="visit-entry"><div><strong>${escape(entry.title)}</strong><br><span class="muted">gates ${escape(entry.gateOutcome)} · ${reranker} · ${jev}</span><br><a href="${escape(entry.url)}" target="_blank" rel="noreferrer">${escape(entry.url.slice(0, 80))}</a></div><div class="visit-actions"><button class="button secondary" data-verdict="1" data-url="${escape(entry.url)}" type="button">Should publish</button><button class="button secondary" data-verdict="-1" data-url="${escape(entry.url)}" type="button">Correctly rejected</button></div></div>`;
 }

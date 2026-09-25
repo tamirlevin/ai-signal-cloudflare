@@ -264,6 +264,8 @@ export type JevScoredItem = {
   novel: number | null;
   /** Probability the story is substantive rather than promotional; null when unscored. */
   substantive: number | null;
+  /** Probability the reader would want this story; null when unscored. */
+  readerWants: number | null;
   outcome: TriageScoredItem["outcome"];
 };
 export type SupplementalSourceHealth = {
