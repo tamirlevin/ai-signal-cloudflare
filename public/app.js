@@ -22,7 +22,7 @@ const rankingTitle = document.querySelector("#ranking-title");
 const rankingContent = document.querySelector("#ranking-content");
 const closeRanking = document.querySelector("#close-ranking");
 const rankingPersonalise = document.querySelector("#ranking-personalise");
-const state = { baseProfile: null, override: null, previewOverride: null, edition: null, historyEditions: null, adminProfile: null, collectionStatus: null, isHistoricalEdition: false, readerView: "hot", rankingItems: new Map() };
+const state = { baseProfile: null, override: null, previewOverride: null, edition: null, historyEditions: null, adminProfile: null, collectionStatus: null, isHistoricalEdition: false, readerView: "hot", rankingItems: new Map(), jevReviewBatch: null };
 const READER_VIEWS = [
   { id: "synthesis", label: "Synthesis" },
   { id: "hot", label: "Hot topics" },
@@ -306,12 +306,16 @@ function visitPanel() {
 }
 
 function verdictPanel() {
-  return `<section class="visit-panel"><h2>Judge verdicts</h2><p class="muted">Stories where Jev and the gates disagree. Your verdict records whether the story should have been published; snapshots are frozen so later code changes cannot rewrite history.</p><div class="visit-actions"><button class="button secondary" id="load-disagreements" type="button">Load disagreements</button><p class="visit-total" id="verdict-stats" aria-live="polite"></p></div><div class="visit-list" id="verdict-list" hidden></div><p class="status" id="verdict-status" aria-live="polite"></p></section>`;
+  return `<section class="visit-panel"><h2>Legacy Jev disagreement audit</h2><p class="muted">Earlier binary verdicts for Jev/pipeline disagreements. This is a separate historical calibration set; it does not promote Jev into the selection path.</p><div class="visit-actions"><button class="button secondary" id="load-disagreements" type="button">Load legacy disagreements</button><p class="visit-total" id="verdict-stats" aria-live="polite"></p></div><div class="visit-list" id="verdict-list" hidden></div><p class="status" id="verdict-status" aria-live="polite"></p></section>`;
+}
+
+function jevReviewPanel() {
+  return `<section class="visit-panel"><h2>Jev and taste review</h2><p class="muted">Review a small, balanced sample from the latest Jev-scored pool. Label each story publish, reject, or unsure. Rank only publish choices, with 1 as your strongest. Jev remains in shadow mode.</p><div class="visit-actions"><button class="button secondary" id="load-jev-review" type="button">Load review sample</button><p class="visit-total" id="jev-review-status" aria-live="polite"></p></div><div class="visit-summary" id="jev-review-meta" hidden></div><div class="jev-review-list" id="jev-review-list" hidden></div><div class="admin-actions"><button class="button" id="save-jev-review" type="button" hidden>Save sample labels</button></div></section>`;
 }
 
 function renderAdmin(profile) {
   state.adminProfile = profile;
-  app.innerHTML = `<section class="admin"><div class="banner"><p class="eyebrow">Owner controls</p><h1>AI Signal administration</h1><p>Global profile changes affect future generation only. Browser personalisation remains local and is not shown here.</p></div><div class="admin-panel"><label>Admin token <input id="admin-token" type="password" autocomplete="off"></label><p class="muted">Used only for the request you submit below; it is not stored in the browser.</p>${adminControls(profile)}<div class="admin-actions"><button class="button" id="save-global-profile" type="button">Save global Profile v${profile.version + 1}</button><button class="button secondary" id="run-refresh" type="button">Build today's edition</button><button class="button secondary" id="run-republish" type="button">Republish today's edition (once daily)</button></div><p class="muted">Normal refresh skips today's edition after it has been published. Republish replaces that daily edition so you can test a code or profile change; one successful republish is allowed per Melbourne calendar day.</p><p class="status" id="admin-status" aria-live="polite"></p></div>${verdictPanel()}${visitPanel()}</section>`;
+  app.innerHTML = `<section class="admin"><div class="banner"><p class="eyebrow">Owner controls</p><h1>AI Signal administration</h1><p>Global profile changes affect future generation only. Browser personalisation remains local and is not shown here.</p></div><div class="admin-panel"><label>Admin token <input id="admin-token" type="password" autocomplete="off"></label><p class="muted">Used only for the request you submit below; it is not stored in the browser.</p>${adminControls(profile)}<div class="admin-actions"><button class="button" id="save-global-profile" type="button">Save global Profile v${profile.version + 1}</button><button class="button secondary" id="run-refresh" type="button">Build today's edition</button><button class="button secondary" id="run-republish" type="button">Republish today's edition (once daily)</button></div><p class="muted">Normal refresh skips today's edition after it has been published. Republish replaces that daily edition so you can test a code or profile change; one successful republish is allowed per Melbourne calendar day.</p><p class="status" id="admin-status" aria-live="polite"></p></div>${jevReviewPanel()}${verdictPanel()}${visitPanel()}</section>`;
   app.querySelectorAll("[data-admin-weight]").forEach((input) => input.addEventListener("input", () => { input.previousElementSibling.querySelector("output").textContent = weightLabel(Number(input.value)); }));
   app.querySelector("#admin-story-budget").addEventListener("input", (event) => { app.querySelector("#admin-budget-value").textContent = event.target.value; });
   app.querySelector("#save-global-profile").addEventListener("click", saveGlobalProfile);
@@ -319,6 +323,8 @@ function renderAdmin(profile) {
   app.querySelector("#run-republish").addEventListener("click", () => runRefresh(true));
   app.querySelector("#load-visits").addEventListener("click", loadVisits);
   app.querySelector("#load-disagreements").addEventListener("click", loadDisagreements);
+  app.querySelector("#load-jev-review").addEventListener("click", loadJevReviewBatch);
+  app.querySelector("#save-jev-review").addEventListener("click", saveJevReviewBatch);
 }
 
 function globalProfileCandidate() {
@@ -344,8 +350,115 @@ function disagreementRow(entry) {
 async function refreshVerdictStats(token) {
   try {
     const data = await request("/api/jev-verdicts/stats", { headers: { Authorization: `Bearer ${token}` } });
-    app.querySelector("#verdict-stats").textContent = `${data.stats.total} verdicts · sided with Jev ${Math.round(data.stats.sidedWithJev * 100)}% (needs ≥70%) · confident-reject misses ${data.stats.confidentRejectMisses} (needs <1)`;
+    app.querySelector("#verdict-stats").textContent = `${data.stats.total} legacy verdicts · matched Jev ${Math.round(data.stats.sidedWithJev * 100)}% · owner picks inside confident Jev rejects ${data.stats.confidentRejectMisses}`;
   } catch (caught) { app.querySelector("#verdict-stats").textContent = caught.message; }
+}
+
+function reviewStratumLabel(value) {
+  return ({
+    "pipeline-selected_jev-publish": "Both favor selection",
+    "pipeline-selected_jev-reject": "Pipeline selects · Jev rejects",
+    "pipeline-excluded_jev-publish": "Pipeline excludes · Jev favors",
+    "pipeline-excluded_jev-reject": "Both favor exclusion"
+  })[value] || value;
+}
+
+function jevReviewAssessment(item) {
+  const jev = `Jev ${item.jevRecommendation}${item.jevConfident ? " (confident)" : ""}: interest ${item.interest ?? "unscored"} · confidence ${item.interestConfidence ?? "—"} · novel ${item.novel ?? "—"} · substantive ${item.substantive ?? "—"} · reader wants ${item.readerWants ?? "—"}`;
+  const reranker = item.reranker
+    ? `Reranker: rank ${item.reranker.rank ?? "—"} · relevance ${item.reranker.relevance ?? "—"} · interest ${item.reranker.winningInterest ?? "—"} · novelty ${item.reranker.novelty ?? "—"}`
+    : "Reranker assessment unavailable on this run.";
+  return `<details class="jev-review-assessment"><summary>Show Jev and reranker assessment</summary><p>Pipeline outcome: ${escape(item.pipelineOutcome)} · sample group: ${escape(reviewStratumLabel(item.sampleStratum))}</p><p>${escape(jev)}</p><p>${escape(reranker)}</p></details>`;
+}
+
+function jevReviewCard(item, index) {
+  const id = `jev-review-${index}`;
+  const names = (item.sourceNames?.length ? item.sourceNames : item.sourceIds ?? []).join(" · ") || "Source not recorded";
+  const safeUrl = /^https?:\/\//i.test(item.url ?? "") ? item.url : "";
+  const sources = safeUrl ? `<a href="${escape(safeUrl)}" target="_blank" rel="noreferrer">Open source</a>` : "Source link unavailable";
+  const decisions = [["publish", "I would publish"], ["reject", "I would reject"], ["unsure", "Unsure"]];
+  const controls = decisions.map(([value, label]) => `<label><input type="radio" name="${id}-decision" value="${value}" ${item.decision === value ? "checked" : ""}> ${label}</label>`).join("");
+  return `<article class="jev-review-item" data-review-url="${escape(item.url)}"><div class="jev-review-heading"><span class="eyebrow">Candidate ${index + 1}</span></div><h3>${safeUrl ? `<a href="${escape(safeUrl)}" target="_blank" rel="noreferrer">${escape(item.title)}</a>` : escape(item.title)}</h3><p>${escape(item.summary || "No summary recorded for this candidate.")}</p><p class="jev-review-source">${escape(names)} · ${escape(item.publishedAt || "Date unavailable")} · ${sources}</p><fieldset class="jev-review-choice"><legend>Would you include this in an edition?</legend>${controls}</fieldset><label class="jev-review-rank-wrap" ${item.decision === "publish" ? "" : "hidden"}>Publish-set rank (1 = strongest) <input class="jev-review-rank" type="number" min="1" step="1" value="${item.rankPosition ?? ""}" aria-label="Publish-set rank for ${escape(item.title)}"></label>${jevReviewAssessment(item)}</article>`;
+}
+
+function normalizeJevReviewRanks() {
+  const cards = [...app.querySelectorAll(".jev-review-item")];
+  for (const card of cards) {
+    const publish = card.querySelector('input[type="radio"][value="publish"]').checked;
+    card.querySelector(".jev-review-rank-wrap").hidden = !publish;
+  }
+  const selected = cards.filter((card) => card.querySelector('input[type="radio"][value="publish"]').checked);
+  if (selected.length === 1) {
+    const rank = selected[0].querySelector(".jev-review-rank");
+    if (!rank.value) rank.value = "1";
+  }
+}
+
+function renderJevReviewBatch(data) {
+  state.jevReviewBatch = data;
+  const meta = app.querySelector("#jev-review-meta");
+  const list = app.querySelector("#jev-review-list");
+  const save = app.querySelector("#save-jev-review");
+  meta.innerHTML = `<strong>${data.items.length} candidates</strong> · issue ${escape(data.issueDate)} · profile v${escape(data.profileVersion ?? "unknown")} · source pack ${escape(data.sourcePack?.id ?? "unknown")} v${escape(data.sourcePack?.version ?? "?")} · Jev questions ${escape(data.questionSetVersion)} · run ${escape(data.generatedAt)}`;
+  meta.hidden = false;
+  if (!data.items.length) {
+    list.innerHTML = `<p class="muted">No Jev-scored candidates are available for this sample.</p>`;
+    save.hidden = true;
+    list.hidden = false;
+    return;
+  }
+  const questionLabels = Object.keys(data.questions ?? {}).map((key) => `<code>${escape(key)}</code>`).join(" · ");
+  list.innerHTML = `<details class="jev-review-questions"><summary>Question set ${escape(data.questionSetVersion)} · ${questionLabels || "labels unavailable"}</summary><pre>${escape(JSON.stringify(data.questions, null, 2))}</pre></details>${data.items.map(jevReviewCard).join("")}`;
+  list.hidden = false;
+  save.hidden = false;
+  list.querySelectorAll('.jev-review-choice input[type="radio"]').forEach((input) => input.addEventListener("change", normalizeJevReviewRanks));
+  normalizeJevReviewRanks();
+}
+
+async function loadJevReviewBatch(runId = null, tokenOverride = null) {
+  const token = tokenOverride || adminToken();
+  if (!token) { app.querySelector("#jev-review-status").textContent = "Enter the admin token first."; return; }
+  app.querySelector("#jev-review-status").textContent = "Loading a balanced sample…";
+  try {
+    const suffix = runId ? `?run_id=${encodeURIComponent(runId)}` : "";
+    const data = await request(`/api/jev-review-batch${suffix}`, { headers: { Authorization: `Bearer ${token}` } });
+    renderJevReviewBatch(data);
+    app.querySelector("#jev-review-status").textContent = data.items.length ? `${data.items.length} candidates loaded. Jev and reranker assessments stay hidden unless you open them.` : "No review candidates in this run.";
+  } catch (caught) { app.querySelector("#jev-review-status").textContent = caught.message; }
+}
+
+async function saveJevReviewBatch() {
+  const token = adminToken();
+  const batch = state.jevReviewBatch;
+  if (!token) { app.querySelector("#jev-review-status").textContent = "Enter the admin token first."; return; }
+  if (!batch) return;
+  const reviews = [...app.querySelectorAll(".jev-review-item")].map((card) => {
+    const decision = card.querySelector('input[type="radio"]:checked')?.value;
+    const rankPosition = decision === "publish" ? Number(card.querySelector(".jev-review-rank").value) : null;
+    return { story_url: card.dataset.reviewUrl, decision, rank_position: rankPosition };
+  });
+  if (reviews.some((review) => !review.decision)) {
+    app.querySelector("#jev-review-status").textContent = "Choose publish, reject, or unsure for every candidate before saving.";
+    return;
+  }
+  const publishRanks = reviews.filter((review) => review.decision === "publish").map((review) => review.rank_position).sort((left, right) => left - right);
+  if (publishRanks.some((rank, index) => !Number.isInteger(rank) || rank !== index + 1)) {
+    app.querySelector("#jev-review-status").textContent = `Rank publish choices with unique numbers from 1 to ${publishRanks.length}; 1 is strongest.`;
+    return;
+  }
+  app.querySelector("#jev-review-status").textContent = "Saving labels and publish ranking…";
+  const button = app.querySelector("#save-jev-review");
+  button.disabled = true;
+  try {
+    const result = await request("/api/jev-reviews", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ shadow_run_id: batch.runId, reviews })
+    });
+    await loadJevReviewBatch(batch.runId, token);
+    app.querySelector("#jev-review-status").textContent = `${result.saved} candidate labels saved. Jev remains in shadow mode.`;
+  } catch (caught) { app.querySelector("#jev-review-status").textContent = caught.message; }
+  finally { button.disabled = false; }
 }
 
 async function loadDisagreements() {
@@ -370,7 +483,7 @@ async function castVerdict(url, verdict) {
   if (!token) { setVerdictStatus("Enter the admin token first."); return; }
   try {
     const data = await request("/api/jev-verdicts", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ story_url: url, verdict }) });
-    setVerdictStatus(`Verdict recorded. Sided with Jev ${Math.round(data.stats.sidedWithJev * 100)}% over ${data.stats.total}.`);
+    setVerdictStatus(`Legacy verdict recorded. Jev agreement ${Math.round(data.stats.sidedWithJev * 100)}% across ${data.stats.total}.`);
     await loadDisagreementsKeepToken(token);
   } catch (caught) { setVerdictStatus(caught.message); }
 }

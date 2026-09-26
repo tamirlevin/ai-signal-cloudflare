@@ -8,6 +8,8 @@ import type { Profile } from "./contracts";
 export const JEV_MODEL = "typesafe/jev";
 export const JEV_DIRECT_URL = "https://api.typesafe.ai/v1/systemone";
 export const JEV_DIRECT_MODEL = "jev-latest";
+/** Bump when the meaning, criteria, or intended use of any Jev question changes. */
+export const JEV_QUESTION_SET_VERSION = "reader-want-v1";
 
 export type JevQuestionType = "noul" | "choice" | "score";
 
@@ -43,7 +45,7 @@ export async function runJevDirect(input: JevProbeInput, apiKey: string): Promis
   return response.json();
 }
 
-const MAX_JEV_TEXTS = 128;
+export const MAX_JEV_TEXTS = 128;
 const MAX_JEV_PRIOR_TITLES = 20;
 const JEV_CONCURRENCY = 8;
 
@@ -141,12 +143,13 @@ export async function scoreJevShadow(
   profile: Profile,
   items: Array<{ url: string; title: string; summary: string }>,
   priorTitles: string[],
-  fetchImpl: typeof fetch = fetch
+  fetchImpl: typeof fetch = fetch,
+  questionSet: Record<string, JevQuestion> = buildJevQuestions(profile, priorTitles)
 ): Promise<Map<string, JevShadowScores>> {
   const scores = new Map<string, JevShadowScores>();
   const selected = items.slice(0, MAX_JEV_TEXTS);
   if (!selected.length || !apiKey) return scores;
-  const questions = buildJevQuestions(profile, priorTitles);
+  const questions = questionSet;
   const runOne = async (item: { url: string; title: string; summary: string }): Promise<void> => {
     try {
       const response = await fetchImpl(JEV_DIRECT_URL, {

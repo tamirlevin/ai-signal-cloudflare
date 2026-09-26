@@ -257,6 +257,9 @@ export type TriageScoredItem = {
 export type JevScoredItem = {
   url: string;
   title: string;
+  summary?: string;
+  publishedAt?: string;
+  sourceIds?: SupplementalSourceId[];
   /** Best-fit reader interest, or "none"; null when unscored. */
   interest: string | null;
   interestConfidence: number | null;
@@ -309,6 +312,10 @@ export type SupplementalShadowReport = {
   schemaVersion: 1;
   mode: "shadow" | "blend" | "daily-pool";
   generatedAt: string;
+  /** Profile and Jev question context used for the shadow evaluation. */
+  profileVersion?: number;
+  jevQuestionSetVersion?: string;
+  jevQuestions?: Record<string, unknown>;
   baseIssue: { url: string; issueDate: string; publicationDate: string };
   sourcePack?: { id: SourcePackId; version: number };
   limits: { modelCandidates: 18; publishedStories: 14; tldr?: 3; alphaSignal?: 2; cloudflare?: 1 };

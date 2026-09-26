@@ -1,7 +1,8 @@
 import { generateLatestEdition } from "./generation";
 import { runJev, runJevDirect } from "./jev";
-import { getActiveProfile, getEdition, latestEdition, latestRunStatus, latestScheduledRunStatus, latestSupplementalShadowRun, listEditions, listJevVerdicts, recordJevVerdict, scheduledHeartbeat, updateProfile } from "./repository";
+import { getActiveProfile, getEdition, getSupplementalShadowRun, latestEdition, latestJevReviewShadowRun, latestRunStatus, latestScheduledRunStatus, latestSupplementalShadowRun, listEditions, listJevHumanReviews, listJevVerdicts, recordJevHumanReviews, recordJevVerdict, scheduledHeartbeat, updateProfile } from "./repository";
 import { findJevDisagreements, jevVerdictStats } from "./verdicts";
+import { buildJevReviewBatch } from "./jev-reviews";
 import { runSupplementalShadow } from "./supplemental";
 import { ValidationError } from "./validation";
 import { listVisits, recordVisit, requestLocation, visitorIdentity, visitorSetCookie } from "./visits";
@@ -141,6 +142,84 @@ async function api(request: Request, env: Env, url: URL, ctx: ExecutionContext):
     if (!shadow?.report) return error("no supplemental shadow run has completed yet", 404);
     const decided = new Set((await listJevVerdicts(env.DB)).map((row) => row.storyUrl));
     return json({ generatedAt: shadow.report.generatedAt, disagreements: findJevDisagreements(shadow.report, decided) });
+  }
+  if (request.method === "GET" && url.pathname === "/api/jev-review-batch") {
+    if (!(await isAdmin(request, env))) return error("unauthorized", 401);
+    const runId = url.searchParams.get("run_id");
+    const shadow = runId ? await getSupplementalShadowRun(env.DB, runId) : await latestJevReviewShadowRun(env.DB);
+    if (!shadow?.report) return error("no supplemental shadow run is available for review", 404);
+    if (!shadow.report.jevQuestionSetVersion || !shadow.report.jevQuestions) return error("latest Jev shadow run has no versioned question snapshot; wait for the next scored shadow run", 409);
+    const sample = buildJevReviewBatch(shadow.id, shadow.report);
+    const reviews = new Map((await listJevHumanReviews(env.DB, shadow.id)).map((review) => [review.storyUrl, review]));
+    const sourceNames = new Map((shadow.report.sources ?? []).map((source) => [source.id, source.name]));
+    return json({
+      runId: shadow.id,
+      issueDate: shadow.report.baseIssue.issueDate,
+      generatedAt: shadow.report.generatedAt,
+      profileVersion: shadow.report.profileVersion ?? null,
+      sourcePack: shadow.report.sourcePack ?? null,
+      questionSetVersion: shadow.report.jevQuestionSetVersion,
+      questions: shadow.report.jevQuestions,
+      items: sample.map((item) => {
+        const saved = reviews.get(item.url);
+        return {
+          ...item,
+          sourceNames: (item.sourceIds ?? []).map((id) => sourceNames.get(id) ?? id),
+          decision: saved?.decision ?? null,
+          rankPosition: saved?.rankPosition ?? null
+        };
+      })
+    });
+  }
+  if (request.method === "POST" && url.pathname === "/api/jev-reviews") {
+    if (!(await isAdmin(request, env))) return error("unauthorized", 401);
+    const raw = await readJson(request);
+    const body = raw !== null && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
+    const runId = typeof body?.shadow_run_id === "string" ? body.shadow_run_id : "";
+    const reviews = Array.isArray(body?.reviews) ? body.reviews : null;
+    if (!runId || !reviews || reviews.length > 12) return error("body must contain a shadow_run_id and up to 12 reviews", 400);
+    const shadow = await getSupplementalShadowRun(env.DB, runId);
+    if (!shadow?.report) return error("shadow review batch has expired or does not exist", 404);
+    const report = shadow.report;
+    if (!report.jevQuestionSetVersion || !report.jevQuestions) return error("shadow run has no versioned Jev question snapshot", 409);
+    const sample = buildJevReviewBatch(shadow.id, report);
+    if (reviews.length !== sample.length) return error("review every candidate in this sample before saving", 400);
+    const byUrl = new Map(sample.map((item) => [item.url, item]));
+    const sourceNames = new Map((report.sources ?? []).map((source) => [source.id, source.name]));
+    const seen = new Set<string>();
+    const parsed: Array<{ url: string; decision: "publish" | "reject" | "unsure"; rankPosition: number | null }> = [];
+    for (const rawReview of reviews) {
+      const review = rawReview !== null && typeof rawReview === "object" && !Array.isArray(rawReview) ? rawReview as Record<string, unknown> : null;
+      const storyUrl = typeof review?.story_url === "string" ? review.story_url : "";
+      const decision = review?.decision;
+      const rankPosition = review?.rank_position;
+      if (!storyUrl || seen.has(storyUrl) || !byUrl.has(storyUrl)) return error("reviews must contain each sampled story once", 400);
+      if (decision !== "publish" && decision !== "reject" && decision !== "unsure") return error("each decision must be publish, reject, or unsure", 400);
+      if (decision === "publish" ? !Number.isInteger(rankPosition) || Number(rankPosition) < 1 : rankPosition !== null) return error("publish choices need a positive rank; reject and unsure choices need a null rank", 400);
+      seen.add(storyUrl);
+      parsed.push({ url: storyUrl, decision, rankPosition: decision === "publish" ? Number(rankPosition) : null });
+    }
+    const publishRanks = parsed.filter((review) => review.decision === "publish").map((review) => review.rankPosition!).sort((left, right) => left - right);
+    if (publishRanks.some((rank, index) => rank !== index + 1)) return error("publish ranks must be unique and consecutive from 1", 400);
+    await recordJevHumanReviews(env.DB, parsed.map((review) => {
+      const item = byUrl.get(review.url)!;
+      const sourceNameList = (item.sourceIds ?? []).map((id) => sourceNames.get(id) ?? id);
+      return {
+        shadowRunId: shadow.id,
+        storyUrl: item.url,
+        storyTitle: item.title,
+        issueDate: report.baseIssue.issueDate,
+        sampleStratum: item.sampleStratum,
+        decision: review.decision,
+        rankPosition: review.rankPosition,
+        questionSetVersion: report.jevQuestionSetVersion!,
+        profileVersion: report.profileVersion ?? null,
+        sourcePackId: report.sourcePack?.id ?? null,
+        sourcePackVersion: report.sourcePack?.version ?? null,
+        snapshotJson: JSON.stringify({ candidate: { ...item, sourceNames: sourceNameList }, questions: report.jevQuestions })
+      };
+    }));
+    return json({ ok: true, saved: parsed.length, runId: shadow.id });
   }
   if (request.method === "POST" && url.pathname === "/api/jev-verdicts") {
     if (!(await isAdmin(request, env))) return error("unauthorized", 401);

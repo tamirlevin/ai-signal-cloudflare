@@ -9,7 +9,8 @@ export type JevRecommendation = { recommendation: "publish" | "reject"; confiden
  * topic without deserving attention, and taste shifts over time while topics
  * stay put. Unscored rows fail closed to a non-confident reject, except a
  * missing want alone is not confident (the taste model may simply not know yet).
- * Thresholds are the v1 calibration knobs for the promotion rule.
+ * These thresholds summarize shadow output for review sampling; Jev does not
+ * control the current selection or publication decision.
  */
 export function jevRecommendation(scores: { substantive: number | null; novel: number | null; interest: string | null; readerWants: number | null }): JevRecommendation {
   const substantive = scores.substantive ?? -1;
@@ -56,6 +57,8 @@ export function findJevDisagreements(
   const found: JevDisagreement[] = [];
   for (const jev of report.jevScores ?? []) {
     if (decidedUrls.has(jev.url)) continue;
+    const hasAnswer = jev.interest !== null || jev.novel !== null || jev.substantive !== null || jev.readerWants !== null;
+    if (!hasAnswer) continue;
     const rec = jevRecommendation({ substantive: jev.substantive, novel: jev.novel, interest: jev.interest, readerWants: jev.readerWants });
     const published = jev.outcome === "selected";
     if ((rec.recommendation === "publish") === published) continue;
@@ -107,15 +110,15 @@ export type JevVerdictStats = {
   total: number;
   publishVerdicts: number;
   rejectVerdicts: number;
-  /** Share of verdicts matching Jev's recommendation. Promotion needs >= 0.7 over 14 days. */
+  /** Share of legacy verdicts matching Jev's recommendation. */
   sidedWithJev: number;
-  /** Owner-wanted stories inside Jev's confident rejects. Promotion needs < 1. */
+  /** Owner-wanted stories inside Jev's confident rejects in the legacy review set. */
   confidentRejectMisses: number;
 };
 
 /**
- * Agreement accounting for the fixed promotion rule. A +1 verdict means the
- * owner would publish the story; -1 means correctly rejected.
+ * Agreement accounting for the legacy disagreement review. A +1 verdict
+ * means the owner would publish the story; -1 means correctly rejected.
  */
 export function jevVerdictStats(rows: JevVerdictRow[]): JevVerdictStats {
   let sided = 0;

@@ -230,21 +230,23 @@ export async function recordSupplementalShadowRun(
   ]);
 }
 
-export async function latestSupplementalShadowRun(db: D1Database): Promise<SupplementalShadowRun | null> {
-  const row = await db.prepare("SELECT id, trigger, status, base_issue_url, base_issue_date, report_json, error_code, error_message, started_at, finished_at, duration_ms FROM supplemental_shadow_runs ORDER BY started_at DESC LIMIT 1").first<{
-    id: string;
-    trigger: SupplementalShadowRun["trigger"];
-    status: SupplementalShadowRun["status"];
-    base_issue_url: string | null;
-    base_issue_date: string | null;
-    report_json: string | null;
-    error_code: string | null;
-    error_message: string | null;
-    started_at: string;
-    finished_at: string;
-    duration_ms: number;
-  }>();
-  if (!row) return null;
+type SupplementalShadowDbRow = {
+  id: string;
+  trigger: SupplementalShadowRun["trigger"];
+  status: SupplementalShadowRun["status"];
+  base_issue_url: string | null;
+  base_issue_date: string | null;
+  report_json: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  started_at: string;
+  finished_at: string;
+  duration_ms: number;
+};
+
+const SUPPLEMENTAL_SHADOW_COLUMNS = "id, trigger, status, base_issue_url, base_issue_date, report_json, error_code, error_message, started_at, finished_at, duration_ms";
+
+function supplementalShadowFromRow(row: SupplementalShadowDbRow): SupplementalShadowRun {
   return {
     id: row.id,
     trigger: row.trigger,
@@ -258,6 +260,27 @@ export async function latestSupplementalShadowRun(db: D1Database): Promise<Suppl
     finishedAt: row.finished_at,
     durationMs: row.duration_ms
   };
+}
+
+export async function latestSupplementalShadowRun(db: D1Database): Promise<SupplementalShadowRun | null> {
+  const row = await db.prepare(`SELECT ${SUPPLEMENTAL_SHADOW_COLUMNS} FROM supplemental_shadow_runs ORDER BY started_at DESC LIMIT 1`).first<SupplementalShadowDbRow>();
+  return row ? supplementalShadowFromRow(row) : null;
+}
+
+/** Loads one retained shadow snapshot by its stable run ID for an in-progress admin review. */
+export async function getSupplementalShadowRun(db: D1Database, runId: string): Promise<SupplementalShadowRun | null> {
+  const row = await db.prepare(`SELECT ${SUPPLEMENTAL_SHADOW_COLUMNS} FROM supplemental_shadow_runs WHERE id = ?1 LIMIT 1`).bind(runId).first<SupplementalShadowDbRow>();
+  return row ? supplementalShadowFromRow(row) : null;
+}
+
+/** Returns the newest retained run that has a versioned Jev question snapshot. */
+export async function latestJevReviewShadowRun(db: D1Database): Promise<SupplementalShadowRun | null> {
+  const result = await db.prepare(`SELECT ${SUPPLEMENTAL_SHADOW_COLUMNS} FROM supplemental_shadow_runs WHERE report_json IS NOT NULL ORDER BY started_at DESC LIMIT 15`).all<SupplementalShadowDbRow>();
+  for (const row of result.results) {
+    const shadow = supplementalShadowFromRow(row);
+    if (shadow.report?.jevQuestionSetVersion && shadow.report.jevQuestions) return shadow;
+  }
+  return null;
 }
 
 export function errorCode(error: unknown): string {
@@ -322,4 +345,36 @@ export async function recordJevVerdict(db: D1Database, row: Omit<JevVerdictRow, 
 export async function listJevVerdicts(db: D1Database): Promise<JevVerdictRow[]> {
   const result = await db.prepare("SELECT story_url, story_title, issue_date, reranker_relevance, reranker_rank, reranker_interest, jev_interest, jev_interest_confidence, jev_novel, jev_substantive, jev_reader_wants, jev_recommendation, jev_confident, gate_outcome, verdict, created_at, updated_at FROM jev_verdicts ORDER BY updated_at DESC").all<JevVerdictDbRow>();
   return result.results.map(toVerdictRow);
+}
+
+export type JevHumanReviewDecision = "publish" | "reject" | "unsure";
+export type JevHumanReviewRecord = {
+  shadowRunId: string;
+  storyUrl: string;
+  storyTitle: string;
+  issueDate: string;
+  sampleStratum: string;
+  decision: JevHumanReviewDecision;
+  rankPosition: number | null;
+  questionSetVersion: string;
+  profileVersion: number | null;
+  sourcePackId: string | null;
+  sourcePackVersion: number | null;
+  snapshotJson: string;
+};
+export type JevHumanReviewState = Pick<JevHumanReviewRecord, "storyUrl" | "decision" | "rankPosition"> & { updatedAt: string };
+
+/** Current labels for one batch; the first-run model snapshot stays unchanged on edits. */
+export async function listJevHumanReviews(db: D1Database, shadowRunId: string): Promise<JevHumanReviewState[]> {
+  const result = await db.prepare("SELECT story_url, decision, rank_position, updated_at FROM jev_human_reviews WHERE shadow_run_id = ?1 ORDER BY rank_position IS NULL, rank_position, story_url")
+    .bind(shadowRunId).all<{ story_url: string; decision: JevHumanReviewDecision; rank_position: number | null; updated_at: string }>();
+  return result.results.map((row) => ({ storyUrl: row.story_url, decision: row.decision, rankPosition: row.rank_position, updatedAt: row.updated_at }));
+}
+
+/** Saves one reviewed batch while preserving each candidate's original scoring snapshot. */
+export async function recordJevHumanReviews(db: D1Database, rows: JevHumanReviewRecord[]): Promise<void> {
+  if (!rows.length) return;
+  const now = new Date().toISOString();
+  await db.batch(rows.map((row) => db.prepare("INSERT INTO jev_human_reviews (shadow_run_id, story_url, story_title, issue_date, sample_stratum, decision, rank_position, question_set_version, profile_version, source_pack_id, source_pack_version, snapshot_json, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14) ON CONFLICT(shadow_run_id, story_url) DO UPDATE SET decision = excluded.decision, rank_position = excluded.rank_position, updated_at = excluded.updated_at")
+    .bind(row.shadowRunId, row.storyUrl, row.storyTitle, row.issueDate, row.sampleStratum, row.decision, row.rankPosition, row.questionSetVersion, row.profileVersion, row.sourcePackId, row.sourcePackVersion, row.snapshotJson, now, now)));
 }

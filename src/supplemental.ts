@@ -18,7 +18,7 @@ import type {
 import { categoryForProfile, compactIssueInventory, isPermissionDesignSignal, scoreCandidateForProfile } from "./editorial";
 import { fetchLatestRss } from "./rss";
 import { getActiveProfile, getEdition, latestEdition, listEditions, melbourneCalendarDay, recordSupplementalShadowRun } from "./repository";
-import { jevShadowEnabled, scoreJevShadow, type JevShadowScores } from "./jev";
+import { buildJevQuestions, JEV_QUESTION_SET_VERSION, jevShadowEnabled, MAX_JEV_TEXTS, scoreJevShadow, type JevQuestion, type JevShadowScores } from "./jev";
 import { getSourcePack } from "./source-packs";
 import { attachTriageScores, rankTriageScores, scoreTriage, triageShadowEnabled, type TriageScores } from "./triage";
 
@@ -931,7 +931,7 @@ export type DailyCandidateInventory = {
   expiredCandidates: number;
   sourceFunnels: Partial<Record<SupplementalSourceId, SupplementalCandidateFunnel>>;
   /** Full fresh deduplicated pool with per-item funnel outcomes, including rejected rows for triage logging. */
-  evaluated: Array<{ url: string; title: string; summary: string; outcome: "selected" | "rankedOut" | "noUsableEvidence" | "weakProfileFit"; sourceIds: SupplementalSourceId[] }>;
+  evaluated: Array<{ url: string; title: string; summary: string; publishedAt: string; outcome: "selected" | "rankedOut" | "noUsableEvidence" | "weakProfileFit"; sourceIds: SupplementalSourceId[] }>;
   collection: DailyCollection;
 };
 
@@ -977,7 +977,7 @@ export function buildDailyCandidateInventory(input: {
         if (outcome.story) funnel.qualified += 1;
         else funnel.filtered[outcome.filtered] += 1;
       }
-      return { ...outcome, sourceIds, candidate: { url: candidate.url, title: candidate.title, summary: candidate.summary } };
+      return { ...outcome, sourceIds, candidate: { url: candidate.url, title: candidate.title, summary: candidate.summary, publishedAt: candidate.publishedAt } };
     });
     for (const result of input.sourceResults) {
       const funnel = funnels[result.health.id]!;
@@ -1023,6 +1023,7 @@ export function buildDailyCandidateInventory(input: {
     url: outcome.candidate.url,
     title: outcome.candidate.title,
     summary: outcome.candidate.summary,
+    publishedAt: outcome.candidate.publishedAt,
     outcome: (outcome.story
       ? (selectedClusters.has(outcome.story.provenance!.clusterId) ? "selected" as const : "rankedOut" as const)
       : outcome.filtered) as "selected" | "rankedOut" | "noUsableEvidence" | "weakProfileFit",
@@ -1056,6 +1057,7 @@ export function buildDailySourceReport(input: {
   profile: Profile;
   triage?: Map<string, TriageScores>;
   jev?: Map<string, JevShadowScores>;
+  jevQuestions?: Record<string, JevQuestion>;
 }): SupplementalShadowReport {
   const allCandidates = input.sourceResults.flatMap((result) => result.candidates);
   const selected = input.inventory.candidates.map((candidate): SupplementalShadowReport["wouldAdd"][number] => ({
@@ -1078,9 +1080,9 @@ export function buildDailySourceReport(input: {
     }))
     : undefined;
   const jevScores = input.jev?.size
-    ? input.inventory.evaluated.map((item) => {
+    ? input.inventory.evaluated.slice(0, MAX_JEV_TEXTS).map((item) => {
       const scores = input.jev!.get(item.url);
-      return { url: item.url, title: item.title, interest: scores?.interest ?? null, interestConfidence: scores?.interestConfidence ?? null, novel: scores?.novel ?? null, substantive: scores?.substantive ?? null, readerWants: scores?.readerWants ?? null, outcome: item.outcome };
+      return { url: item.url, title: item.title.slice(0, 300), summary: item.summary.slice(0, 600), publishedAt: item.publishedAt, sourceIds: item.sourceIds, interest: scores?.interest ?? null, interestConfidence: scores?.interestConfidence ?? null, novel: scores?.novel ?? null, substantive: scores?.substantive ?? null, readerWants: scores?.readerWants ?? null, outcome: item.outcome };
     })
     : undefined;
   for (const item of selected) {
@@ -1091,6 +1093,8 @@ export function buildDailySourceReport(input: {
     schemaVersion: 1,
     mode: "daily-pool",
     generatedAt: input.generatedAt,
+    profileVersion: input.profile.version,
+    ...(jevScores && input.jevQuestions ? { jevQuestionSetVersion: JEV_QUESTION_SET_VERSION, jevQuestions: input.jevQuestions } : {}),
     baseIssue: { url: input.issue.url, issueDate: input.issue.issueDate, publicationDate: input.issue.publicationDate },
     sourcePack: { id: pack.id, version: pack.version },
     limits: { modelCandidates: 18, publishedStories: 14 },
@@ -1174,13 +1178,15 @@ export async function runSupplementalShadow(env: Env, trigger: "cron" | "manual"
       triage = await scoreTriage(env.AI, profile, inventory.evaluated, priorTexts);
     }
     let jev: Map<string, JevShadowScores> | undefined;
+    let jevQuestions: Record<string, JevQuestion> | undefined;
     const jevKey = (env as Env & { TYPESAFE_API_KEY?: string }).TYPESAFE_API_KEY;
     if (jevShadowEnabled(env) && jevKey) {
       const priorTitles = await preTodayPriorTitles(env.DB, issueDate).catch(() => [] as string[]);
-      jev = await scoreJevShadow(jevKey, profile, inventory.evaluated, priorTitles);
+      jevQuestions = buildJevQuestions(profile, priorTitles);
+      jev = await scoreJevShadow(jevKey, profile, inventory.evaluated, priorTitles, fetch, jevQuestions);
       console.log(JSON.stringify({ message: "ai-signal jev shadow completed", issueUrl: issue.url, scored: jev.size, pool: inventory.evaluated.length }));
     }
-    const report = buildDailySourceReport({ issue, sourceResults, inventory, generatedAt: new Date().toISOString(), profile, triage, jev });
+    const report = buildDailySourceReport({ issue, sourceResults, inventory, generatedAt: new Date().toISOString(), profile, triage, jev, jevQuestions });
     if (triage?.size) attachTriageScores(report, triage);
     const failedSources = report.sources.filter((source) => source.status === "failed").length;
     const degradedSources = report.sources.filter((source) => source.status === "degraded").length;

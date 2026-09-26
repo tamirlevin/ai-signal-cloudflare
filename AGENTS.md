@@ -58,6 +58,7 @@ Do not smooth over conflicting evidence or convert an unverified inference into 
 - Do not deploy, mutate D1, apply a remote migration, force a republish, change a schedule or monitor, change secrets, or perform destructive Git operations unless the current user request explicitly authorizes it.
 - Read-only remote verification is appropriate when it is relevant and available.
 - Preserve the architectural guardrails in `PROJECT_HISTORY.md`, especially the deterministic daily story inventory, equal-source candidate pool, 36-hour preference/48-hour normal window with a 72-hour fallback below 10 qualified candidates, no X-only cards, source-bound URLs, no weak padding, preservation of the last good edition, and owner-only guarded republishing.
+- Keep Jev and reranker judgments advisory and shadow-only. Admin review labels, ranks, question-set versions, and run snapshots are research data; they do not automatically change the selection or publication path.
 - Do not create session transcripts, routine progress logs, or another project-memory file in the repository.
 
 ## Verification and release

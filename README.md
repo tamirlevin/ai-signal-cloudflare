@@ -64,7 +64,7 @@ The issue header is the edition date, not a source date. Each signal retains its
 - Failed runs are audit records only and cannot replace the last good edition.
 - The legacy D1 table `supplemental_shadow_runs` and endpoint `GET /api/shadow/latest` carry the latest source report. `report.mode="daily-pool"` records transport/parser health separately from candidate yield. Each source has a compact accepted → in-window → qualified → selected funnel, with outside-window, missing-evidence, weak-fit, merge, and ranked-out counts. The report also records the actual 48- or 72-hour window, eligible counts, and selected candidates. The edition's coverage label and `collection.maxFreshnessHours` reflect the same window. The reader has no separate fresh-signals section.
 - Every selected candidate is accounted before publication: published cards, recorded merges (`duplicate-url`, `duplicate-title`, `duplicate-text`, `product-version` with the surviving target), or invalid rejections with reasons. Any other loss throws a coverage gap that fails the run loudly instead of publishing silently; the decision record is logged per run.
-- `TRIAGE_SHADOW_ENABLED=true` adds the advisory reranker judge (full-precision raw scores, weighted maximum over per-interest queries, winning interest logged) without gating anything. `JEV_SHADOW_ENABLED=true` (requires the `TYPESAFE_API_KEY` secret) adds the advisory Jev judge in the same shadow runs: an interest choice over reader interests plus watching topics, pre-today novelty, substantive scoring, and a separate reader-want score, each with confidence. Fit and want stay separate because taste shifts over time while topics stay put; verdict snapshots record both so a future taste model can train on them. Rows where Jev and the gates disagree are decided by the owner in `/admin`; verdict snapshots and the sided-with-Jev/confident-miss stats drive the fixed promotion rule for replacing the taste gate.
+- `TRIAGE_SHADOW_ENABLED=true` adds the advisory reranker judge (full-precision raw scores, weighted maximum over per-interest queries, winning interest logged) without gating anything. `JEV_SHADOW_ENABLED=true` (requires the `TYPESAFE_API_KEY` secret) adds the advisory Jev judge in the same shadow runs: an interest choice over reader interests plus watching topics, pre-today novelty, substantive scoring, and a separate reader-want score. Jev question sets carry a version and exact prompt snapshot. In `/admin`, the owner reviews a small balanced sample of Jev-scored candidates, labels each publish/reject/unsure, then ranks only publish choices. The saved row preserves Jev and reranker output, the question/profile/source-pack versions, and the candidate context. This is feedback for two separate learning tracks—question usefulness and reader taste—not an automatic Jev selection rule. Earlier binary disagreement verdicts remain available as a legacy calibration set.
 - `GET /api/status` separates the latest run outcome from the latest completed cron heartbeat. The reader alerts after 26 hours without a completed cron check; a timely idempotent skip is a healthy heartbeat.
 
 `SUPPLEMENTAL_SHADOW_ENABLED=true` keeps the read-only source report refreshed when a same-day edition causes generation to skip. It does not create another publication path.
@@ -84,13 +84,13 @@ The public reader records at most one anonymous browser/day visit in D1 with an 
 ## Local setup
 
 ```bash
-npm install
+npm ci
 npm run types
 cp .dev.vars.example .dev.vars
 npm run dev
 ```
 
-Run `npm install` independently on every machine. `node_modules` contains architecture-specific `workerd` and test-runner binaries and is not portable between Intel and Apple Silicon Macs, even when the checkout itself is synchronized through Dropbox.
+Run `npm ci` independently in each checkout and on every machine. `node_modules` contains architecture-specific `workerd` and test-runner binaries and is not portable between Intel and Apple Silicon Macs, even when the checkout itself is synchronized through Dropbox. The lockfile keeps package versions reproducible; never sync `node_modules` between machines.
 
 Create the ignored `.dev.vars` with `ADMIN_TOKEN`. For a new local D1 database:
 
@@ -146,7 +146,9 @@ Owner-only endpoints:
 - `GET /api/visits?limit=50`
 - `GET /api/jev-disagreements` (open Jev/gate disagreements from the latest shadow run)
 - `POST /api/jev-verdicts` (`{ story_url, verdict: 1 | -1 }`, snapshotted server-side)
-- `GET /api/jev-verdicts/stats` (sided-with-Jev share and confident-reject misses)
+- `GET /api/jev-review-batch` (admin-only balanced sample from the latest versioned Jev run; optional `run_id` resumes a retained batch)
+- `POST /api/jev-reviews` (admin-only publish/reject/unsure labels and ranks for publish choices, stored with immutable run/question snapshots)
+- `GET /api/jev-verdicts/stats` (legacy disagreement-set agreement counts; no promotion threshold)
 
 All API responses use security headers and do not enable cross-origin access. The Worker is attached only to `signal.tamirlevin.dev`; `workers.dev` is disabled.
 
