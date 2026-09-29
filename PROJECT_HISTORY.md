@@ -43,8 +43,12 @@ This section is the boot point for the staging Jev experiment on `feature/mts-la
 4. Only if `reader-want-v1` looks weak on enough data, design `reader-want-v2` (sharper question, labelled examples) and compare on the same labels.
 5. Consider a fix for mistaken labels (currently append-only with no UI correction) and a per-story vote-counting rule if the same story appears across runs.
 
+### Analysis-rework release (29 September 2026)
+- Checks passed generated types, TypeScript, all 176 tests in 18 files, staging dry-run packaging, and diff validation; the label double-save guard was also exercised on a local SQLite. Source commit `5db1aab` was pushed to `feature/mts-lane` before deployment. Health, status, latest-edition, shadow, and profile returned HTTP 200 after deployment; the review-batch (both modes), analysis, label, and rank endpoints returned 401 without a token; and the deployed `app.js` carries the blind-labelling and confirmed-bar text.
+- A read-only D1 query showed 23 label events (the owner's 19 labels plus 4 rank events) and `jev_judgments` still empty; the last shadow run was `2026-09-29T00:15:27Z`. The ledger is expected to fill at the next scheduled shadow run (08:15 UTC); until that is observed, ledger population remains unverified. The reworked analysis has not yet been exercised by the owner with real data.
+
 ### Operating notes
-- Staging: version `03795db0-10fd-41e3-96fc-68f6263ba2dc` (`git-035b590-staging`), rollback `f5f12b81-d2ae-4acb-b74f-055108137bb2` (`git-d69eea8-staging`). D1 `ai-signal-staging` has migration `0010_jev_ledger.sql` applied. Production has none of this and lacks migrations 0007–0010; promoting any of it needs its own migration plan.
+- Staging: version `80241a9f-c920-4c46-86d6-37b4c2b39755` (`git-5db1aab-staging`, source `5db1aabcce7479b84605df6e856cbdfb162f0940`, created `2026-09-29T07:55:32Z`) serves 100% of traffic; rollback is version `03795db0-10fd-41e3-96fc-68f6263ba2dc` (`git-035b590-staging`), and before that `f5f12b81-d2ae-4acb-b74f-055108137bb2` (`git-d69eea8-staging`). D1 `ai-signal-staging` has migration `0010_jev_ledger.sql` applied and no pending migrations; the analysis rework needed none. Production has none of this and lacks migrations 0007–0010; promoting any of it needs its own migration plan.
 - Session mechanics: the working copy used in the 29 September session was a temporary worktree; the pushed branch `feature/mts-lane` is the source. Use `npm ci` and `npm run check` from a fresh checkout. GitHub and Cloudflare logins are per session; Wrangler remote migrations need an explicit, confirmed step.
 
 ## 29 September 2026 — Jev paired review, durable ledger, and admin fix (staging)
