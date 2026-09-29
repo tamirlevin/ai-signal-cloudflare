@@ -509,7 +509,7 @@ export type JevAnalysis = {
     rankRuns: number;
     meanRankCorrelation: number | null;
   };
-  /** Proposed bar; the owner confirms or changes it before results are read. */
+  /** The bar the owner confirmed on 29 September 2026; change it before reading results, not after. */
   bar: BarCriterion[];
 };
 
