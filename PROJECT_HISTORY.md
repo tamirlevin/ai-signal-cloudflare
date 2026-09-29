@@ -2,6 +2,48 @@
 
 This is the curated engineering and production history for AI Signal. It records consequential decisions, incidents, verified runtime evidence, unresolved uncertainty, and architectural constraints. It is not a release changelog, commit log, or session transcript.
 
+## Jev experiment — purpose, decisions, first findings, and next steps (as of 29 September 2026)
+
+This section is the boot point for the staging Jev experiment on `feature/mts-lane`. Production (`main`, `28fdd29`, source pack v5) is unaffected and stays the baseline.
+
+### Purpose and target
+- The owner's question is whether Jev (TypeSafe's cheap structured-classification model, a paid direct API) can add value as a judge in the selection loop compared with the deterministic keyword gate. It is a learning exercise first and possible next-stage development second; it is not production-ready.
+- Target shape (owner's "judge fast, write smart" diagram): a cheap judge scores every collected candidate before the rules, rules and validation still decide, the large writer only sees survivors, and every judge score is logged beside the gate decision and publish outcome. Fail-open is required if any judge is down. The later "Rules pick. Jev is on trial" diagram is the accurate current state: only the rules can change an edition; Jev and the reranker are shadow-only; the dashed line from Jev to the selection rules is a hypothesis.
+- Two differences between that diagram and the code matter. The diagram's judge is the Workers AI reranker plus embedding model with "no outside vendors"; Jev is a third-party API and would need its own fail-open rule and data-flow decision before promotion. And the writer already sees at most 18 pre-filtered candidates, so a judge saves almost no writer cost: any value has to come from selection quality (recall of good stories the keyword gate drops, removal of junk that slips through, or ordering), not spend.
+
+### Design decisions made
+- Jev's counterfactual pick is rank-based: the top K stories by `reader_wants`, where K is the gate's selection size. The earlier four-threshold AND rule is retained only in the legacy verdict code. Only stories the two picks disagree on can tell the judges apart.
+- The paired sample is up to 4 stories from each disagreement side, 1 anchor from each agreement side, and up to 2 repeats of earlier-labelled stories that measure the owner's own consistency; spare places fill round-robin. A dropped-pool mode is a census of unjudged rules-dropped stories, presented without Jev-derived groups, to size the recall ceiling.
+- One vote per story across both modes (the first non-repeat, non-rank event). Labels are append-only events; a saved batch is read-only. Sample group and cell sizes are withheld until save so they cannot colour a label; cell population and sample size are stored so agreement can be reweighted to the pool.
+- Jev scores live in a durable `jev_judgments` ledger keyed by story and question fingerprint (which ignores the daily prior-title list). Shadow reports remain pruned to 15 rows.
+- Ranking the publish set is a separate optional step. The earlier binary disagreement queue is retired from the page; its endpoints and rows remain as legacy data.
+- The "good enough" bar is deliberately not yet set. Proposed roles and measures: rescue precision (share of stories Jev would add that the owner would publish), harm rate (stories Jev confidently drops that the owner would publish), junk removed (share of Jev drops the owner would also reject), and rank agreement. Fix the bar before results accumulate.
+
+### Ideas raised and challenged (kept for later)
+- Judge the ceiling before the judge: label what the rules drop without Jev's scores. If the owner would rescue almost nothing, the value is junk removal and ranking, not recall.
+- A daily counterfactual (edition from rules versus edition from Jev ranking on the same pool) labelled only on the symmetric difference is a stronger design than random samples; the paired sample approximates it.
+- Score backfill of published editions would give a precision-only baseline; excluded stories from earlier days are not recoverable.
+- A stronger model as a proxy labeller would only measure agreement with that model, not the owner; usable for triage only.
+- Question experiments once enough labels exist: a sharper or graded `reader_wants`, and the owner's own labelled stories embedded as examples in the question state (a new question-set version compared with `reader-want-v1` on the same labels). The `substantive` question conflicts with the owner's taste and is not part of the pick rule.
+- Not yet resolved: the third-party data flow (titles and summaries to TypeSafe) and fail-open behaviour are promotion questions, not needed while staging-only.
+
+### First findings (19 labelled stories, one day; not conclusions)
+- Where the rules and Jev's top picks disagreed, Jev was right on 2 of 7 decided (about 29%; the rules 5 of 7). With 7 decisions this is indistinguishable from a coin flip; roughly 30 decided disagreements are needed to separate 29% from 50%.
+- Rules-dropped stories: the owner would rescue 0 of 6 decided (1 unsure), on one day. This points to a low recall ceiling.
+- `reader_wants` AUC about 0.66 and reranker AUC about 0.68 over 14 votes: both weak and not distinguishable; the reranker's normalized scores are mostly near zero, so its AUC is fragile. Rank correlation (4 items), anchors (1 each), and repeats (none yet) are not informative.
+- Story-level: `reader_wants` is compressed (mostly 0.4–0.66, one story above 0.8), so the top-K cut falls in a dense zone; the one Jev-only story the owner would publish scored 0.80 under a profile interest weighted 0; 5 of 19 labels were "unsure".
+
+### Next steps (ranked)
+1. Confirm the ledger fills at the next staging shadow run (`15 */8 * * *` UTC, next after this record 08:15 UTC). If `jev_judgments` is still empty afterwards, inspect the shadow run logs and the `JEV_SHADOW_ENABLED` / `TYPESAFE_API_KEY` path.
+2. Label a dropped pool and a paired sample on several different days; save one list before loading the other. Aim for about 30 decided disagreements and several days of dropped pools before drawing any conclusion.
+3. Set the "good enough" bar before reading results, then read the "How Jev is doing" panel.
+4. Only if `reader-want-v1` looks weak on enough data, design `reader-want-v2` (sharper question, labelled examples) and compare on the same labels.
+5. Consider a fix for mistaken labels (currently append-only with no UI correction) and a per-story vote-counting rule if the same story appears across runs.
+
+### Operating notes
+- Staging: version `03795db0-10fd-41e3-96fc-68f6263ba2dc` (`git-035b590-staging`), rollback `f5f12b81-d2ae-4acb-b74f-055108137bb2` (`git-d69eea8-staging`). D1 `ai-signal-staging` has migration `0010_jev_ledger.sql` applied. Production has none of this and lacks migrations 0007–0010; promoting any of it needs its own migration plan.
+- Session mechanics: the working copy used in the 29 September session was a temporary worktree; the pushed branch `feature/mts-lane` is the source. Use `npm ci` and `npm run check` from a fresh checkout. GitHub and Cloudflare logins are per session; Wrangler remote migrations need an explicit, confirmed step.
+
 ## 29 September 2026 — Jev paired review, durable ledger, and admin fix (staging)
 
 - The admin "Load review sample" button always failed with "no supplemental shadow run is available for review": the click handler was passed directly to `addEventListener`, so the click event became the loader's `runId` argument and the request asked for `run_id=[object PointerEvent]`. Staging held a valid Jev-scored run throughout. A regression test now forbids handing these loaders straight to `addEventListener`.
