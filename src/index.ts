@@ -4,7 +4,7 @@ import { getActiveProfile, getEdition, getSupplementalShadowRun, jevLedgerStats,
 import type { LabelEvent } from "./jev-ledger";
 import type { SupplementalShadowReport } from "./contracts";
 import { findJevDisagreements, jevVerdictStats } from "./verdicts";
-import { buildDroppedBatch, buildPairedBatch, jevQuestionFingerprint, summarizeJevLabels, type JevDecision, type ReviewBatch, type ReviewMode } from "./jev-ledger";
+import { buildDroppedBatch, buildPairedBatch, enrichEventsWithPicks, jevQuestionFingerprint, summarizeJevLabels, type JevDecision, type ReviewBatch, type ReviewMode } from "./jev-ledger";
 import { runSupplementalShadow } from "./supplemental";
 import { ValidationError } from "./validation";
 import { listVisits, recordVisit, requestLocation, visitorIdentity, visitorSetCookie } from "./visits";
@@ -206,15 +206,17 @@ async function api(request: Request, env: Env, url: URL, ctx: ExecutionContext):
       state: "open",
       poolSize: batch.poolSize,
       jevK: batch.jevK,
-      // Sample group and cell sizes stay server-side until the batch is saved, so they cannot colour a label.
+      unscoredSelected: batch.unscoredSelected,
+      complete: batch.complete,
+      // Scores, gate outcome, sample group and cell sizes stay server-side until the batch is saved:
+      // labels are the ground truth, so nothing about what any judge said may reach them first.
       items: batch.items.map((item) => ({
         url: item.url,
         title: item.title,
         summary: item.summary,
         publishedAt: item.publishedAt,
         sourceIds: item.sourceIds,
-        sourceNames: item.sourceIds.map((id) => sourceNames.get(id as never) ?? id),
-        assessment: item.assessment
+        sourceNames: item.sourceIds.map((id) => sourceNames.get(id as never) ?? id)
       }))
     });
   }
@@ -300,8 +302,14 @@ async function api(request: Request, env: Env, url: URL, ctx: ExecutionContext):
   }
   if (request.method === "GET" && url.pathname === "/api/jev-analysis") {
     if (!(await isAdmin(request, env))) return error("unauthorized", 401);
-    const [events, ledger] = await Promise.all([listJevLabelEvents(env.DB), jevLedgerStats(env.DB)]);
-    return json({ analysis: summarizeJevLabels(events), ledger });
+    const [rawEvents, ledger] = await Promise.all([listJevLabelEvents(env.DB), jevLedgerStats(env.DB)]);
+    // Labels made before judge picks were recorded get them back from the run's retained report.
+    const reports = new Map<string, SupplementalShadowReport>();
+    for (const runId of new Set(rawEvents.filter((event) => event.kind !== "rank" && event.kind !== "repeat" && !event.snapshotJson.includes('"picks"')).map((event) => event.runId))) {
+      const shadow = await getSupplementalShadowRun(env.DB, runId);
+      if (shadow?.report) reports.set(runId, shadow.report);
+    }
+    return json({ analysis: summarizeJevLabels(enrichEventsWithPicks(rawEvents, reports)), ledger });
   }
   if (request.method === "POST" && url.pathname === "/api/jev-verdicts") {
     if (!(await isAdmin(request, env))) return error("unauthorized", 401);

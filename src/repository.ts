@@ -429,10 +429,18 @@ export async function listJevLabelEventsForRun(db: D1Database, runId: string): P
 
 export type NewLabelEvent = Omit<LabelEvent, "id" | "createdAt"> & { profileVersion: number | null; sourcePackId: string | null; sourcePackVersion: number | null };
 
-/** Appends label events. Events are never edited; a changed mind is a new event. */
+/**
+ * Appends label events. Events are never edited; a changed mind is a new event. A vote or
+ * repeat is skipped when the same run already holds one for that story and kind, so two
+ * open tabs saving the same batch cannot double-count it. Rank events may repeat.
+ */
 export async function recordJevLabelEvents(db: D1Database, events: NewLabelEvent[]): Promise<void> {
   if (!events.length) return;
   const now = new Date().toISOString();
-  await db.batch(events.map((event) => db.prepare("INSERT INTO jev_label_events (story_url, question_hash, question_set_version, run_id, issue_date, kind, decision, rank_position, cell_population, cell_sampled, pool_size, jev_k, profile_version, source_pack_id, source_pack_version, snapshot_json, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)")
+  const columns = "story_url, question_hash, question_set_version, run_id, issue_date, kind, decision, rank_position, cell_population, cell_sampled, pool_size, jev_k, profile_version, source_pack_id, source_pack_version, snapshot_json, created_at";
+  const placeholders = "?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17";
+  const insert = `INSERT INTO jev_label_events (${columns}) VALUES (${placeholders})`;
+  const guarded = `INSERT INTO jev_label_events (${columns}) SELECT ${placeholders} WHERE NOT EXISTS (SELECT 1 FROM jev_label_events WHERE run_id = ?4 AND story_url = ?1 AND kind = ?6)`;
+  await db.batch(events.map((event) => db.prepare(event.kind === "rank" ? insert : guarded)
     .bind(event.storyUrl, event.questionHash, event.questionSetVersion, event.runId, event.issueDate, event.kind, event.decision, event.rankPosition, event.cellPopulation, event.cellSampled, event.poolSize, event.jevK, event.profileVersion, event.sourcePackId, event.sourcePackVersion, event.snapshotJson, now)));
 }

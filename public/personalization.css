@@ -62,6 +62,8 @@
 .jev-review-assessment p { color: var(--muted); font-size: 12px; line-height: 1.45; margin: 8px 0 0; }
 .jev-review-questions pre { background: var(--soft); border-radius: 6px; font-size: 11px; max-height: 280px; overflow: auto; padding: 10px; white-space: pre-wrap; }
 .jev-analysis-list { display: grid; gap: 4px 16px; grid-template-columns: max-content 1fr; margin: 10px 0 0; }
+.jev-bar { list-style: none; margin: 0 0 6px; padding: 0; }
+.jev-bar li { margin: 0 0 8px; }
 .jev-analysis-list dt { color: var(--muted); font-size: 12px; }
 .jev-analysis-list dd { color: var(--body); font-size: 13px; line-height: 1.5; margin: 0; }
 [hidden] { display: none !important; }
