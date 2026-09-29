@@ -1,8 +1,10 @@
 import { generateLatestEdition } from "./generation";
 import { runJev, runJevDirect } from "./jev";
-import { getActiveProfile, getEdition, getSupplementalShadowRun, latestEdition, latestJevReviewShadowRun, latestRunStatus, latestScheduledRunStatus, latestSupplementalShadowRun, listEditions, listJevHumanReviews, listJevVerdicts, recordJevHumanReviews, recordJevVerdict, scheduledHeartbeat, updateProfile } from "./repository";
+import { getActiveProfile, getEdition, getSupplementalShadowRun, jevLedgerStats, latestEdition, latestJevReviewShadowRun, latestRunStatus, latestScheduledRunStatus, latestSupplementalShadowRun, listEditions, listJevLabelEvents, listJevLabelEventsForRun, listJevVerdicts, recordJevLabelEvents, recordJevVerdict, scheduledHeartbeat, updateProfile } from "./repository";
+import type { LabelEvent } from "./jev-ledger";
+import type { SupplementalShadowReport } from "./contracts";
 import { findJevDisagreements, jevVerdictStats } from "./verdicts";
-import { buildJevReviewBatch } from "./jev-reviews";
+import { buildDroppedBatch, buildPairedBatch, jevQuestionFingerprint, summarizeJevLabels, type JevDecision, type ReviewBatch, type ReviewMode } from "./jev-ledger";
 import { runSupplementalShadow } from "./supplemental";
 import { ValidationError } from "./validation";
 import { listVisits, recordVisit, requestLocation, visitorIdentity, visitorSetCookie } from "./visits";
@@ -90,6 +92,35 @@ function supplementalShadowEnabled(env: Env): boolean {
   return env.SUPPLEMENTAL_SHADOW_ENABLED === "true";
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function reviewMode(value: string | null): ReviewMode | null {
+  return value === "paired" || value === "dropped" ? value : null;
+}
+
+function eventBelongsToMode(kind: string, mode: ReviewMode): boolean {
+  return mode === "dropped" ? kind === "dropped-pool" : kind !== "dropped-pool";
+}
+
+function makeBatch(mode: ReviewMode, runId: string, report: SupplementalShadowReport, history: LabelEvent[]): ReviewBatch {
+  return mode === "dropped" ? buildDroppedBatch(runId, report, history) : buildPairedBatch(runId, report, history);
+}
+
+/** Newest non-rank event per story within a set of events. */
+function latestByStory(events: LabelEvent[]): LabelEvent[] {
+  const latest = new Map<string, LabelEvent>();
+  for (const event of events) if (event.kind !== "rank") latest.set(event.storyUrl, event);
+  return [...latest.values()];
+}
+
+function savedItem(event: LabelEvent): Record<string, unknown> {
+  let candidate: Record<string, unknown> = { url: event.storyUrl, title: event.storyUrl };
+  try { candidate = (JSON.parse(event.snapshotJson) as { candidate: Record<string, unknown> }).candidate ?? candidate; } catch { /* keep the fallback */ }
+  return { ...candidate, kind: event.kind, cellPopulation: event.cellPopulation, cellSampled: event.cellSampled };
+}
+
 async function api(request: Request, env: Env, url: URL, ctx: ExecutionContext): Promise<Response | null> {
   if (!url.pathname.startsWith("/api/")) return null;
   if (!sameOrigin(request)) return error("cross-origin requests are not allowed", 403);
@@ -145,81 +176,132 @@ async function api(request: Request, env: Env, url: URL, ctx: ExecutionContext):
   }
   if (request.method === "GET" && url.pathname === "/api/jev-review-batch") {
     if (!(await isAdmin(request, env))) return error("unauthorized", 401);
+    const mode = reviewMode(url.searchParams.get("mode"));
+    if (!mode) return error("mode must be paired or dropped", 400);
     const runId = url.searchParams.get("run_id");
     const shadow = runId ? await getSupplementalShadowRun(env.DB, runId) : await latestJevReviewShadowRun(env.DB);
-    if (!shadow?.report) return error("no supplemental shadow run is available for review", 404);
-    if (!shadow.report.jevQuestionSetVersion || !shadow.report.jevQuestions) return error("latest Jev shadow run has no versioned question snapshot; wait for the next scored shadow run", 409);
-    const sample = buildJevReviewBatch(shadow.id, shadow.report);
-    const reviews = new Map((await listJevHumanReviews(env.DB, shadow.id)).map((review) => [review.storyUrl, review]));
-    const sourceNames = new Map((shadow.report.sources ?? []).map((source) => [source.id, source.name]));
-    return json({
+    if (!shadow?.report) return error("no Jev-scored shadow run is available for review yet", 404);
+    const report = shadow.report;
+    if (!report.jevQuestionSetVersion || !report.jevQuestions) return error("that shadow run has no versioned Jev question snapshot", 409);
+    const context = {
       runId: shadow.id,
-      issueDate: shadow.report.baseIssue.issueDate,
-      generatedAt: shadow.report.generatedAt,
-      profileVersion: shadow.report.profileVersion ?? null,
-      sourcePack: shadow.report.sourcePack ?? null,
-      questionSetVersion: shadow.report.jevQuestionSetVersion,
-      questions: shadow.report.jevQuestions,
-      items: sample.map((item) => {
-        const saved = reviews.get(item.url);
-        return {
-          ...item,
-          sourceNames: (item.sourceIds ?? []).map((id) => sourceNames.get(id) ?? id),
-          decision: saved?.decision ?? null,
-          rankPosition: saved?.rankPosition ?? null
-        };
-      })
+      issueDate: report.baseIssue.issueDate,
+      generatedAt: report.generatedAt,
+      profileVersion: report.profileVersion ?? null,
+      sourcePack: report.sourcePack ?? null,
+      questionSetVersion: report.jevQuestionSetVersion,
+      questions: report.jevQuestions,
+      mode
+    };
+    const saved = (await listJevLabelEventsForRun(env.DB, shadow.id)).filter((event) => eventBelongsToMode(event.kind, mode));
+    if (saved.length) {
+      const latest = latestByStory(saved);
+      const ranks = new Map(saved.filter((event) => event.kind === "rank" && event.rankPosition !== null).map((event) => [event.storyUrl, event.rankPosition]));
+      return json({ ...context, state: "saved", items: latest.map((event) => ({ ...savedItem(event), decision: event.decision, rankPosition: ranks.get(event.storyUrl) ?? null })) });
+    }
+    const batch = makeBatch(mode, shadow.id, report, await listJevLabelEvents(env.DB));
+    const sourceNames = new Map((report.sources ?? []).map((source) => [source.id, source.name]));
+    return json({
+      ...context,
+      state: "open",
+      poolSize: batch.poolSize,
+      jevK: batch.jevK,
+      // Sample group and cell sizes stay server-side until the batch is saved, so they cannot colour a label.
+      items: batch.items.map((item) => ({
+        url: item.url,
+        title: item.title,
+        summary: item.summary,
+        publishedAt: item.publishedAt,
+        sourceIds: item.sourceIds,
+        sourceNames: item.sourceIds.map((id) => sourceNames.get(id as never) ?? id),
+        assessment: item.assessment
+      }))
     });
   }
-  if (request.method === "POST" && url.pathname === "/api/jev-reviews") {
+  if (request.method === "POST" && url.pathname === "/api/jev-labels") {
     if (!(await isAdmin(request, env))) return error("unauthorized", 401);
-    const raw = await readJson(request);
-    const body = raw !== null && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
-    const runId = typeof body?.shadow_run_id === "string" ? body.shadow_run_id : "";
-    const reviews = Array.isArray(body?.reviews) ? body.reviews : null;
-    if (!runId || !reviews || reviews.length > 12) return error("body must contain a shadow_run_id and up to 12 reviews", 400);
+    const body = asRecord(await readJson(request));
+    const mode = reviewMode(typeof body?.mode === "string" ? body.mode : null);
+    const runId = typeof body?.run_id === "string" ? body.run_id : "";
+    const labels = Array.isArray(body?.labels) ? body.labels : null;
+    if (!mode || !runId || !labels) return error("body must contain mode, run_id and labels", 400);
     const shadow = await getSupplementalShadowRun(env.DB, runId);
-    if (!shadow?.report) return error("shadow review batch has expired or does not exist", 404);
+    if (!shadow?.report) return error("that shadow run has expired or does not exist", 404);
     const report = shadow.report;
-    if (!report.jevQuestionSetVersion || !report.jevQuestions) return error("shadow run has no versioned Jev question snapshot", 409);
-    const sample = buildJevReviewBatch(shadow.id, report);
-    if (reviews.length !== sample.length) return error("review every candidate in this sample before saving", 400);
-    const byUrl = new Map(sample.map((item) => [item.url, item]));
-    const sourceNames = new Map((report.sources ?? []).map((source) => [source.id, source.name]));
-    const seen = new Set<string>();
-    const parsed: Array<{ url: string; decision: "publish" | "reject" | "unsure"; rankPosition: number | null }> = [];
-    for (const rawReview of reviews) {
-      const review = rawReview !== null && typeof rawReview === "object" && !Array.isArray(rawReview) ? rawReview as Record<string, unknown> : null;
-      const storyUrl = typeof review?.story_url === "string" ? review.story_url : "";
-      const decision = review?.decision;
-      const rankPosition = review?.rank_position;
-      if (!storyUrl || seen.has(storyUrl) || !byUrl.has(storyUrl)) return error("reviews must contain each sampled story once", 400);
-      if (decision !== "publish" && decision !== "reject" && decision !== "unsure") return error("each decision must be publish, reject, or unsure", 400);
-      if (decision === "publish" ? !Number.isInteger(rankPosition) || Number(rankPosition) < 1 : rankPosition !== null) return error("publish choices need a positive rank; reject and unsure choices need a null rank", 400);
-      seen.add(storyUrl);
-      parsed.push({ url: storyUrl, decision, rankPosition: decision === "publish" ? Number(rankPosition) : null });
+    if (!report.jevQuestionSetVersion || !report.jevQuestions) return error("that shadow run has no versioned Jev question snapshot", 409);
+    const existing = await listJevLabelEventsForRun(env.DB, shadow.id);
+    if (existing.some((event) => eventBelongsToMode(event.kind, mode))) return error("this batch is already saved; labels are append-only", 409);
+    const history = await listJevLabelEvents(env.DB);
+    const batch = makeBatch(mode, shadow.id, report, history);
+    if (labels.length !== batch.items.length) return error("label every story in the batch before saving", 400);
+    const byUrl = new Map(batch.items.map((item) => [item.url, item]));
+    const decisions = new Map<string, JevDecision>();
+    for (const raw of labels) {
+      const label = asRecord(raw);
+      const storyUrl = typeof label?.story_url === "string" ? label.story_url : "";
+      const decision = label?.decision;
+      if (!byUrl.has(storyUrl) || decisions.has(storyUrl)) return error("the batch changed or a story repeats; reload and label again", 400);
+      if (decision !== "publish" && decision !== "reject" && decision !== "unsure") return error("each decision must be publish, reject or unsure", 400);
+      decisions.set(storyUrl, decision);
     }
-    const publishRanks = parsed.filter((review) => review.decision === "publish").map((review) => review.rankPosition!).sort((left, right) => left - right);
-    if (publishRanks.some((rank, index) => rank !== index + 1)) return error("publish ranks must be unique and consecutive from 1", 400);
-    await recordJevHumanReviews(env.DB, parsed.map((review) => {
-      const item = byUrl.get(review.url)!;
-      const sourceNameList = (item.sourceIds ?? []).map((id) => sourceNames.get(id) ?? id);
-      return {
-        shadowRunId: shadow.id,
-        storyUrl: item.url,
-        storyTitle: item.title,
-        issueDate: report.baseIssue.issueDate,
-        sampleStratum: item.sampleStratum,
-        decision: review.decision,
-        rankPosition: review.rankPosition,
-        questionSetVersion: report.jevQuestionSetVersion!,
-        profileVersion: report.profileVersion ?? null,
-        sourcePackId: report.sourcePack?.id ?? null,
-        sourcePackVersion: report.sourcePack?.version ?? null,
-        snapshotJson: JSON.stringify({ candidate: { ...item, sourceNames: sourceNameList }, questions: report.jevQuestions })
-      };
+    const questionHash = await jevQuestionFingerprint(report.jevQuestions);
+    const sourceNames = new Map((report.sources ?? []).map((source) => [source.id, source.name]));
+    await recordJevLabelEvents(env.DB, batch.items.map((item) => ({
+      storyUrl: item.url,
+      questionHash,
+      questionSetVersion: report.jevQuestionSetVersion!,
+      runId: shadow.id,
+      issueDate: report.baseIssue.issueDate,
+      kind: item.kind,
+      decision: decisions.get(item.url)!,
+      rankPosition: null,
+      cellPopulation: item.cellPopulation,
+      cellSampled: item.cellSampled,
+      poolSize: batch.poolSize,
+      jevK: batch.jevK,
+      profileVersion: report.profileVersion ?? null,
+      sourcePackId: report.sourcePack?.id ?? null,
+      sourcePackVersion: report.sourcePack?.version ?? null,
+      snapshotJson: JSON.stringify({
+        candidate: { url: item.url, title: item.title, summary: item.summary, publishedAt: item.publishedAt, sourceIds: item.sourceIds, sourceNames: item.sourceIds.map((id) => sourceNames.get(id as never) ?? id), assessment: item.assessment },
+        questions: report.jevQuestions
+      })
+    })));
+    const rankable = batch.items.filter((item) => item.kind !== "repeat" && item.kind !== "dropped-pool" && decisions.get(item.url) === "publish").map((item) => ({ url: item.url, title: item.title }));
+    return json({ ok: true, saved: batch.items.length, runId: shadow.id, rankable });
+  }
+  if (request.method === "POST" && url.pathname === "/api/jev-labels/ranks") {
+    if (!(await isAdmin(request, env))) return error("unauthorized", 401);
+    const body = asRecord(await readJson(request));
+    const runId = typeof body?.run_id === "string" ? body.run_id : "";
+    const ranks = Array.isArray(body?.ranks) ? body.ranks : null;
+    if (!runId || !ranks) return error("body must contain run_id and ranks", 400);
+    const events = await listJevLabelEventsForRun(env.DB, runId);
+    const votes = latestByStory(events.filter((event) => event.kind !== "rank"));
+    const rankable = new Map(votes.filter((event) => event.kind !== "repeat" && event.kind !== "dropped-pool" && event.decision === "publish").map((event) => [event.storyUrl, event]));
+    if (!rankable.size) return error("this run has no publish choices to rank", 409);
+    const parsed = new Map<string, number>();
+    for (const raw of ranks) {
+      const entry = asRecord(raw);
+      const storyUrl = typeof entry?.story_url === "string" ? entry.story_url : "";
+      const position = entry?.rank_position;
+      if (!rankable.has(storyUrl) || parsed.has(storyUrl)) return error("ranks must cover each publish choice exactly once", 400);
+      if (typeof position !== "number" || !Number.isInteger(position) || position < 1) return error("each rank must be a positive whole number", 400);
+      parsed.set(storyUrl, position);
+    }
+    if (parsed.size !== rankable.size) return error("rank every publish choice", 400);
+    const ordered = [...parsed.values()].sort((left, right) => left - right);
+    if (ordered.some((position, index) => position !== index + 1)) return error("ranks must be unique and consecutive from 1", 400);
+    await recordJevLabelEvents(env.DB, [...parsed.entries()].map(([storyUrl, position]) => {
+      const vote = rankable.get(storyUrl)!;
+      return { storyUrl, questionHash: vote.questionHash, questionSetVersion: vote.questionSetVersion, runId, issueDate: vote.issueDate, kind: "rank" as const, decision: "publish" as const, rankPosition: position, cellPopulation: null, cellSampled: null, poolSize: vote.poolSize, jevK: vote.jevK, profileVersion: null, sourcePackId: null, sourcePackVersion: null, snapshotJson: "{}" };
     }));
-    return json({ ok: true, saved: parsed.length, runId: shadow.id });
+    return json({ ok: true, ranked: parsed.size, runId });
+  }
+  if (request.method === "GET" && url.pathname === "/api/jev-analysis") {
+    if (!(await isAdmin(request, env))) return error("unauthorized", 401);
+    const [events, ledger] = await Promise.all([listJevLabelEvents(env.DB), jevLedgerStats(env.DB)]);
+    return json({ analysis: summarizeJevLabels(events), ledger });
   }
   if (request.method === "POST" && url.pathname === "/api/jev-verdicts") {
     if (!(await isAdmin(request, env))) return error("unauthorized", 401);

@@ -22,7 +22,7 @@ const rankingTitle = document.querySelector("#ranking-title");
 const rankingContent = document.querySelector("#ranking-content");
 const closeRanking = document.querySelector("#close-ranking");
 const rankingPersonalise = document.querySelector("#ranking-personalise");
-const state = { baseProfile: null, override: null, previewOverride: null, edition: null, historyEditions: null, adminProfile: null, collectionStatus: null, isHistoricalEdition: false, readerView: "hot", rankingItems: new Map(), jevReviewBatch: null };
+const state = { baseProfile: null, override: null, previewOverride: null, edition: null, historyEditions: null, adminProfile: null, collectionStatus: null, isHistoricalEdition: false, readerView: "hot", rankingItems: new Map(), jevBatch: null };
 const READER_VIEWS = [
   { id: "synthesis", label: "Synthesis" },
   { id: "hot", label: "Hot topics" },
@@ -305,26 +305,25 @@ function visitPanel() {
   return `<section class="visit-panel"><h2>Anonymous visit entries</h2><p class="muted">One entry per anonymous browser per UTC day. Country, region and city are recorded when Cloudflare can provide them. No names, IP addresses, clicks, or reading time are stored.</p><div class="visit-actions"><button class="button secondary" id="load-visits" type="button">Load recent visits</button><p class="visit-total" id="visit-status" aria-live="polite"></p></div><div class="visit-summary" id="visit-summary" hidden></div><div class="visit-list" id="visit-list" hidden></div></section>`;
 }
 
-function verdictPanel() {
-  return `<section class="visit-panel"><h2>Legacy Jev disagreement audit</h2><p class="muted">Earlier binary verdicts for Jev/pipeline disagreements. This is a separate historical calibration set; it does not promote Jev into the selection path.</p><div class="visit-actions"><button class="button secondary" id="load-disagreements" type="button">Load legacy disagreements</button><p class="visit-total" id="verdict-stats" aria-live="polite"></p></div><div class="visit-list" id="verdict-list" hidden></div><p class="status" id="verdict-status" aria-live="polite"></p></section>`;
-}
-
 function jevReviewPanel() {
-  return `<section class="visit-panel"><h2>Jev and taste review</h2><p class="muted">Review a small, balanced sample from the latest Jev-scored pool. Label each story publish, reject, or unsure. Rank only publish choices, with 1 as your strongest. Jev remains in shadow mode.</p><div class="visit-actions"><button class="button secondary" id="load-jev-review" type="button">Load review sample</button><p class="visit-total" id="jev-review-status" aria-live="polite"></p></div><div class="visit-summary" id="jev-review-meta" hidden></div><div class="jev-review-list" id="jev-review-list" hidden></div><div class="admin-actions"><button class="button" id="save-jev-review" type="button" hidden>Save sample labels</button></div></section>`;
+  return `<section class="visit-panel"><h2>Jev and taste review</h2><p class="muted">Label stories first; Jev's and the reranker's scores stay folded until you open them. A <strong>paired sample</strong> is mostly the stories the rules and Jev's top picks disagree on, plus a few anchors and repeats that measure your own consistency. The <strong>dropped pool</strong> is every story the rules dropped, judged without Jev's scores, to size what any better judge could recover. Nothing here changes an edition.</p><div class="visit-actions"><button class="button secondary" id="load-jev-paired" type="button">Load paired sample</button><button class="button secondary" id="load-jev-dropped" type="button">Load dropped pool</button><p class="visit-total" id="jev-review-status" aria-live="polite"></p></div><div class="visit-summary" id="jev-review-meta" hidden></div><div class="jev-review-list" id="jev-review-list" hidden></div><div class="admin-actions"><button class="button" id="save-jev-labels" type="button" hidden>Save labels</button></div><div id="jev-rank-panel" hidden><h3>Rank your publish choices</h3><p class="muted">1 is strongest. Optional, but it is the only record of order.</p><div id="jev-rank-list"></div><div class="admin-actions"><button class="button" id="save-jev-ranks" type="button">Save ranking</button><button class="button secondary" id="skip-jev-ranks" type="button">Skip ranking</button></div></div><h3>How Jev is doing</h3><div class="visit-actions"><button class="button secondary" id="load-jev-analysis" type="button">Refresh results</button></div><div id="jev-analysis" class="jev-analysis" hidden></div></section>`;
 }
 
 function renderAdmin(profile) {
   state.adminProfile = profile;
-  app.innerHTML = `<section class="admin"><div class="banner"><p class="eyebrow">Owner controls</p><h1>AI Signal administration</h1><p>Global profile changes affect future generation only. Browser personalisation remains local and is not shown here.</p></div><div class="admin-panel"><label>Admin token <input id="admin-token" type="password" autocomplete="off"></label><p class="muted">Used only for the request you submit below; it is not stored in the browser.</p>${adminControls(profile)}<div class="admin-actions"><button class="button" id="save-global-profile" type="button">Save global Profile v${profile.version + 1}</button><button class="button secondary" id="run-refresh" type="button">Build today's edition</button><button class="button secondary" id="run-republish" type="button">Republish today's edition (once daily)</button></div><p class="muted">Normal refresh skips today's edition after it has been published. Republish replaces that daily edition so you can test a code or profile change; one successful republish is allowed per Melbourne calendar day.</p><p class="status" id="admin-status" aria-live="polite"></p></div>${jevReviewPanel()}${verdictPanel()}${visitPanel()}</section>`;
+  app.innerHTML = `<section class="admin"><div class="banner"><p class="eyebrow">Owner controls</p><h1>AI Signal administration</h1><p>Global profile changes affect future generation only. Browser personalisation remains local and is not shown here.</p></div><div class="admin-panel"><label>Admin token <input id="admin-token" type="password" autocomplete="off"></label><p class="muted">Used only for the request you submit below; it is not stored in the browser.</p>${adminControls(profile)}<div class="admin-actions"><button class="button" id="save-global-profile" type="button">Save global Profile v${profile.version + 1}</button><button class="button secondary" id="run-refresh" type="button">Build today's edition</button><button class="button secondary" id="run-republish" type="button">Republish today's edition (once daily)</button></div><p class="muted">Normal refresh skips today's edition after it has been published. Republish replaces that daily edition so you can test a code or profile change; one successful republish is allowed per Melbourne calendar day.</p><p class="status" id="admin-status" aria-live="polite"></p></div>${jevReviewPanel()}${visitPanel()}</section>`;
   app.querySelectorAll("[data-admin-weight]").forEach((input) => input.addEventListener("input", () => { input.previousElementSibling.querySelector("output").textContent = weightLabel(Number(input.value)); }));
   app.querySelector("#admin-story-budget").addEventListener("input", (event) => { app.querySelector("#admin-budget-value").textContent = event.target.value; });
   app.querySelector("#save-global-profile").addEventListener("click", saveGlobalProfile);
   app.querySelector("#run-refresh").addEventListener("click", runRefresh);
   app.querySelector("#run-republish").addEventListener("click", () => runRefresh(true));
   app.querySelector("#load-visits").addEventListener("click", loadVisits);
-  app.querySelector("#load-disagreements").addEventListener("click", loadDisagreements);
-  app.querySelector("#load-jev-review").addEventListener("click", loadJevReviewBatch);
-  app.querySelector("#save-jev-review").addEventListener("click", saveJevReviewBatch);
+  app.querySelector("#load-jev-paired").addEventListener("click", () => loadJevBatch("paired"));
+  app.querySelector("#load-jev-dropped").addEventListener("click", () => loadJevBatch("dropped"));
+  app.querySelector("#save-jev-labels").addEventListener("click", () => saveJevLabels());
+  app.querySelector("#save-jev-ranks").addEventListener("click", () => saveJevRanks());
+  app.querySelector("#skip-jev-ranks").addEventListener("click", () => { app.querySelector("#jev-rank-panel").hidden = true; setJevStatus("Ranking skipped. Your publish/reject labels are saved."); });
+  app.querySelector("#load-jev-analysis").addEventListener("click", () => loadJevAnalysis());
 }
 
 function globalProfileCandidate() {
@@ -339,164 +338,141 @@ function globalProfileCandidate() {
 }
 
 function adminToken() { return app.querySelector("#admin-token").value; }
-function setVerdictStatus(message) { app.querySelector("#verdict-status").textContent = message; }
+function setJevStatus(message) { app.querySelector("#jev-review-status").textContent = message; }
 
-function disagreementRow(entry) {
-  const jev = `Jev ${escape(entry.jevRecommendation)}${entry.jevConfident ? " (confident)" : ""}: interest ${escape(entry.jevInterest ?? "unscored")} · novel ${escape(entry.jevNovel ?? "—")} · substantive ${escape(entry.jevSubstantive ?? "—")} · want ${escape(entry.jevReaderWants ?? "—")}`;
-  const reranker = entry.rerankerRank === null ? "reranker unscored" : `reranker rank ${escape(entry.rerankerRank)} (${escape(entry.rerankerInterest ?? "—")})`;
-  return `<div class="visit-entry"><div><strong>${escape(entry.title)}</strong><br><span class="muted">gates ${escape(entry.gateOutcome)} · ${reranker} · ${jev}</span><br><a href="${escape(entry.url)}" target="_blank" rel="noreferrer">${escape(entry.url.slice(0, 80))}</a></div><div class="visit-actions"><button class="button secondary" data-verdict="1" data-url="${escape(entry.url)}" type="button">Should publish</button><button class="button secondary" data-verdict="-1" data-url="${escape(entry.url)}" type="button">Correctly rejected</button></div></div>`;
+function jevScoreLine(assessment) {
+  const value = (number) => number === null || number === undefined ? "—" : Number(number).toFixed(2);
+  const jev = `Jev: reader wants ${value(assessment.readerWants)} · new ${value(assessment.novel)} · substantive ${value(assessment.substantive)} · interest ${assessment.interest ?? "unscored"}`;
+  const reranker = assessment.reranker ? `Reranker: rank ${assessment.reranker.rank ?? "—"} · relevance ${value(assessment.reranker.relevance)} · interest ${assessment.reranker.winningInterest ?? "—"}` : "Reranker unavailable for this story.";
+  return `<p>Rules: ${escape(assessment.gateOutcome)}</p><p>${escape(jev)}</p><p>${escape(reranker)}</p>`;
 }
 
-async function refreshVerdictStats(token) {
-  try {
-    const data = await request("/api/jev-verdicts/stats", { headers: { Authorization: `Bearer ${token}` } });
-    app.querySelector("#verdict-stats").textContent = `${data.stats.total} legacy verdicts · matched Jev ${Math.round(data.stats.sidedWithJev * 100)}% · owner picks inside confident Jev rejects ${data.stats.confidentRejectMisses}`;
-  } catch (caught) { app.querySelector("#verdict-stats").textContent = caught.message; }
-}
+const JEV_KIND_LABELS = {
+  "disagree-gate-only": "Rules picked · Jev would drop",
+  "disagree-jev-only": "Rules dropped · Jev would include",
+  "anchor-both-in": "Both picked",
+  "anchor-both-out": "Both dropped",
+  "repeat": "Repeat of an earlier story",
+  "dropped-pool": "Dropped by the rules"
+};
 
-function reviewStratumLabel(value) {
-  return ({
-    "pipeline-selected_jev-publish": "Both favor selection",
-    "pipeline-selected_jev-reject": "Pipeline selects · Jev rejects",
-    "pipeline-excluded_jev-publish": "Pipeline excludes · Jev favors",
-    "pipeline-excluded_jev-reject": "Both favor exclusion"
-  })[value] || value;
-}
-
-function jevReviewAssessment(item) {
-  const jev = `Jev ${item.jevRecommendation}${item.jevConfident ? " (confident)" : ""}: interest ${item.interest ?? "unscored"} · confidence ${item.interestConfidence ?? "—"} · novel ${item.novel ?? "—"} · substantive ${item.substantive ?? "—"} · reader wants ${item.readerWants ?? "—"}`;
-  const reranker = item.reranker
-    ? `Reranker: rank ${item.reranker.rank ?? "—"} · relevance ${item.reranker.relevance ?? "—"} · interest ${item.reranker.winningInterest ?? "—"} · novelty ${item.reranker.novelty ?? "—"}`
-    : "Reranker assessment unavailable on this run.";
-  return `<details class="jev-review-assessment"><summary>Show Jev and reranker assessment</summary><p>Pipeline outcome: ${escape(item.pipelineOutcome)} · sample group: ${escape(reviewStratumLabel(item.sampleStratum))}</p><p>${escape(jev)}</p><p>${escape(reranker)}</p></details>`;
-}
-
-function jevReviewCard(item, index) {
+function jevReviewCard(item, index, saved) {
   const id = `jev-review-${index}`;
   const names = (item.sourceNames?.length ? item.sourceNames : item.sourceIds ?? []).join(" · ") || "Source not recorded";
   const safeUrl = /^https?:\/\//i.test(item.url ?? "") ? item.url : "";
   const sources = safeUrl ? `<a href="${escape(safeUrl)}" target="_blank" rel="noreferrer">Open source</a>` : "Source link unavailable";
   const decisions = [["publish", "I would publish"], ["reject", "I would reject"], ["unsure", "Unsure"]];
-  const controls = decisions.map(([value, label]) => `<label><input type="radio" name="${id}-decision" value="${value}" ${item.decision === value ? "checked" : ""}> ${label}</label>`).join("");
-  return `<article class="jev-review-item" data-review-url="${escape(item.url)}"><div class="jev-review-heading"><span class="eyebrow">Candidate ${index + 1}</span></div><h3>${safeUrl ? `<a href="${escape(safeUrl)}" target="_blank" rel="noreferrer">${escape(item.title)}</a>` : escape(item.title)}</h3><p>${escape(item.summary || "No summary recorded for this candidate.")}</p><p class="jev-review-source">${escape(names)} · ${escape(item.publishedAt || "Date unavailable")} · ${sources}</p><fieldset class="jev-review-choice"><legend>Would you include this in an edition?</legend>${controls}</fieldset><label class="jev-review-rank-wrap" ${item.decision === "publish" ? "" : "hidden"}>Publish-set rank (1 = strongest) <input class="jev-review-rank" type="number" min="1" step="1" value="${item.rankPosition ?? ""}" aria-label="Publish-set rank for ${escape(item.title)}"></label>${jevReviewAssessment(item)}</article>`;
+  const controls = decisions.map(([value, label]) => `<label><input type="radio" name="${id}-decision" value="${value}" ${item.decision === value ? "checked" : ""} ${saved ? "disabled" : ""}> ${label}</label>`).join("");
+  const group = saved && item.kind ? `<p>Sample group: ${escape(JEV_KIND_LABELS[item.kind] ?? item.kind)}${item.cellPopulation ? ` · drawn ${escape(item.cellSampled)} of ${escape(item.cellPopulation)}` : ""}</p>` : "";
+  const assessment = item.assessment ? `<details class="jev-review-assessment"><summary>Show Jev and reranker scores</summary>${group}${jevScoreLine(item.assessment)}</details>` : "";
+  return `<article class="jev-review-item" data-review-url="${escape(item.url)}"><div class="jev-review-heading"><span class="eyebrow">Story ${index + 1}</span></div><h3>${safeUrl ? `<a href="${escape(safeUrl)}" target="_blank" rel="noreferrer">${escape(item.title)}</a>` : escape(item.title)}</h3><p>${escape(item.summary || "No summary recorded for this story.")}</p><p class="jev-review-source">${escape(names)} · ${escape(item.publishedAt || "Date unavailable")} · ${sources}</p><fieldset class="jev-review-choice"><legend>Would you include this in an edition?</legend>${controls}</fieldset>${assessment}</article>`;
 }
 
-function normalizeJevReviewRanks() {
-  const cards = [...app.querySelectorAll(".jev-review-item")];
-  for (const card of cards) {
-    const publish = card.querySelector('input[type="radio"][value="publish"]').checked;
-    card.querySelector(".jev-review-rank-wrap").hidden = !publish;
-  }
-  const selected = cards.filter((card) => card.querySelector('input[type="radio"][value="publish"]').checked);
-  if (selected.length === 1) {
-    const rank = selected[0].querySelector(".jev-review-rank");
-    if (!rank.value) rank.value = "1";
-  }
-}
-
-function renderJevReviewBatch(data) {
-  state.jevReviewBatch = data;
+function renderJevBatch(data) {
+  state.jevBatch = data;
   const meta = app.querySelector("#jev-review-meta");
   const list = app.querySelector("#jev-review-list");
-  const save = app.querySelector("#save-jev-review");
-  meta.innerHTML = `<strong>${data.items.length} candidates</strong> · issue ${escape(data.issueDate)} · profile v${escape(data.profileVersion ?? "unknown")} · source pack ${escape(data.sourcePack?.id ?? "unknown")} v${escape(data.sourcePack?.version ?? "?")} · Jev questions ${escape(data.questionSetVersion)} · run ${escape(data.generatedAt)}`;
+  const save = app.querySelector("#save-jev-labels");
+  const saved = data.state === "saved";
+  const pool = data.poolSize === undefined ? "" : ` · pool ${escape(data.poolSize)}, Jev picks ${escape(data.jevK)}`;
+  meta.innerHTML = `<strong>${data.items.length} stories</strong> · ${data.mode === "dropped" ? "dropped pool" : "paired sample"} · issue ${escape(data.issueDate)} · profile v${escape(data.profileVersion ?? "unknown")} · source pack ${escape(data.sourcePack?.id ?? "unknown")} v${escape(data.sourcePack?.version ?? "?")} · Jev questions ${escape(data.questionSetVersion)}${pool}${saved ? " · saved" : ""}`;
   meta.hidden = false;
+  app.querySelector("#jev-rank-panel").hidden = true;
   if (!data.items.length) {
-    list.innerHTML = `<p class="muted">No Jev-scored candidates are available for this sample.</p>`;
+    list.innerHTML = `<p class="muted">Nothing left to judge in this run: every eligible story already has your vote.</p>`;
     save.hidden = true;
     list.hidden = false;
     return;
   }
   const questionLabels = Object.keys(data.questions ?? {}).map((key) => `<code>${escape(key)}</code>`).join(" · ");
-  list.innerHTML = `<details class="jev-review-questions"><summary>Question set ${escape(data.questionSetVersion)} · ${questionLabels || "labels unavailable"}</summary><pre>${escape(JSON.stringify(data.questions, null, 2))}</pre></details>${data.items.map(jevReviewCard).join("")}`;
+  list.innerHTML = `<details class="jev-review-questions"><summary>Question set ${escape(data.questionSetVersion)} · ${questionLabels || "labels unavailable"}</summary><pre>${escape(JSON.stringify(data.questions, null, 2))}</pre></details>${data.items.map((item, index) => jevReviewCard(item, index, saved)).join("")}`;
   list.hidden = false;
-  save.hidden = false;
-  list.querySelectorAll('.jev-review-choice input[type="radio"]').forEach((input) => input.addEventListener("change", normalizeJevReviewRanks));
-  normalizeJevReviewRanks();
+  save.hidden = saved;
+  if (saved && data.mode === "paired") {
+    const publish = data.items.filter((item) => item.decision === "publish" && item.kind !== "repeat");
+    renderJevRankStep(publish.map((item) => ({ url: item.url, title: item.title, rankPosition: item.rankPosition })));
+  }
 }
 
-async function loadJevReviewBatch(runId = null, tokenOverride = null) {
-  const token = tokenOverride || adminToken();
-  if (!token) { app.querySelector("#jev-review-status").textContent = "Enter the admin token first."; return; }
-  app.querySelector("#jev-review-status").textContent = "Loading a balanced sample…";
-  try {
-    const suffix = runId ? `?run_id=${encodeURIComponent(runId)}` : "";
-    const data = await request(`/api/jev-review-batch${suffix}`, { headers: { Authorization: `Bearer ${token}` } });
-    renderJevReviewBatch(data);
-    app.querySelector("#jev-review-status").textContent = data.items.length ? `${data.items.length} candidates loaded. Jev and reranker assessments stay hidden unless you open them.` : "No review candidates in this run.";
-  } catch (caught) { app.querySelector("#jev-review-status").textContent = caught.message; }
+function renderJevRankStep(rankable) {
+  const panel = app.querySelector("#jev-rank-panel");
+  if (!rankable.length) { panel.hidden = true; return; }
+  const ordered = [...rankable].sort((left, right) => (left.rankPosition ?? 99) - (right.rankPosition ?? 99));
+  app.querySelector("#jev-rank-list").innerHTML = ordered.map((item, index) => `<label class="jev-review-rank-wrap" data-rank-url="${escape(item.url)}"><input class="jev-review-rank" type="number" min="1" max="${ordered.length}" step="1" value="${item.rankPosition ?? index + 1}" aria-label="Rank for ${escape(item.title)}"> ${escape(item.title)}</label>`).join("");
+  panel.hidden = false;
 }
 
-async function saveJevReviewBatch() {
+async function loadJevBatch(mode) {
   const token = adminToken();
-  const batch = state.jevReviewBatch;
-  if (!token) { app.querySelector("#jev-review-status").textContent = "Enter the admin token first."; return; }
-  if (!batch) return;
-  const reviews = [...app.querySelectorAll(".jev-review-item")].map((card) => {
-    const decision = card.querySelector('input[type="radio"]:checked')?.value;
-    const rankPosition = decision === "publish" ? Number(card.querySelector(".jev-review-rank").value) : null;
-    return { story_url: card.dataset.reviewUrl, decision, rank_position: rankPosition };
-  });
-  if (reviews.some((review) => !review.decision)) {
-    app.querySelector("#jev-review-status").textContent = "Choose publish, reject, or unsure for every candidate before saving.";
-    return;
-  }
-  const publishRanks = reviews.filter((review) => review.decision === "publish").map((review) => review.rank_position).sort((left, right) => left - right);
-  if (publishRanks.some((rank, index) => !Number.isInteger(rank) || rank !== index + 1)) {
-    app.querySelector("#jev-review-status").textContent = `Rank publish choices with unique numbers from 1 to ${publishRanks.length}; 1 is strongest.`;
-    return;
-  }
-  app.querySelector("#jev-review-status").textContent = "Saving labels and publish ranking…";
-  const button = app.querySelector("#save-jev-review");
-  button.disabled = true;
+  if (!token) { setJevStatus("Enter the admin token first."); return; }
+  setJevStatus("Loading…");
   try {
-    const result = await request("/api/jev-reviews", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ shadow_run_id: batch.runId, reviews })
-    });
-    await loadJevReviewBatch(batch.runId, token);
-    app.querySelector("#jev-review-status").textContent = `${result.saved} candidate labels saved. Jev remains in shadow mode.`;
-  } catch (caught) { app.querySelector("#jev-review-status").textContent = caught.message; }
+    const data = await request(`/api/jev-review-batch?mode=${encodeURIComponent(mode)}`, { headers: { Authorization: `Bearer ${token}` } });
+    renderJevBatch(data);
+    setJevStatus(data.state === "saved" ? "This run's batch is already saved; showing your labels." : data.items.length ? `${data.items.length} stories loaded. Scores stay folded until you open them.` : "No stories to judge in this run.");
+  } catch (caught) { setJevStatus(caught.message); }
+}
+
+async function saveJevLabels() {
+  const token = adminToken();
+  const batch = state.jevBatch;
+  if (!token) { setJevStatus("Enter the admin token first."); return; }
+  if (!batch) return;
+  const labels = [...app.querySelectorAll(".jev-review-item")].map((card) => ({ story_url: card.dataset.reviewUrl, decision: card.querySelector('input[type="radio"]:checked')?.value }));
+  if (labels.some((label) => !label.decision)) { setJevStatus("Choose publish, reject or unsure for every story before saving."); return; }
+  const button = app.querySelector("#save-jev-labels");
+  button.disabled = true;
+  setJevStatus("Saving labels…");
+  try {
+    const result = await request("/api/jev-labels", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ mode: batch.mode, run_id: batch.runId, labels }) });
+    const reloaded = await request(`/api/jev-review-batch?mode=${encodeURIComponent(batch.mode)}&run_id=${encodeURIComponent(batch.runId)}`, { headers: { Authorization: `Bearer ${token}` } });
+    renderJevBatch(reloaded);
+    setJevStatus(`${result.saved} labels saved.${result.rankable?.length ? " Rank your publish choices below, or skip." : ""}`);
+    await loadJevAnalysis();
+  } catch (caught) { setJevStatus(caught.message); }
   finally { button.disabled = false; }
 }
 
-async function loadDisagreements() {
+async function saveJevRanks() {
   const token = adminToken();
-  if (!token) { setVerdictStatus("Enter the admin token first."); return; }
-  setVerdictStatus("Loading disagreements…");
+  const batch = state.jevBatch;
+  if (!token) { setJevStatus("Enter the admin token first."); return; }
+  if (!batch) return;
+  const ranks = [...app.querySelectorAll("#jev-rank-list [data-rank-url]")].map((row) => ({ story_url: row.dataset.rankUrl, rank_position: Number(row.querySelector("input").value) }));
+  const ordered = ranks.map((entry) => entry.rank_position).sort((left, right) => left - right);
+  if (ordered.some((position, index) => !Number.isInteger(position) || position !== index + 1)) { setJevStatus(`Rank with unique numbers from 1 to ${ranks.length}; 1 is strongest.`); return; }
   try {
-    const data = await request("/api/jev-disagreements", { headers: { Authorization: `Bearer ${token}` } });
-    const list = app.querySelector("#verdict-list");
-    list.innerHTML = data.disagreements.length
-      ? data.disagreements.map(disagreementRow).join("")
-      : `<p class="muted">No open disagreements in the latest shadow run.</p>`;
-    list.hidden = false;
-    list.querySelectorAll("[data-verdict]").forEach((button) => button.addEventListener("click", () => castVerdict(button.dataset.url, Number(button.dataset.verdict))));
-    setVerdictStatus(data.disagreements.length ? `${data.disagreements.length} open disagreements.` : "All disagreements decided.");
-    await refreshVerdictStats(token);
-  } catch (caught) { setVerdictStatus(caught.message); }
+    await request("/api/jev-labels/ranks", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ run_id: batch.runId, ranks }) });
+    setJevStatus("Ranking saved.");
+    await loadJevAnalysis();
+  } catch (caught) { setJevStatus(caught.message); }
 }
 
-async function castVerdict(url, verdict) {
-  const token = adminToken();
-  if (!token) { setVerdictStatus("Enter the admin token first."); return; }
-  try {
-    const data = await request("/api/jev-verdicts", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ story_url: url, verdict }) });
-    setVerdictStatus(`Legacy verdict recorded. Jev agreement ${Math.round(data.stats.sidedWithJev * 100)}% across ${data.stats.total}.`);
-    await loadDisagreementsKeepToken(token);
-  } catch (caught) { setVerdictStatus(caught.message); }
+function percent(value) { return value === null || value === undefined ? "n/a" : `${Math.round(value * 100)}%`; }
+function decimal(value) { return value === null || value === undefined ? "n/a" : Number(value).toFixed(2); }
+
+function renderJevAnalysis(data) {
+  const a = data.analysis;
+  const rate = (estimate) => `${estimate.publish} publish · ${estimate.reject} reject · ${estimate.unsure} unsure (n ${estimate.n})`;
+  app.querySelector("#jev-analysis").innerHTML = `<dl class="jev-analysis-list">
+    <dt>Ledger</dt><dd>${escape(data.ledger.judgments)} Jev judgments over ${escape(data.ledger.stories)} stories since ${escape(data.ledger.firstSeenAt ?? "n/a")}. ${escape(a.labelledStories)} stories labelled by you.</dd>
+    <dt>Your consistency</dt><dd>${a.consistency.pairs ? `${percent(a.consistency.rate)} same decision on ${escape(a.consistency.pairs)} repeats (${percent(a.consistency.publishAgreementRate)} on publish versus not). No judge can beat this.` : "No repeats yet. They appear in later paired samples."}</dd>
+    <dt>Jev versus the rules</dt><dd>${a.paired.decided ? `Where they disagree, Jev was right on ${escape(a.paired.jevRight)} of ${escape(a.paired.decided)} (${percent(a.paired.jevRightShareRaw)}); weighted to the full pool ${percent(a.paired.jevRightShareWeighted)}.` : "Nothing decided yet."}<br>Rules picked, Jev would drop: ${rate(a.paired.gateOnly)}<br>Rules dropped, Jev would include: ${rate(a.paired.jevOnly)}</dd>
+    <dt>Anchors</dt><dd>Both picked: ${rate(a.anchors.bothIn)}<br>Both dropped: ${rate(a.anchors.bothOut)}</dd>
+    <dt>What the rules drop</dt><dd>${rate(a.droppedPool)}${a.droppedPool.rescuedPerDay === null ? "" : ` · you would rescue about ${decimal(a.droppedPool.rescuedPerDay)} a day over ${escape(a.droppedPool.days)} day(s)`}</dd>
+    <dt>Ranking quality</dt><dd>reader_wants AUC ${decimal(a.ranking.readerWantsAuc)} · reranker AUC ${decimal(a.ranking.rerankerAuc)} (n ${escape(a.ranking.n)}, sample is skewed to disagreements) · Jev scored under 0.2 but you would publish: ${escape(a.ranking.confidentLowButPublished)} · rank correlation ${decimal(a.ranking.meanRankCorrelation)} over ${escape(a.ranking.rankRuns)} run(s)</dd>
+  </dl>`;
+  app.querySelector("#jev-analysis").hidden = false;
 }
 
-async function loadDisagreementsKeepToken(token) {
+async function loadJevAnalysis() {
+  const token = adminToken();
+  if (!token) { setJevStatus("Enter the admin token first."); return; }
   try {
-    const data = await request("/api/jev-disagreements", { headers: { Authorization: `Bearer ${token}` } });
-    const list = app.querySelector("#verdict-list");
-    list.innerHTML = data.disagreements.length ? data.disagreements.map(disagreementRow).join("") : `<p class="muted">No open disagreements in the latest shadow run.</p>`;
-    list.querySelectorAll("[data-verdict]").forEach((button) => button.addEventListener("click", () => castVerdict(button.dataset.url, Number(button.dataset.verdict))));
-    await refreshVerdictStats(token);
-  } catch (caught) { setVerdictStatus(caught.message); }
+    renderJevAnalysis(await request("/api/jev-analysis", { headers: { Authorization: `Bearer ${token}` } }));
+  } catch (caught) { setJevStatus(caught.message); }
 }
+
 function setAdminStatus(message) { app.querySelector("#admin-status").textContent = message; }
 function clearAdminToken() { app.querySelector("#admin-token").value = ""; }
 function setVisitStatus(message) { app.querySelector("#visit-status").textContent = message; }

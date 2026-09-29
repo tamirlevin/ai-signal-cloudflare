@@ -17,7 +17,8 @@ import type {
 } from "./contracts";
 import { categoryForProfile, compactIssueInventory, isPermissionDesignSignal, scoreCandidateForProfile } from "./editorial";
 import { fetchLatestRss } from "./rss";
-import { getActiveProfile, getEdition, latestEdition, listEditions, melbourneCalendarDay, recordSupplementalShadowRun } from "./repository";
+import { getActiveProfile, getEdition, latestEdition, listEditions, melbourneCalendarDay, recordJevJudgments, recordSupplementalShadowRun } from "./repository";
+import { buildJudgmentRows, jevQuestionFingerprint } from "./jev-ledger";
 import { buildJevQuestions, JEV_QUESTION_SET_VERSION, jevShadowEnabled, MAX_JEV_TEXTS, scoreJevShadow, type JevQuestion, type JevShadowScores } from "./jev";
 import { getSourcePack } from "./source-packs";
 import { attachTriageScores, rankTriageScores, scoreTriage, triageShadowEnabled, type TriageScores } from "./triage";
@@ -1154,6 +1155,22 @@ export async function preTodayPriorTitles(db: D1Database, today: string): Promis
   return full ? full.signals.map((signal) => `${signal.title} — ${signal.summary}`) : [];
 }
 
+/** Best-effort: the ledger is research data, so a failure here never fails the shadow run. */
+async function recordJevLedger(env: Env, runId: string, report: SupplementalShadowReport, questions: Record<string, JevQuestion>, issueDate: string): Promise<void> {
+  try {
+    const live = await latestEdition(env.DB).catch(() => null);
+    const publishedUrls = new Set<string>();
+    if (live && live.issueDate === issueDate) {
+      for (const signal of live.signals) publishedUrls.add(signal.url);
+      for (const topic of live.hotTopics) for (const source of topic.sources) publishedUrls.add(source.url);
+    }
+    const rows = buildJudgmentRows({ runId, report, questionHash: await jevQuestionFingerprint(questions), publishedUrls, seenAt: new Date().toISOString() });
+    await recordJevJudgments(env.DB, rows);
+  } catch (error) {
+    console.warn(JSON.stringify({ message: "ai-signal jev ledger write skipped", runId, error: error instanceof Error ? error.message : String(error) }));
+  }
+}
+
 export async function runSupplementalShadow(env: Env, trigger: "cron" | "manual" | "local-scheduled"): Promise<{ status: "healthy" | "degraded" | "failed"; report?: SupplementalShadowReport; error?: string }> {
   const startedAt = new Date().toISOString();
   const started = Date.now();
@@ -1191,7 +1208,8 @@ export async function runSupplementalShadow(env: Env, trigger: "cron" | "manual"
     const failedSources = report.sources.filter((source) => source.status === "failed").length;
     const degradedSources = report.sources.filter((source) => source.status === "degraded").length;
     const status = failedSources === report.sources.length ? "failed" : failedSources || degradedSources ? "degraded" : "healthy";
-    await recordSupplementalShadowRun(env.DB, { trigger, status, startedAt, durationMs: Date.now() - started, report });
+    const runId = await recordSupplementalShadowRun(env.DB, { trigger, status, startedAt, durationMs: Date.now() - started, report });
+    if (jev && jevQuestions) await recordJevLedger(env, runId, report, jevQuestions, issueDate);
     console.log(JSON.stringify({ message: "ai-signal supplemental shadow completed", status, baseIssue: report.baseIssue.url, totals: report.totals }));
     return { status, report };
   } catch (error) {
