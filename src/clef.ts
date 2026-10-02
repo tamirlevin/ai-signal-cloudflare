@@ -31,15 +31,25 @@ function hasAnswer(scores: JevShadowScores): boolean {
   return scores.interest !== null || scores.novel !== null || scores.substantive !== null || scores.readerWants !== null;
 }
 
+/**
+ * Clef documents `instructions` as a string, while the Jev question set passes an object for the
+ * novelty question. Stringify non-string instructions so one structured question cannot make the
+ * whole request invalid. The question fingerprint is computed from the original set, not this one.
+ */
+export function clefQuestions(questions: Record<string, JevQuestion>): Record<string, JevQuestion> {
+  return Object.fromEntries(Object.entries(questions).map(([id, question]) => [id, typeof question.instructions === "string" ? question : { ...question, instructions: JSON.stringify(question.instructions) }]));
+}
+
 /** One call per story with bounded concurrency. Failures are counted, never thrown. */
 export async function scoreClef(ai: AiRunner, model: ClefModel, items: ScoreItem[], questions: Record<string, JevQuestion>): Promise<ClefScoreResult> {
   const scores = new Map<string, JevShadowScores>();
   const selected = items.slice(0, MAX_JEV_TEXTS);
+  const request = clefQuestions(questions);
   let failed = 0;
   let firstError: string | undefined;
   const runOne = async (item: ScoreItem): Promise<void> => {
     try {
-      const raw = await ai.run(CLEF_MODELS[model], { model, state: { title: item.title, summary: item.summary, url: item.url }, questions });
+      const raw = await ai.run(CLEF_MODELS[model], { model, state: { title: item.title, summary: item.summary, url: item.url }, questions: request });
       const parsed = parseJevAnswers(raw);
       if (!hasAnswer(parsed)) throw new Error("Clef returned no recognized answers");
       scores.set(item.url, parsed);

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it, vi } from "vitest";
-import { backfillClef, CLEF_MODELS, clefShadowEnabled, clefShadowModel, runClefShadow, scoreClef } from "../src/clef";
+import { backfillClef, CLEF_MODELS, clefQuestions, clefShadowEnabled, clefShadowModel, runClefShadow, scoreClef } from "../src/clef";
 import { DEFAULT_PROFILE } from "../src/contracts";
 import { buildJevQuestions } from "../src/jev";
 import { jevQuestionFingerprint } from "../src/jev-ledger";
@@ -89,13 +89,24 @@ describe("clef shadow configuration", () => {
 });
 
 describe("clef scoring", () => {
+  it("stringifies structured instructions but leaves strings, criteria and the original set alone", () => {
+    const original = buildJevQuestions(DEFAULT_PROFILE, ["Earlier story"]);
+    const copy = JSON.parse(JSON.stringify(original));
+    const sent = clefQuestions(original);
+    expect(Object.values(sent).every((question) => typeof question.instructions === "string")).toBe(true);
+    expect(sent.novel?.instructions).toContain("Earlier story");
+    expect(sent.reader_wants).toBe(original.reader_wants);
+    expect(sent.novel?.criteria).toEqual(original.novel?.criteria);
+    expect(original).toEqual(copy);
+  });
+
   it("sends the Jev-shaped request to the Workers AI model id and parses the same answers", async () => {
     const ai = { run: vi.fn(async () => clefAnswer(0.64)) };
     const result = await scoreClef(ai, "clef-flash", items, questions);
     expect(ai.run).toHaveBeenCalledTimes(2);
     const [modelId, input] = ai.run.mock.calls[0] as unknown as [string, Record<string, unknown>];
     expect(modelId).toBe(CLEF_MODELS["clef-flash"]);
-    expect(input).toMatchObject({ model: "clef-flash", state: { title: "Story A", summary: "About A", url: "https://example.com/a" }, questions });
+    expect(input).toMatchObject({ model: "clef-flash", state: { title: "Story A", summary: "About A", url: "https://example.com/a" }, questions: clefQuestions(questions) });
     expect(result).toMatchObject({ attempted: 2, failed: 0 });
     expect(result.scores.get("https://example.com/a")).toEqual({ interest: "New systems", interestConfidence: 0.8, novel: 0.5, substantive: 0.9, readerWants: 0.64 });
   });
