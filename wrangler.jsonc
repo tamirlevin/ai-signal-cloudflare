@@ -18,6 +18,7 @@
     "SUPPLEMENTAL_SHADOW_ENABLED": "true",
     "TRIAGE_SHADOW_ENABLED": "false",
     "JEV_SHADOW_ENABLED": "false",
+    "CLEF_SHADOW_ENABLED": "false",
     "RSS_URL": "https://news.smol.ai/rss.xml"
   },
   "d1_databases": [
@@ -33,7 +34,7 @@
     "directory": "./public",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/", "/history", "/api/*", "/__scheduled", "/__shadow", "/__jev-probe"]
+    "run_worker_first": ["/", "/history", "/api/*", "/__scheduled", "/__shadow", "/__jev-probe", "/__clef-backfill"]
   },
   "routes": [
     { "pattern": "signal.tamirlevin.dev", "custom_domain": true }
@@ -50,6 +51,8 @@
         "SUPPLEMENTAL_SHADOW_ENABLED": "true",
         "TRIAGE_SHADOW_ENABLED": "true",
         "JEV_SHADOW_ENABLED": "true",
+        "CLEF_SHADOW_ENABLED": "true",
+        "CLEF_SHADOW_MODEL": "clef",
         "RSS_URL": "https://news.smol.ai/rss.xml"
       },
       "d1_databases": [

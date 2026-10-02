@@ -469,7 +469,7 @@ function env(db: D1Database) {
     ADMIN_TOKEN: "secret", DB: db, AI: {} as Ai, ASSETS: { fetch: async () => new Response("x") } as unknown as Fetcher,
     ENVIRONMENT: "staging" as const, AI_MODEL: "@cf/openai/gpt-oss-120b" as const, AI_FALLBACK_MODEL: "@cf/meta/llama-3.3-70b-instruct-fp8-fast" as const,
     AI_QUALITY_FALLBACK_MODEL: "@cf/moonshotai/kimi-k2.6" as const, AI_GATEWAY_ID: "" as const, SUPPLEMENTAL_SHADOW_ENABLED: "true" as const,
-    TRIAGE_SHADOW_ENABLED: "false" as const, JEV_SHADOW_ENABLED: "false" as const, RSS_URL: "https://news.smol.ai/rss.xml" as const
+    TRIAGE_SHADOW_ENABLED: "false" as const, JEV_SHADOW_ENABLED: "false" as const, CLEF_SHADOW_ENABLED: "false" as const, RSS_URL: "https://news.smol.ai/rss.xml" as const
   } as unknown as Env;
 }
 

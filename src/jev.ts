@@ -116,7 +116,7 @@ function finite(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function parseJevAnswers(raw: unknown): JevShadowScores {
+export function parseJevAnswers(raw: unknown): JevShadowScores {
   const empty: JevShadowScores = { interest: null, interestConfidence: null, novel: null, substantive: null, readerWants: null };
   if (!record(raw)) return empty;
   const answers = record(raw.answers) ? raw.answers : {};

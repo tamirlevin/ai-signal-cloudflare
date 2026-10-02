@@ -18,6 +18,7 @@ import type {
 import { categoryForProfile, compactIssueInventory, isPermissionDesignSignal, scoreCandidateForProfile } from "./editorial";
 import { fetchLatestRss } from "./rss";
 import { getActiveProfile, getEdition, latestEdition, listEditions, melbourneCalendarDay, recordJevJudgments, recordSupplementalShadowRun } from "./repository";
+import { clefShadowEnabled, runClefShadow } from "./clef";
 import { buildJudgmentRows, jevQuestionFingerprint } from "./jev-ledger";
 import { buildJevQuestions, JEV_QUESTION_SET_VERSION, jevShadowEnabled, MAX_JEV_TEXTS, scoreJevShadow, type JevQuestion, type JevShadowScores } from "./jev";
 import { getSourcePack } from "./source-packs";
@@ -1137,6 +1138,10 @@ export async function runSupplementalShadow(env: Env, trigger: "cron" | "manual"
     const status = failedSources === report.sources.length ? "failed" : failedSources || degradedSources ? "degraded" : "healthy";
     const runId = await recordSupplementalShadowRun(env.DB, { trigger, status, startedAt, durationMs: Date.now() - started, report });
     if (jev && jevQuestions) await recordJevLedger(env, runId, report, jevQuestions, issueDate);
+    if (clefShadowEnabled(env)) {
+      const clefTitles = await preTodayPriorTitles(env.DB, issueDate).catch(() => [] as string[]);
+      await runClefShadow(env, { items: inventory.evaluated, questions: jevQuestions ?? buildJevQuestions(profile, clefTitles), runId });
+    }
     console.log(JSON.stringify({ message: "ai-signal supplemental shadow completed", status, baseIssue: report.baseIssue.url, totals: report.totals }));
     return { status, report };
   } catch (error) {

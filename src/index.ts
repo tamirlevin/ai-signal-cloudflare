@@ -1,3 +1,4 @@
+import { backfillClef } from "./clef";
 import { generateLatestEdition } from "./generation";
 import { runJev, runJevDirect } from "./jev";
 import { getActiveProfile, getEdition, getSupplementalShadowRun, jevLedgerStats, latestEdition, latestJevReviewShadowRun, latestRunStatus, latestScheduledRunStatus, latestSupplementalShadowRun, listEditions, listJevLabelEvents, listJevLabelEventsForRun, listJevVerdicts, recordJevLabelEvents, recordJevVerdict, scheduledHeartbeat, updateProfile } from "./repository";
@@ -356,8 +357,15 @@ async function api(request: Request, env: Env, url: URL, ctx: ExecutionContext):
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
-    if ((url.pathname === "/__scheduled" || url.pathname === "/__shadow" || url.pathname === "/__jev-probe") && env.ENVIRONMENT === "production") return error("not found", 404);
+    if ((url.pathname === "/__scheduled" || url.pathname === "/__shadow" || url.pathname === "/__jev-probe" || url.pathname === "/__clef-backfill") && env.ENVIRONMENT === "production") return error("not found", 404);
     try {
+      if (url.pathname === "/__clef-backfill" && env.ENVIRONMENT !== "production") {
+        if (request.method !== "POST") return error("method not allowed", 405);
+        if (!(await isAdmin(request, env))) return error("unauthorized", 401);
+        const requested = Number(url.searchParams.get("limit") ?? 40);
+        const limit = Number.isInteger(requested) ? Math.min(Math.max(requested, 1), 60) : 40;
+        return json(await backfillClef(env, await getActiveProfile(env.DB), limit));
+      }
       if (url.pathname === "/__scheduled" && env.ENVIRONMENT !== "production") {
         if (!(await isAdmin(request, env))) return error("unauthorized", 401);
         return json(await generateLatestEdition(env, "local-scheduled"));

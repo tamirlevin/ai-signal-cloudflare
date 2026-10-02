@@ -370,6 +370,51 @@ export async function recordJevJudgments(db: D1Database, rows: JudgmentRow[]): P
   )));
 }
 
+export type ClefJudgmentRow = {
+  storyUrl: string;
+  questionHash: string;
+  model: string;
+  questionSetVersion: string;
+  runId: string | null;
+  scoredAt: string;
+  interest: string | null;
+  interestConfidence: number | null;
+  novel: number | null;
+  substantive: number | null;
+  readerWants: number | null;
+};
+
+/** Records Clef scores. The first score per story, question fingerprint and model is kept. */
+export async function recordClefJudgments(db: D1Database, rows: ClefJudgmentRow[]): Promise<void> {
+  if (!rows.length) return;
+  const statement = "INSERT INTO clef_judgments (story_url, question_hash, model, question_set_version, run_id, scored_at, interest, interest_confidence, novel, substantive, reader_wants) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) ON CONFLICT(story_url, question_hash, model) DO NOTHING";
+  await db.batch(rows.map((row) => db.prepare(statement).bind(
+    row.storyUrl, row.questionHash, row.model, row.questionSetVersion, row.runId, row.scoredAt, row.interest, row.interestConfidence, row.novel, row.substantive, row.readerWants
+  )));
+}
+
+/** Which of these stories already have a Clef score for this question fingerprint and model. */
+export async function scoredClefUrls(db: D1Database, questionHash: string, model: string, urls: string[]): Promise<Set<string>> {
+  const found = new Set<string>();
+  for (let index = 0; index < urls.length; index += 50) {
+    const chunk = urls.slice(index, index + 50);
+    const marks = chunk.map((_, position) => `?${position + 3}`).join(", ");
+    const result = await db.prepare(`SELECT story_url FROM clef_judgments WHERE question_hash = ?1 AND model = ?2 AND story_url IN (${marks})`)
+      .bind(questionHash, model, ...chunk).all<{ story_url: string }>();
+    for (const row of result.results) found.add(row.story_url);
+  }
+  return found;
+}
+
+/** Ledger stories with no Clef score yet under this fingerprint, labelled stories first. */
+export async function unscoredClefStories(db: D1Database, questionHash: string, model: string, limit: number): Promise<{ stories: Array<{ storyUrl: string; title: string; summary: string }>; remaining: number }> {
+  const missing = "FROM jev_judgments j WHERE j.question_hash = ?1 AND NOT EXISTS (SELECT 1 FROM clef_judgments c WHERE c.story_url = j.story_url AND c.question_hash = j.question_hash AND c.model = ?2)";
+  const rows = await db.prepare(`SELECT j.story_url, j.title, j.summary ${missing} ORDER BY (SELECT COUNT(*) FROM jev_label_events e WHERE e.story_url = j.story_url) DESC, j.first_seen_at LIMIT ?3`)
+    .bind(questionHash, model, limit).all<{ story_url: string; title: string; summary: string }>();
+  const total = await db.prepare(`SELECT COUNT(*) AS n ${missing}`).bind(questionHash, model).first<{ n: number }>();
+  return { stories: rows.results.map((row) => ({ storyUrl: row.story_url, title: row.title, summary: row.summary })), remaining: total?.n ?? 0 };
+}
+
 export async function jevLedgerStats(db: D1Database): Promise<{ judgments: number; stories: number; withReaderWants: number; firstSeenAt: string | null }> {
   const row = await db.prepare("SELECT COUNT(*) AS judgments, COUNT(DISTINCT story_url) AS stories, SUM(CASE WHEN reader_wants IS NOT NULL THEN 1 ELSE 0 END) AS with_wants, MIN(first_seen_at) AS first_seen FROM jev_judgments")
     .first<{ judgments: number; stories: number; with_wants: number | null; first_seen: string | null }>();
