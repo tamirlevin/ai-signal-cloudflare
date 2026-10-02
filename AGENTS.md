@@ -47,6 +47,8 @@ Before proposing or changing anything:
 
 Until the owner says otherwise, this repository is run from the **Intel Mac** (`Darwin x86_64`). The owner also uses an **M2 Mac** (`Darwin arm64`), normally on Tuesdays and Wednesdays in the office. Use the lowercase labels `intel-mac` and `m2-mac` wherever a machine is recorded. A cloud agent session (`Linux`) is neither and cannot tell which Mac the owner is typing on: ask rather than assume. Cloudflare actions are unavailable there unless credentials were supplied for that session.
 
+**Session types.** A desktop (local) session needs a folder the owner chooses (use the non-synced clone) and may use a git worktree under `.claude/worktrees/`. A cloud session works from a fresh clone of GitHub, so push first; it has no Wrangler login. The Cloudflare connector, when enabled, gives read-only inspection of D1 through `d1_database_query` (SELECT only, never a write) of staging `ai-signal-staging` (`d1d32bf8-9edf-463a-b151-8ea54abc2e4d`) and production `ai-signal` (`376a852a-26db-4d2d-983c-b872b3361372`), plus Cloudflare documentation search; it has no deploy tool. Public endpoints and some documentation hosts may be blocked by the environment's network allowlist. Deploys, migrations, and secrets are the owner's steps from the Intel Mac.
+
 In a local session, identify the machine with `uname -sm` and state it with the branch and SHA. A terminal running under Rosetta on the M2 reports `x86_64`; if in doubt, run `sysctl -n machdep.cpu.brand_string`. If the machine is not the Intel Mac, tell the owner what changes before editing or deploying:
 
 - **Hand-over.** The other machine's latest work is present only if it was committed and pushed; compare `HEAD` with the fetched remote branch. Uncommitted or unpushed work on the other Mac is invisible from here, so do not assume it is absent.
@@ -77,6 +79,7 @@ Do not smooth over conflicting evidence or convert an unverified inference into 
 - Keep secrets out of Git. `wrangler.jsonc` is the source of truth for non-secret runtime configuration.
 - Do not deploy, mutate D1, apply a remote migration, force a republish, change a schedule or monitor, change secrets, or perform destructive Git operations unless the current user request explicitly authorizes it.
 - Read-only remote verification is appropriate when it is relevant and available.
+- When access is missing (a login, a network allowlist entry, a connector, a token), say exactly what is missing and ask the owner to supply it; do not work around it. A cloud session's allowlist, connectors, and secrets are set by its environment and apply to new sessions.
 - Preserve the architectural guardrails in `PROJECT_HISTORY.md`, especially the deterministic daily story inventory, equal-source candidate pool, 36-hour preference/48-hour normal window with a 72-hour fallback below 10 qualified candidates, no X-only cards, source-bound URLs, no weak padding, preservation of the last good edition, and owner-only guarded republishing.
 - Keep Jev, Clef, and reranker judgments advisory and shadow-only. Admin review labels, ranks, question-set versions, the Jev judgments ledger, and run snapshots are research data; they do not automatically change the selection or publication path.
 - Do not create session transcripts, routine progress logs, or another project-memory file in the repository.

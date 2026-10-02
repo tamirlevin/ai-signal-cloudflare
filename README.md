@@ -125,7 +125,7 @@ The configured cron is `15 22 * * *` UTC: 08:15 Melbourne during AEST and 09:15 
 npx wrangler deploy --env staging --tag git-<short-sha>-staging --message "Git <full-sha>; <summary>"
 ```
 
-Staging exists so experiment branches run against real Cloudflare egress without touching production data, schedule, or spend: the 8-hour cadence yields same-day idempotent skips plus fresh shadow/funnel reads, and any extra generation is an explicit owner `POST /api/refresh`. `ENVIRONMENT=staging` unlocks the `/__scheduled`, `/__shadow`, `/__jev-probe`, and `/__clef-backfill` test routes. Promote to production only by merging to `main` and following the release rules in [AGENTS.md](AGENTS.md).
+Staging exists so experiment branches run against real Cloudflare egress without touching production data, schedule, or spend: the 8-hour cadence yields same-day idempotent skips plus fresh shadow/funnel reads, and any extra generation is an explicit owner `POST /api/refresh`. `ENVIRONMENT=staging` unlocks the `/__scheduled`, `/__shadow`, `/__jev-probe`, and `/__clef-backfill` test routes. Promote to production only by merging to `main` and following the release rules in [AGENTS.md](AGENTS.md). The owner's Jev labels can be read back against the rules, the reranker, and Jev with the read-only queries in [scripts/label-readout.sql](scripts/label-readout.sql).
 
 ## API
 
@@ -156,4 +156,4 @@ All API responses use security headers and do not enable cross-origin access. Th
 
 ## Tests
 
-`npm test` covers source-pack policy, feed parsers, conditional 48/72-hour windows and their boundaries, source-402 fail-open generation, X exclusion, equal-source clustering, corroboration, gentle diversity, no quotas/no padding, candidate merge-decision accounting and coverage enforcement, AI Brief parsing, Jev shadow scoring, owner-verdict agreement stats, trusted-link validation, daily idempotency, guarded republishing, model repair/fallback, one-pass editorial QA correction and fail-open paths, heartbeat aging, API authentication, visit privacy, and preservation of the last good edition under total source failure.
+`npm test` covers source-pack policy, feed parsers, conditional 48/72-hour windows and their boundaries, source-402 fail-open generation, X exclusion, equal-source clustering, corroboration, gentle diversity, no quotas/no padding, candidate merge-decision accounting and coverage enforcement, AI Brief parsing, Jev and Clef shadow scoring, owner-verdict agreement stats, trusted-link validation, daily idempotency, guarded republishing, model repair/fallback, one-pass editorial QA correction and fail-open paths, heartbeat aging, API authentication, visit privacy, and preservation of the last good edition under total source failure.
