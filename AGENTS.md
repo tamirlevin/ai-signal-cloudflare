@@ -50,7 +50,7 @@ Until the owner says otherwise, this repository is run from the **Intel Mac** (`
 In a local session, identify the machine with `uname -sm` and state it with the branch and SHA. A terminal running under Rosetta on the M2 reports `x86_64`; if in doubt, run `sysctl -n machdep.cpu.brand_string`. If the machine is not the Intel Mac, tell the owner what changes before editing or deploying:
 
 - **Hand-over.** The other machine's latest work is present only if it was committed and pushed; compare `HEAD` with the fetched remote branch. Uncommitted or unpushed work on the other Mac is invisible from here, so do not assume it is absent.
-- **Dependencies.** Run `npm ci` in this checkout, then `npm run check`. Never copy or sync `node_modules` or `.wrangler` between machines.
+- **Dependencies.** Run `npm ci` in this checkout, then `npm run check`. Never copy or sync `node_modules` or `.wrangler` between machines. Keep the checkout outside Dropbox and other synced folders: GitHub is the only bridge between machines.
 - **Local-only state.** `.dev.vars` is gitignored and exists only where it was created. `/admin` takes the admin token for the environment in use (staging and production differ), and the browser never stores it.
 - **Cloudflare login.** `wrangler login` is per machine. Run `npx wrangler whoami` and confirm the intended account before any remote read or write.
 - **Deploying.** `wrangler deploy` ships the working tree, not GitHub, so deploy only from a clean tree at a pushed SHA. Deploys originate from the Intel Mac unless the owner authorizes otherwise; the M2 Mac is for reading, `/admin` labelling, and code that is committed and pushed.
