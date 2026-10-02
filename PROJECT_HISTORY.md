@@ -51,6 +51,13 @@ This section is the boot point for the staging Jev experiment on `feature/mts-la
 - Staging: version `80241a9f-c920-4c46-86d6-37b4c2b39755` (`git-5db1aab-staging`, source `5db1aabcce7479b84605df6e856cbdfb162f0940`, created `2026-09-29T07:55:32Z`) serves 100% of traffic; rollback is version `03795db0-10fd-41e3-96fc-68f6263ba2dc` (`git-035b590-staging`), and before that `f5f12b81-d2ae-4acb-b74f-055108137bb2` (`git-d69eea8-staging`). D1 `ai-signal-staging` has migration `0010_jev_ledger.sql` applied and no pending migrations; the analysis rework needed none. Production has none of this and lacks migrations 0007–0010; promoting any of it needs its own migration plan.
 - Session mechanics: the working copy used in the 29 September session was a temporary worktree; the pushed branch `feature/mts-lane` is the source. Use `npm ci` and `npm run check` from a fresh checkout. GitHub and Cloudflare logins are per session; Wrangler remote migrations need an explicit, confirmed step.
 
+## 2 October 2026 — AI Secret removed from the staging collector
+
+- Owner decision: remove AI Secret from the collector on `feature/mts-lane`. The data supports "not producing" but not "never useful": in production, while its parser worked (17–23 September), it supplied 90 accepted candidates and 8 selected ones across 3 of 15 retained reports; it has since been `degraded` with no recognized, source-linked items, and in all 15 retained staging reports it supplied nothing.
+- Source pack `core-ai` is now v8 without AI Secret; the pack version is stored with ledger rows and labels, so rows from before this change keep v7. The AI Secret parser, collector, its tests, and the one-off `replay:ai-secret` script were deleted; git history is the archive. The `ai-secret` source ID stays in the type and validators so stored editions, shadow reports, and ledger rows that name it still validate, and the `aisecret.us` host stays classed as an aggregator so other sources' links to it are still not treated as evidence. The deleted replay script also happened to supply Node types to the compiler, so `tsconfig.json` now declares them.
+- Checks passed generated types, TypeScript, all 167 tests in 17 files, default and staging dry-run packaging, and diff validation. Tests changed only in the source and fetch counts and pack version.
+- Not deployed: staging still runs the previous version (`80241a9f`, source `5db1aab`) and keeps collecting AI Secret until the owner authorizes a staging deploy. Production (`main`) is untouched and still collects it; its AI Secret degradation is a separate open question for the owner.
+
 ## 2 October 2026 — staging ledger verification and source health
 
 - Evidence came from read-only SELECTs through the Cloudflare connector; nothing was written, deployed, or changed. Staging D1 `ai-signal-staging` holds 105 `jev_judgments` rows, all with a `reader_wants` score, first seen `2026-09-29T08:16:27Z` (the first scheduled run after staging version `80241a9f`) and last seen `2026-10-02T00:16:23Z`. It also holds 78 `jev_label_events` (latest `2026-10-02T01:22:26Z`), 15 retained shadow reports, and no migration beyond `0010_jev_ledger.sql`. The eight most recent cron shadow runs (29 September 16:16Z to 2 October 00:16Z) are evenly eight hours apart. Ledger population is therefore verified.
@@ -277,7 +284,7 @@ The follow-on shadow run was healthy in 1,557 ms using `core-ai` v1. TLDR AI, Al
 - The deterministic collector, not the model, materialises the story inventory.
 - The model cannot introduce stories or source URLs.
 - Editorial corroboration is never described as proof.
-- AInews, TLDR AI, AlphaSignal, AI Secret, and MTS Situations enter one equal editorial pool; no source receives seniority.
+- AInews, TLDR AI, AlphaSignal, MTS Situations, and AI Brief enter one equal editorial pool; no source receives seniority.
 - One failed or quiet source does not block a usable pool from the others.
 - Prefer the first 36 hours; use 48 hours normally and expand once to 72 hours only when fewer than 10 qualified, deduplicated candidates remain. Never admit older material or weaken evidence/relevance rules to fill a target.
 - X/Twitter is background noise and cannot become a published card or corroborating source.

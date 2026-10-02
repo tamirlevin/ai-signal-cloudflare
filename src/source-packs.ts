@@ -10,14 +10,13 @@ export const DEFAULT_SOURCE_PACK_ID: SourcePackId = "core-ai";
 export const SOURCE_PACKS: Record<SourcePackId, SourcePack> = {
   "core-ai": {
     id: "core-ai",
-    version: 7,
+    version: 8,
     label: "Core AI",
     description: "Equal-source daily AI discovery with a bounded primary-evidence lane.",
     sources: [
       { id: "ainews", name: "AInews", kind: "discovery", url: "https://news.smol.ai/rss.xml", enabled: true },
       { id: "tldr-ai", name: "TLDR AI", kind: "discovery", url: "https://tldr.tech/api/rss/ai", enabled: true },
       { id: "alphasignal", name: "AlphaSignal", kind: "discovery", url: "https://alphasignal.ai/news-sitemap.xml", enabled: true, lookbackHours: 72, enrichLimit: 8 },
-      { id: "ai-secret", name: "AI Secret", kind: "discovery", url: "https://aisecret.us/tag/daily-rundown/rss/", enabled: true, lookbackHours: 72 },
       { id: "mts-situations", name: "MTS Situations", kind: "discovery", url: "https://api.mts.now/situations", enabled: true, lookbackHours: 72 },
       { id: "ai-brief", name: "AI Brief", kind: "discovery", url: "https://ai-weekly-brief.tamirlevin300024.chatgpt.site/api/runs?cadence=daily", enabled: true, lookbackHours: 72 },
       { id: "cloudflare-agents", name: "Cloudflare Agents", kind: "primary", url: "https://blog.cloudflare.com/tag/agents/rss", enabled: true, lookbackHours: 72 }

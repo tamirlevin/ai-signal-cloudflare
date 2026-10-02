@@ -204,56 +204,6 @@ export function parseTldrIssue(html: string, issue: { url: string; publishedAt: 
   return candidates;
 }
 
-/** Parse only recognized news sections, never sponsor blocks, images, or the footer. */
-export function parseAiSecretFeed(xml: string, now: Date, profile: Profile, source = sourceDefinition(profile, "ai-secret")): SupplementalCandidate[] {
-  if (!source) return [];
-  const cutoff = now.getTime() - (source.lookbackHours ?? 72) * 3_600_000;
-  const candidates: SupplementalCandidate[] = [];
-  const items = blocks(xml, "item").map((item) => ({
-    url: canonicalizeSupplementalUrl(plainText(tag(item, "link"))),
-    publishedAt: isoDate(tag(item, "pubDate")),
-    html: tag(item, "content:encoded")
-  })).filter((item) => item.url && new URL(item.url).hostname === "aisecret.us" && item.publishedAt
-    && Date.parse(item.publishedAt) >= cutoff && Date.parse(item.publishedAt) <= now.getTime())
-    .sort((left, right) => right.publishedAt!.localeCompare(left.publishedAt!)).slice(0, 6);
-  for (const issue of items) {
-    let accepted = 0;
-    const add = (html: string, summary: string) => {
-      if (accepted >= 24 || !summary) return;
-      // Link choice stays inside the factual paragraph/list item. Commentary and
-      // decorative image links cannot supply a replacement for missing evidence.
-      const url = [...html.matchAll(/<a\b[^>]*\bhref\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)]
-        .filter((match) => plainText(match[2] ?? ""))
-        .map((match) => canonicalizeSupplementalUrl(match[1] ?? "", issue.url))
-        .find((value) => {
-          if (!value) return false;
-          const parsed = new URL(value);
-          return !aggregatorHost(parsed.hostname) && !socialHost(parsed.hostname)
-            && !NON_EVIDENCE_HOSTS.has(parsed.hostname.replace(/^www\./, ""))
-            && !/\.(?:avif|gif|jpe?g|png|svg|webp)$/i.test(parsed.pathname);
-        });
-      if (!url || promotionalTldrStory("", summary, url)) return;
-      // Use the report's factual opening, not its often sensational section heading.
-      const sentence = summary.split(/(?<=[.!?])\s+(?=[A-Z])/)[0] ?? summary;
-      const title = sentence.length <= 180 ? sentence.replace(/[.!?]$/, "") : `${sentence.slice(0, 177).replace(/\s+\S*$/, "")}…`;
-      candidates.push(prepareCandidate({ title, summary: summary.slice(0, 600), url, publishedAt: issue.publishedAt!, sourceAttributions: [attribution(source, issue.url!)] }, profile));
-      accepted += 1;
-    };
-    for (const section of issue.html.split(/<hr\b[^>]*>/i)) {
-      const text = plainText(section);
-      if (/^(?:TOGETHER WITH|SPONSORED|ADVERTISEMENT|READ MORE)\b/i.test(text)) continue;
-      if (/^DAILY TL;DR\b/i.test(text)) {
-        for (const item of blocks(section, "li")) add(item, plainText(item));
-        continue;
-      }
-      // Essays or changed layouts without the known factual marker fail closed.
-      const paragraph = blocks(section, "p").find((value) => /^(?:👀\s*)?What's happening:/i.test(plainText(value)));
-      if (paragraph) add(paragraph, plainText(paragraph).replace(/^(?:👀\s*)?What's happening:\s*/i, ""));
-    }
-  }
-  return candidates;
-}
-
 function titleFromAlphaUrl(value: string): string {
   try {
     const slug = new URL(value).pathname.split("/").filter(Boolean).at(-1) ?? "";
@@ -464,29 +414,6 @@ async function collectCloudflare(profile: Profile, now: Date, fetcher: Fetcher, 
   }
 }
 
-async function collectAiSecret(profile: Profile, now: Date, fetcher: Fetcher, source: SourceDefinition): Promise<SourceResult> {
-  const health = sourceHealth(source);
-  let stage = "feed";
-  try {
-    health.requests = 1;
-    const feed = await boundedText(fetcher, source.url, MAX_FEED_BYTES, "application/rss+xml, application/xml;q=0.9");
-    stage = "parse";
-    if (!/<rss\b/i.test(feed)) throw new Error("AI Secret returned no RSS feed");
-    health.fetchedItems = blocks(feed, "item").length;
-    const candidates = parseAiSecretFeed(feed, now, profile, source);
-    recordYield(health, candidates.length);
-    if (!candidates.length) {
-      health.status = "degraded";
-      health.errors.push("yield: no recognized, source-linked AI Secret news in the collection window; feed may be quiet or layout changed");
-    }
-    return { candidates, health };
-  } catch (error) {
-    health.status = "failed";
-    health.errors.push(stagedError(stage, error));
-    return { candidates: [], health };
-  }
-}
-
 type MtsStorySource = { name?: unknown; url?: unknown; postedAt?: unknown };
 type MtsStory = { name?: unknown; description?: unknown; lifecycle?: unknown; createdAt?: unknown; sources?: unknown };
 
@@ -682,7 +609,7 @@ export async function collectSupplementalSources(input: { profile: Profile; now?
       case "ainews": return collectAiNews(input.profile, fetcher, source);
       case "tldr-ai": return collectTldr(input.profile, fetcher, source);
       case "alphasignal": return collectAlpha(input.profile, now, fetcher, source);
-      case "ai-secret": return collectAiSecret(input.profile, now, fetcher, source);
+      case "ai-secret": throw new Error("AI Secret was removed from source pack v8");
       case "mts-situations": return collectMts(input.profile, now, fetcher, source);
       case "ai-brief": return collectAiBrief(input.profile, now, fetcher, source);
       case "cloudflare-agents": return collectCloudflare(input.profile, now, fetcher, source);

@@ -23,9 +23,9 @@ The compatibility date is pinned to `2026-08-11`. Move it forward only with a te
 
 Every run targets the current `Australia/Melbourne` calendar day. A normal refresh is idempotent for that date, so a repeated run skips after a successful edition already exists.
 
-The code-defined `core-ai` source pack v7 checks:
+The code-defined `core-ai` source pack v8 checks:
 
-- AInews, TLDR AI, AlphaSignal, AI Secret, and MTS Situations as equal editorial discovery inputs;
+- AInews, TLDR AI, AlphaSignal, and MTS Situations as equal editorial discovery inputs;
 - AI Brief (daily runs API) as an equal discovery input carrying pre-triaged community signal (Hacker News, InfoQ, practitioner blogs);
 - Cloudflare Agents as a narrow primary-evidence lane; and
 - future feeds under the same timestamp, evidence, and ranking rules—never through source seniority.
@@ -41,8 +41,6 @@ The collector then:
 7. Keeps at most 18 model candidates and publishes at most 14 cards. Weak candidates never fill a target; a quiet day remains quiet.
 
 The deterministic collector creates the story inventory, Hot Topics, source URLs, provenance, and individual signal dates. Workers AI receives only that bounded inventory and writes presentation copy plus cross-story synthesis. The model cannot add stories or URLs. Every generated edition is validated against the collector's permitted URL catalogue before D1 is changed.
-
-AI Secret uses its full-content [Daily Rundown RSS](https://aisecret.us/tag/daily-rundown/rss/) in one bounded request, with no article crawling or extra model call. It parses up to six recent editions and 24 linked news items per edition from the factual “What's happening” paragraphs and Daily TL;DR lists. Sponsor blocks, recruitment promotions, images, commentary-only links, and unrecognized essay layouts are excluded. RSS publication dates represent reporting dates, not independently verified event dates. Empty/unrecognized output degrades this source report without blocking other sources. Shared feed downloads enforce byte limits while streaming.
 
 AlphaSignal uses its small Google News sitemap rather than its unbounded historical sitemap. The collector reads `news:publication_date` and `news:title`, retains `lastmod` and URL-title parsing only for legacy compatibility, and enriches at most eight recent articles in parallel. Sitemap, parse, and individual enrichment errors are labelled separately; there is no retry on the daily critical path.
 
@@ -114,9 +112,7 @@ npm run dry-run
 git diff --check
 ```
 
-Then follow [AGENTS.md](AGENTS.md): push the reviewed commit to `main`, record the current deployment as rollback evidence, deploy with strict configuration and Git provenance, verify public and D1 state, and record consequential evidence in [PROJECT_HISTORY.md](PROJECT_HISTORY.md). No D1 migration is needed for the v7 pool; historical 48-hour and legacy editions remain readable.
-
-The bounded September 2026 profile experiment is reproducible with `npm run replay:ai-secret -- 2026-09-09` (optional `--details` or `--live-pool`). It reads the currently available feed and public profile, records their identity, and compares ten 08:15 AEST snapshots. It makes no model calls, D1 writes, or publications. This is not an immutable archive or a historical reconstruction of all sources; results change as the feed/profile changes. The optional live-pool comparison collects current sources only.
+Then follow [AGENTS.md](AGENTS.md): push the reviewed commit to `main`, record the current deployment as rollback evidence, deploy with strict configuration and Git provenance, verify public and D1 state, and record consequential evidence in [PROJECT_HISTORY.md](PROJECT_HISTORY.md). No D1 migration is needed for the v8 pool; historical 48-hour and legacy editions remain readable.
 
 The configured cron is `15 22 * * *` UTC: 08:15 Melbourne during AEST and 09:15 during AEDT. Cloudflare cron has no Melbourne timezone setting.
 
