@@ -10,11 +10,12 @@ export const DEFAULT_SOURCE_PACK_ID: SourcePackId = "core-ai";
 export const SOURCE_PACKS: Record<SourcePackId, SourcePack> = {
   "core-ai": {
     id: "core-ai",
-    version: 8,
+    version: 9,
     label: "Core AI",
     description: "Equal-source daily AI discovery with a bounded primary-evidence lane.",
     sources: [
-      { id: "ainews", name: "AInews", kind: "discovery", url: "https://news.smol.ai/rss.xml", enabled: true },
+      // Dormant, not removed: the feed published nothing after 10 September 2026. Re-enable to test it again.
+      { id: "ainews", name: "AInews", kind: "discovery", url: "https://news.smol.ai/rss.xml", enabled: false },
       { id: "tldr-ai", name: "TLDR AI", kind: "discovery", url: "https://tldr.tech/api/rss/ai", enabled: true },
       { id: "alphasignal", name: "AlphaSignal", kind: "discovery", url: "https://alphasignal.ai/news-sitemap.xml", enabled: true, lookbackHours: 72, enrichLimit: 8 },
       { id: "mts-situations", name: "MTS Situations", kind: "discovery", url: "https://api.mts.now/situations", enabled: true, lookbackHours: 72 },

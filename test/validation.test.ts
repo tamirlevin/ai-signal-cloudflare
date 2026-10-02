@@ -5,6 +5,7 @@ import { anchorsToMarkdown, fetchLatestRss, parseLatestRss } from "../src/rss";
 import { validateEdition, validatePresentationDiversity, validateSynthesisDiversity, ValidationError } from "../src/validation";
 import { compactIssueForModel, compactIssueInventory, deterministicEditorialEdition, distinctCandidates, editorialMessages, extractGeneratedEdition, generationInput, isPermissionDesignSignal, issueFromCandidateInventory, materializeCandidateStories } from "../src/editorial";
 import { normalizeEditionStories, unaccountedCandidates } from "../src/story-normalization";
+import { buildDailyCandidateInventory } from "../src/supplemental";
 
 function edition(): Edition {
   const url = "https://example.com/story";
@@ -70,6 +71,37 @@ describe("editorial contracts", () => {
     const validated = validateEdition(value, DEFAULT_PROFILE, new Set(["https://example.com/story"]));
     expect(validated.collection?.sourcePackId).toBe("core-ai");
     expect(validated.signals[0]?.provenance?.coverage).toEqual(value.signals[0]?.provenance?.coverage);
+  });
+  it("publishes a story carried by every editorial source in the current pack (live 2026-10-02: five feeds, previously capped at four)", () => {
+    const sources = [["ainews", "AInews"], ["tldr-ai", "TLDR AI"], ["alphasignal", "AlphaSignal"], ["mts-situations", "MTS Situations"], ["ai-brief", "AI Brief"]] as const;
+    const now = new Date("2026-10-02T08:00:00Z");
+    const results = sources.map(([id, name]) => ({
+      candidates: [{ title: "Codex agent runtime ships scoped permission controls", summary: "A practical agent runtime with scoped permissions.", url: "https://openai.com/index/codex-runtime", publishedAt: "2026-10-02T02:00:00Z", category: "codex", categoryLabel: "Codex & agent craft", score: 20, exceptional: false, leadSourceId: id, sourceAttributions: [{ sourceId: id, sourceName: name, kind: "discovery" as const, sourceUrl: `https://${id}.example/issue` }] }],
+      health: { id, name, status: "healthy" as const, requests: 1, fetchedItems: 1, acceptedCandidates: 1, errors: [] }
+    }));
+    const inventory = buildDailyCandidateInventory({ sourceResults: results, profile: DEFAULT_PROFILE, now });
+    expect(inventory.candidates[0]?.provenance?.coverage).toMatchObject({ editorialSourceCount: 5, boost: 8 });
+    const issue = { url: "https://signal.tamirlevin.dev/?edition=2026-10-02", issueDate: "2026-10-02", publicationDate: "2 October 2026", publishedAt: now.toISOString(), body: "", anchors: [] };
+    const generated = deterministicEditorialEdition(issue, inventory.candidates, DEFAULT_PROFILE);
+    const permitted = new Set(inventory.candidates.flatMap((candidate) => candidate.sources.map((source) => source.url)));
+    expect(() => validateEdition(generated, DEFAULT_PROFILE, permitted)).not.toThrow();
+  });
+  it("still rejects duplicate or unknown editorial sources in coverage metadata", () => {
+    const base = (editorialSourceIds: string[]) => {
+      const value = edition();
+      value.signals[0]!.provenance = {
+        clusterId: "story-example",
+        lead: { id: "alphasignal", name: "AlphaSignal", layer: "editorial" },
+        editorialCorroboration: [],
+        evidence: [{ label: "Official", url: "https://example.com/story", kind: "direct" }],
+        coverage: { editorialSourceIds: editorialSourceIds as never, editorialSourceCount: editorialSourceIds.length, primaryEvidenceCount: 0, boost: 0 },
+        selection: { score: 84, reason: "single-source" }
+      };
+      return value;
+    };
+    const permitted = new Set(["https://example.com/story"]);
+    expect(() => validateEdition(base(["alphasignal", "alphasignal"]), DEFAULT_PROFILE, permitted)).toThrow(/duplicates/);
+    expect(() => validateEdition(base(["cloudflare-agents"]), DEFAULT_PROFILE, permitted)).toThrow(/not an editorial source/);
   });
   it("rejects coverage metadata that disagrees with provenance", () => {
     const value = edition();

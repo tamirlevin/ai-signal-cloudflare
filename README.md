@@ -23,11 +23,12 @@ The compatibility date is pinned to `2026-08-11`. Move it forward only with a te
 
 Every run targets the current `Australia/Melbourne` calendar day. A normal refresh is idempotent for that date, so a repeated run skips after a successful edition already exists.
 
-The code-defined `core-ai` source pack v8 checks:
+The code-defined `core-ai` source pack v9 checks:
 
-- AInews, TLDR AI, AlphaSignal, and MTS Situations as equal editorial discovery inputs;
+- TLDR AI, AlphaSignal, and MTS Situations as equal editorial discovery inputs;
 - AI Brief (daily runs API) as an equal discovery input carrying pre-triaged community signal (Hacker News, InfoQ, practitioner blogs);
-- Cloudflare Agents as a narrow primary-evidence lane; and
+- Cloudflare Agents as a narrow primary-evidence lane;
+- AInews, which stays defined in the pack but is disabled (`enabled: false`) because its feed published nothing after 10 September 2026; flip the flag to test it again; and
 - future feeds under the same timestamp, evidence, and ranking rules—never through source seniority.
 
 The collector then:
@@ -113,7 +114,7 @@ npm run dry-run
 git diff --check
 ```
 
-Then follow [AGENTS.md](AGENTS.md): push the reviewed commit to `main`, record the current deployment as rollback evidence, deploy with strict configuration and Git provenance, verify public and D1 state, and record consequential evidence in [PROJECT_HISTORY.md](PROJECT_HISTORY.md). No D1 migration is needed for the v8 pool; historical 48-hour and legacy editions remain readable.
+Then follow [AGENTS.md](AGENTS.md): push the reviewed commit to `main`, record the current deployment as rollback evidence, deploy with strict configuration and Git provenance, verify public and D1 state, and record consequential evidence in [PROJECT_HISTORY.md](PROJECT_HISTORY.md). No D1 migration is needed for the v9 pool; historical 48-hour and legacy editions remain readable.
 
 The configured cron is `15 22 * * *` UTC: 08:15 Melbourne during AEST and 09:15 during AEDT. Cloudflare cron has no Melbourne timezone setting.
 

@@ -33,16 +33,13 @@ function fakeDatabase(runStatements: RecordedStatement[]): D1Database {
   } as unknown as D1Database;
 }
 
-const rss = `<rss><channel><item>
-  <title>AI News</title>
-  <link>https://news.smol.ai/issues/fallback-test</link>
-  <pubDate>Sun, 30 Aug 2026 01:00:00 GMT</pubDate>
-  <content:encoded><![CDATA[
-    <h2>Agent systems</h2>
-    <p><a href="https://example.com/agent-permissions">Agent permissions</a> Codex agents add explicit permission scopes and replayable approvals.</p>
-    <p><a href="https://example.com/agent-memory">Agent memory</a> A new agent memory system adds durable team handoffs.</p>
-  ]]></content:encoded>
-</item></channel></rss>`;
+/** AInews is dormant in pack v9, so candidates come from TLDR: the newest issue lists these two stories. */
+async function sourceFetch(input: string | URL | Request): Promise<Response> {
+  const url = String(input);
+  if (url === "https://tldr.tech/api/rss/ai") return new Response(`<rss><channel><item><title>TLDR AI</title><link>https://tldr.tech/ai/2026-08-30</link><pubDate>Sun, 30 Aug 2026 01:00:00 GMT</pubDate></item></channel></rss>`);
+  if (url === "https://tldr.tech/ai/2026-08-30") return new Response(`<article><a href="https://example.com/agent-permissions"><h3>Codex adds explicit agent permission scopes</h3></a><div class="newsletter-html">Codex agents add explicit permission scopes and replayable approvals.</div></article><article><a href="https://example.com/agent-memory"><h3>Enterprise memory enables durable handoffs</h3></a><div class="newsletter-html">A new agent memory system adds durable team handoffs.</div></article>`);
+  return new Response("<rss><channel></channel></rss>");
+}
 
 const generatedEdition = {
   schemaVersion: 1,
@@ -95,7 +92,7 @@ describe("generation model fallback", () => {
     const modelCalls: string[] = [];
     const modelInputs: ChatCompletionsMessagesInput[] = [];
     const runStatements: RecordedStatement[] = [];
-    const fetcher = vi.fn(async () => new Response(rss, { status: 200, headers: { "Content-Type": "application/rss+xml" } }));
+    const fetcher = vi.fn(sourceFetch);
     vi.stubGlobal("fetch", fetcher);
 
     const env = {
@@ -138,7 +135,7 @@ describe("generation model fallback", () => {
       expect(modelInputs[1]).not.toHaveProperty("reasoning_effort");
       expect(modelInputs[2]).toHaveProperty("max_tokens", 3200);
       expect(JSON.stringify(modelInputs[2])).toContain("ai_signal_editorial_review");
-      expect(fetcher).toHaveBeenCalledTimes(7);
+      expect(fetcher).toHaveBeenCalledTimes(6);
       const successfulRun = runStatements.find((statement) => statement.sql.startsWith("INSERT INTO runs"));
       expect(successfulRun?.values[4]).toBe("success");
       expect(successfulRun?.values[5]).toBe("@cf/meta/llama-3.3-70b-instruct-fp8-fast");
@@ -157,7 +154,7 @@ describe("generation model fallback", () => {
     const modelCalls: string[] = [];
     const modelInputs: ChatCompletionsMessagesInput[] = [];
     const runStatements: RecordedStatement[] = [];
-    const fetcher = vi.fn(async () => new Response(rss, { status: 200, headers: { "Content-Type": "application/rss+xml" } }));
+    const fetcher = vi.fn(sourceFetch);
     vi.stubGlobal("fetch", fetcher);
 
     const env = {

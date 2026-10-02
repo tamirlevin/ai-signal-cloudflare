@@ -5,16 +5,13 @@ const issueUrl = "https://news.smol.ai/issues/republish-test";
 const firstSource = "https://example.com/agent-permissions";
 const secondSource = "https://example.com/agent-memory";
 
-const rss = `<rss><channel><item>
-  <title>AI News</title>
-  <link>${issueUrl}</link>
-  <pubDate>Sun, 30 Aug 2026 01:00:00 GMT</pubDate>
-  <content:encoded><![CDATA[
-    <h2>Agent systems</h2>
-    <p><a href="${firstSource}">Agent permissions</a> Codex agents add explicit permission scopes and replayable approvals.</p>
-    <p><a href="${secondSource}">Agent memory</a> A new agent memory system adds durable team handoffs.</p>
-  ]]></content:encoded>
-</item></channel></rss>`;
+/** AInews is dormant in pack v9, so candidates come from TLDR: the newest issue lists these two stories. */
+async function sourceFetch(input: string | URL | Request): Promise<Response> {
+  const url = String(input);
+  if (url === "https://tldr.tech/api/rss/ai") return new Response(`<rss><channel><item><title>TLDR AI</title><link>https://tldr.tech/ai/2026-08-30</link><pubDate>Sun, 30 Aug 2026 01:00:00 GMT</pubDate></item></channel></rss>`);
+  if (url === "https://tldr.tech/ai/2026-08-30") return new Response(`<article><a href="https://example.com/agent-permissions"><h3>Codex adds explicit agent permission scopes</h3></a><div class="newsletter-html">Codex agents add explicit permission scopes and replayable approvals.</div></article><article><a href="https://example.com/agent-memory"><h3>Enterprise memory enables durable handoffs</h3></a><div class="newsletter-html">A new agent memory system adds durable team handoffs.</div></article>`);
+  return new Response("<rss><channel></channel></rss>");
+}
 
 const modelEdition = {
   schemaVersion: 1,
@@ -118,12 +115,12 @@ function fakeEnv(db: D1Database, modelCalls: string[]): Env {
 }
 
 describe("generation republish behavior", () => {
-  it("publishes a 72-hour fallback edition from TLDR when AInews returns 402", async () => {
+  it("publishes a 72-hour fallback edition from TLDR when every other source returns 402", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-09-01T12:00:00.000Z"));
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
       const url = String(input);
-      if (url.includes("news.smol.ai")) return new Response("unavailable", { status: 402 });
+      if (!url.includes("tldr.tech")) return new Response("unavailable", { status: 402 });
       if (url === "https://tldr.tech/api/rss/ai") return new Response(`<rss><channel><item><title>TLDR AI</title><link>https://tldr.tech/ai/2026-08-30</link><pubDate>Sun, 30 Aug 2026 01:00:00 GMT</pubDate></item></channel></rss>`);
       if (url === "https://tldr.tech/ai/2026-08-30") return new Response(`<article><a href="${firstSource}"><h3>Codex adds explicit agent permission scopes</h3></a></article><article><a href="${secondSource}"><h3>Enterprise memory enables durable handoffs</h3></a></article>`);
       return new Response("<rss><channel></channel></rss>");
@@ -141,7 +138,10 @@ describe("generation republish behavior", () => {
       expect(calls).toHaveLength(2);
       expect(statements.some((statement) => statement.sql.includes("manual_republish_days"))).toBe(false);
       const report = statements.find((statement) => statement.sql.startsWith("INSERT INTO supplemental_shadow_runs"));
-      expect(JSON.stringify(report?.values)).toContain("RSS returned 402");
+      const sources = (JSON.parse(String(report?.values[5])) as { sources: Array<{ id: string; status: string; errors: string[] }> }).sources;
+      expect(sources.map((source) => source.id)).toEqual(["tldr-ai", "alphasignal", "mts-situations", "ai-brief", "cloudflare-agents"]);
+      expect(sources.filter((source) => source.status === "failed").map((source) => source.id)).toEqual(["alphasignal", "mts-situations", "ai-brief", "cloudflare-agents"]);
+      expect(JSON.stringify(sources)).toContain("returned 402");
     } finally {
       vi.unstubAllGlobals();
       vi.useRealTimers();
@@ -151,7 +151,7 @@ describe("generation republish behavior", () => {
   it("keeps normal manual refresh idempotent but replaces an issue when forced", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-31T00:00:00.000Z"));
-    const fetcher = vi.fn(async () => new Response(rss, { status: 200, headers: { "Content-Type": "application/rss+xml" } }));
+    const fetcher = vi.fn(sourceFetch);
     vi.stubGlobal("fetch", fetcher);
     try {
       const normalCalls: string[] = [];
@@ -167,7 +167,7 @@ describe("generation republish behavior", () => {
       expect(forcedCalls).toEqual(["@cf/openai/gpt-oss-120b", "@cf/meta/llama-3.3-70b-instruct-fp8-fast"]);
       expect(forcedStatements.some((statement) => statement.sql.startsWith("UPDATE editions SET"))).toBe(true);
       expect(forcedStatements.some((statement) => statement.sql.startsWith("UPDATE manual_republish_days"))).toBe(true);
-      expect(fetcher).toHaveBeenCalledTimes(7);
+      expect(fetcher).toHaveBeenCalledTimes(6);
 
       const limitedCalls: string[] = [];
       const limitedStatements: RecordedStatement[] = [];
