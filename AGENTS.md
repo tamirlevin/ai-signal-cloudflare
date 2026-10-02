@@ -45,18 +45,27 @@ Before proposing or changing anything:
 
 ## Working machines
 
-Until the owner says otherwise, this repository is run from the **Intel Mac** (`Darwin x86_64`). The owner also uses an **M2 Mac** (`Darwin arm64`), normally on Tuesdays and Wednesdays in the office. Use the lowercase labels `intel-mac` and `m2-mac` wherever a machine is recorded. A cloud agent session (`Linux`) is neither and cannot tell which Mac the owner is typing on: ask rather than assume. Cloudflare actions are unavailable there unless credentials were supplied for that session.
+The owner works on three known machines, and this repository may be run from any of them. None is the default; the owner chooses where to work as needed.
 
-**Session types.** A desktop (local) session needs a folder the owner chooses (use the non-synced clone) and may use a git worktree under `.claude/worktrees/`. A cloud session works from a fresh clone of GitHub, so push first; it has no Wrangler login. The Cloudflare connector, when enabled, gives read-only inspection of D1 through `d1_database_query` (SELECT only, never a write) of staging `ai-signal-staging` (`d1d32bf8-9edf-463a-b151-8ea54abc2e4d`) and production `ai-signal` (`376a852a-26db-4d2d-983c-b872b3361372`), plus Cloudflare documentation search; it has no deploy tool. Public endpoints and some documentation hosts may be blocked by the environment's network allowlist. Deploys, migrations, and secrets are the owner's steps from the Intel Mac.
+| Label | Identify it with | Notes |
+| --- | --- | --- |
+| `intel-mac` | `uname -sm` reports `Darwin x86_64` | The earlier default. |
+| `m2-mac` | `uname -sm` reports `Darwin arm64` | Normally Tuesdays and Wednesdays in the office. A terminal running under Rosetta reports `x86_64`; if in doubt, run `sysctl -n machdep.cpu.brand_string`. |
+| `omarchy` | `uname -sm` reports `Linux aarch64` and `hostname` reports `omarchy-mbp` | Arch Linux ARM running Omarchy. |
 
-In a local session, identify the machine with `uname -sm` and state it with the branch and SHA. A terminal running under Rosetta on the M2 reports `x86_64`; if in doubt, run `sysctl -n machdep.cpu.brand_string`. If the machine is not the Intel Mac, tell the owner what changes before editing or deploying:
+Use these lowercase labels wherever a machine is recorded. A cloud agent session also reports `Linux`, so `uname -sm` alone cannot separate it from `omarchy`; check `hostname`. A machine that matches none of the three is treated as a cloud session or an unknown machine: ask the owner rather than assume, and do not use a label for it.
 
-- **Hand-over.** The other machine's latest work is present only if it was committed and pushed; compare `HEAD` with the fetched remote branch. Uncommitted or unpushed work on the other Mac is invisible from here, so do not assume it is absent.
-- **Dependencies.** Run `npm ci` in this checkout, then `npm run check`. Never copy or sync `node_modules` or `.wrangler` between machines. Keep the checkout outside Dropbox and other synced folders: GitHub is the only bridge between machines.
+**Session types.** A desktop (local) session needs a folder the owner chooses (use the non-synced clone) and may use a git worktree under `.claude/worktrees/`. A cloud session works from a fresh clone of GitHub, so push first; it has no Wrangler login. The Cloudflare connector, when enabled, gives read-only inspection of D1 through `d1_database_query` (SELECT only, never a write) of staging `ai-signal-staging` (`d1d32bf8-9edf-463a-b151-8ea54abc2e4d`) and production `ai-signal` (`376a852a-26db-4d2d-983c-b872b3361372`), plus Cloudflare documentation search; it has no deploy tool. Public endpoints and some documentation hosts may be blocked by the environment's network allowlist. Deploys, migrations, and secrets are the owner's steps from a known machine with a confirmed Wrangler login.
+
+In a local session, identify the machine as above and state it with the branch and SHA. Whichever machine it is, the same conditions apply, and each is per machine:
+
+- **Hand-over.** Another machine's latest work is present only if it was committed and pushed; compare `HEAD` with the fetched remote branch. Uncommitted or unpushed work elsewhere is invisible from here, so do not assume it is absent.
+- **Dependencies.** Run `npm ci` in this checkout, then `npm run check`. Never copy or sync `node_modules` or `.wrangler` between machines: they hold architecture-specific binaries. Keep the checkout outside Dropbox and other synced folders: GitHub is the only bridge between machines.
 - **Local-only state.** `.dev.vars` is gitignored and exists only where it was created. `/admin` takes the admin token for the environment in use (staging and production differ), and the browser never stores it.
 - **Cloudflare login.** `wrangler login` is per machine. Run `npx wrangler whoami` and confirm the intended account before any remote read or write.
-- **Deploying.** `wrangler deploy` ships the working tree, not GitHub, so deploy only from a clean tree at a pushed SHA. Deploys originate from the Intel Mac unless the owner authorizes otherwise; the M2 Mac is for reading, `/admin` labelling, and code that is committed and pushed.
-- **Identity.** Give each machine its own git author name (`Tamir Levin (intel-mac)`, `Tamir Levin (m2-mac)`) with the same `user.email`, so `git log` shows where a commit was made.
+- **GitHub login.** Pushing needs a working credential on that machine (for example `gh auth status`). If the configured credential helper is broken, say so and ask before changing git configuration.
+- **Deploying.** `wrangler deploy` ships the working tree, not GitHub, so deploy only from a clean tree at a pushed SHA, with the Cloudflare login confirmed on that machine and the deploy authorized by the owner. Any of the three machines may deploy under those conditions.
+- **Identity.** Give each machine its own git author name (`Tamir Levin (intel-mac)`, `Tamir Levin (m2-mac)`, `Tamir Levin (omarchy)`) with the same `user.email`, set in the repository's own git configuration, so `git log` shows where a commit was made.
 - **Provenance.** Put the machine label in every deploy `--message` and release record. Cloudflare version metadata is the record of which machine deployed last; do not keep a "last machine" file, which would be a progress log that goes stale.
 
 ## Source hierarchy
@@ -104,13 +113,13 @@ For an authorized production release:
 4. Deploy with strict configuration and Git provenance, for example:
 
    ```bash
-   npx wrangler deploy --strict --tag git-<short-sha> --message "Git <full-sha>; <summary>; machine <intel-mac|m2-mac>"
+   npx wrangler deploy --strict --tag git-<short-sha> --message "Git <full-sha>; <summary>; machine <intel-mac|m2-mac|omarchy>"
    ```
 
 For experiment branches, deploy to staging instead (same checks first; a plain `wrangler deploy` targets production):
 
 ```bash
-npx wrangler deploy --env staging --tag git-<short-sha>-staging --message "Git <full-sha>; <summary>; machine <intel-mac|m2-mac>"
+npx wrangler deploy --env staging --tag git-<short-sha>-staging --message "Git <full-sha>; <summary>; machine <intel-mac|m2-mac|omarchy>"
 ```
 
 Staging (`testsignal.tamirlevin.dev`, D1 `ai-signal-staging`) runs an 8-hour test schedule instead of the daily production cron and never shares production data or secrets. Verify staging at its own endpoints; promote to production only via `main`.
