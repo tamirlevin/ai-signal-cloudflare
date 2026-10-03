@@ -45,6 +45,10 @@ export type ClefComparison = {
     dropped: { decided: number };
     /** Decided votes left out: no retained run report to rebuild the pool from, or Clef missing for part of that run's pool. */
     excluded: { unavailable: number; incompleteCoverage: number };
+    /** The question fingerprint this sample is counted under; null when the comparison is not pinned to one. */
+    questionHash: string | null;
+    /** Decided votes made under a different question set, set aside so the sample is one question set. */
+    setAside: number;
   };
   /** Null until the gate opens. Nothing derived from a Clef score is computed before then. */
   result: ClefResult | null;
@@ -70,12 +74,18 @@ function separation(items: Array<{ publish: boolean; picked: boolean }>): Separa
 const DISAGREEMENT_CELLS: ReadonlySet<Cell> = new Set<Cell>(["gate-only", "jev-only"]);
 
 export function summarizeClefComparison(
-  events: LabelEvent[],
+  allEvents: LabelEvent[],
   reports: Map<string, SupplementalShadowReport>,
   clefRows: ClefScoreRow[],
-  options: { needed?: number } = {}
+  options: { needed?: number; questionHash?: string } = {}
 ): ClefComparison {
   const needed = options.needed ?? CLEF_GATE_PER_FRAME;
+  // The sample is one question set: when pinned, labels made under another fingerprint (for example before a
+  // profile change) are set aside and counted, so changing the profile restarts the sample visibly.
+  const pinned = options.questionHash ?? null;
+  const events = pinned === null ? allEvents : allEvents.filter((event) => event.questionHash === pinned);
+  const setAside = pinned === null ? 0 : [...firstVotes(allEvents, "paired").values(), ...firstVotes(allEvents, "dropped").values()]
+    .filter((vote) => vote.decision !== "unsure" && vote.questionHash !== pinned).length;
   const clefIndex = new Map(clefRows.map((row) => [`${row.questionHash}\n${row.storyUrl}`, row.readerWants]));
   const hashByRun = new Map(events.filter((event) => event.kind !== "rank").map((event) => [event.runId, event.questionHash]));
   const runCache = new Map<string, RunInfo | null>();
@@ -112,7 +122,7 @@ export function summarizeClefComparison(
   const dropped = comparable("dropped");
   const pairedDisagreements = paired.filter((vote) => DISAGREEMENT_CELLS.has(vote.picks.cell)).length;
   const open = pairedDisagreements >= needed && dropped.length >= needed;
-  const gate = { needed, open, paired: { decided: pairedDisagreements }, dropped: { decided: dropped.length }, excluded };
+  const gate = { needed, open, paired: { decided: pairedDisagreements }, dropped: { decided: dropped.length }, excluded, questionHash: pinned, setAside };
   if (!open) return { gate, result: null };
 
   const clefPickCache = new Map<string, Set<string>>();

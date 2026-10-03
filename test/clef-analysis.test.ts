@@ -3,8 +3,10 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { summarizeClefComparison, type ClefScoreRow } from "../src/clef-analysis";
 import type { JevScoredItem, SupplementalShadowReport } from "../src/contracts";
+import { DEFAULT_PROFILE } from "../src/contracts";
 import worker from "../src/index";
-import type { JevDecision, JevLabelKind, LabelEvent } from "../src/jev-ledger";
+import { buildJevQuestions } from "../src/jev";
+import { jevQuestionFingerprint, type JevDecision, type JevLabelKind, type LabelEvent } from "../src/jev-ledger";
 
 /**
  * One run is twelve stories. The rules select s0..s3 (K = 4). Jev's top 4 by reader_wants is
@@ -117,6 +119,31 @@ describe("Clef comparison gate", () => {
   });
 });
 
+describe("Clef comparison sample", () => {
+  it("counts only labels made under the pinned question set and says how many it set aside", () => {
+    const data = scenario(runs(3), CLEF_MIXED);
+    const same = summarizeClefComparison(data.events, data.reports, data.rows, { needed: 1, questionHash: "h" });
+    expect(same.gate).toMatchObject({ questionHash: "h", setAside: 0, paired: { decided: 12 }, dropped: { decided: 24 } });
+    // A different question set restarts the sample: nothing counts, and every decided label is accounted for.
+    const restarted = summarizeClefComparison(data.events, data.reports, data.rows, { needed: 1, questionHash: "v5" });
+    expect(restarted.gate).toMatchObject({ questionHash: "v5", setAside: 42, paired: { decided: 0 }, dropped: { decided: 0 }, open: false });
+    expect(restarted.result).toBeNull();
+  });
+
+  it("keeps the later runs' labels when only the earlier run was made under another question set", () => {
+    const data = scenario(runs(3), CLEF_MIXED);
+    const events = data.events.map((event) => event.runId === "run-1" ? { ...event, questionHash: "old" } : event);
+    const rows = data.rows.map((row) => row.storyUrl.includes("/run-1/") ? { ...row, questionHash: "old" } : row);
+    const { gate } = summarizeClefComparison(events, data.reports, rows, { needed: 1, questionHash: "h" });
+    expect(gate).toMatchObject({ setAside: 14, paired: { decided: 8 }, dropped: { decided: 16 } });
+  });
+
+  it("does not restrict anything when no question set is pinned", () => {
+    const data = scenario(runs(2), CLEF_MIXED);
+    expect(summarizeClefComparison(data.events, data.reports, data.rows, { needed: 1 }).gate).toMatchObject({ questionHash: null, setAside: 0, paired: { decided: 8 } });
+  });
+});
+
 describe("Clef comparison result", () => {
   it("measures each judge's separation in the dropped pool and who is right where Clef and Jev differ", () => {
     const data = scenario(runs(1), CLEF_MIXED);
@@ -179,14 +206,17 @@ describe("Clef comparison endpoint", () => {
     AI_MODEL: "x", AI_FALLBACK_MODEL: "x", AI_QUALITY_FALLBACK_MODEL: "x", AI_GATEWAY_ID: "", SUPPLEMENTAL_SHADOW_ENABLED: "true",
     TRIAGE_SHADOW_ENABLED: "false", JEV_SHADOW_ENABLED: "false", CLEF_SHADOW_ENABLED: "false", RSS_URL: "https://news.smol.ai/rss.xml"
   }) as unknown as Env;
-  const database = (migrations: (name: string) => boolean): DatabaseSync => {
+  const database = async (migrations: (name: string) => boolean): Promise<{ db: DatabaseSync; hash: string }> => {
     const db = new DatabaseSync(":memory:");
     for (const name of readdirSync("migrations").filter((file) => file.endsWith(".sql")).sort()) if (migrations(name)) db.exec(readFileSync(`migrations/${name}`, "utf8"));
     db.prepare("INSERT INTO supplemental_shadow_runs (id, trigger, status, report_json, started_at, finished_at, duration_ms) VALUES ('run-1', 'cron', 'healthy', ?1, '2026-10-02T00:15:00Z', '2026-10-02T00:15:20Z', 20000)").run(JSON.stringify(report("run-1")));
-    for (const name of PAIRED_VOTES) {
-      db.prepare("INSERT INTO jev_label_events (story_url, question_hash, question_set_version, run_id, issue_date, kind, decision, snapshot_json, created_at) VALUES (?1, 'h', 'reader-want-v1', 'run-1', '2026-10-02', 'disagree-gate-only', ?2, '{}', '2026-10-02T01:00:00Z')").run(url("run-1", name), PUBLISH.has(name) ? "publish" : "reject");
-    }
-    return db;
+    // No profile row in this schema, so the Worker falls back to the default profile; labels carry its fingerprint.
+    const hash = await jevQuestionFingerprint(buildJevQuestions(DEFAULT_PROFILE, []));
+    const insert = db.prepare("INSERT INTO jev_label_events (story_url, question_hash, question_set_version, run_id, issue_date, kind, decision, snapshot_json, created_at) VALUES (?1, ?2, 'reader-want-v1', 'run-1', '2026-10-02', 'disagree-gate-only', ?3, '{}', '2026-10-02T01:00:00Z')");
+    for (const name of PAIRED_VOTES) insert.run(url("run-1", name), hash, PUBLISH.has(name) ? "publish" : "reject");
+    // One label from before a profile change, under another question set.
+    insert.run(url("run-1", "s1"), "old-question-set", "publish");
+    return { db, hash };
   };
   const analysis = async (db: DatabaseSync) => {
     const response = await worker.fetch(new Request("https://app.test/api/jev-analysis", { headers: { Authorization: "Bearer secret" } }), environment(db), context);
@@ -194,27 +224,28 @@ describe("Clef comparison endpoint", () => {
   };
 
   it("serves counts only while locked, and never puts a Clef score in the response", async () => {
-    const db = database((name) => name <= "0011_clef_judgments.sql" || !name.startsWith("00"));
+    const { db, hash } = await database((name) => name <= "0011_clef_judgments.sql" || !name.startsWith("00"));
     for (const name of STORIES) {
-      db.prepare("INSERT INTO clef_judgments (story_url, question_hash, model, question_set_version, scored_at, reader_wants) VALUES (?1, 'h', 'clef', 'reader-want-v1', '2026-10-02T00:16:00Z', ?2)").run(url("run-1", name), 0.123456 + STORIES.indexOf(name) / 1000);
+      db.prepare("INSERT INTO clef_judgments (story_url, question_hash, model, question_set_version, scored_at, reader_wants) VALUES (?1, ?2, 'clef', 'reader-want-v1', '2026-10-02T00:16:00Z', ?3)").run(url("run-1", name), hash, 0.123456 + STORIES.indexOf(name) / 1000);
     }
     const { status, text } = await analysis(db);
     expect(status).toBe(200);
     const body = JSON.parse(text) as { clef: { gate: Record<string, unknown>; result: unknown }; analysis: { labelledStories: number } };
-    expect(body.analysis.labelledStories).toBe(6);
+    expect(body.analysis.labelledStories).toBe(7);
     expect(body.clef.result).toBeNull();
-    expect(body.clef.gate).toMatchObject({ needed: 40, open: false, paired: { decided: 4 }, dropped: { decided: 0 } });
+    // Counted under the current question set; the label made under the old one is set aside, not mixed in.
+    expect(body.clef.gate).toMatchObject({ needed: 40, open: false, paired: { decided: 4 }, dropped: { decided: 0 }, setAside: 1, questionHash: hash });
     expect(text).not.toContain("0.123");
   });
 
   it("keeps the main analysis working when the Clef comparison cannot be built", async () => {
     // A database from before migration 0011 has no clef_judgments table.
-    const db = database((name) => name < "0011");
+    const { db } = await database((name) => name < "0011");
     const { status, text } = await analysis(db);
     expect(status).toBe(200);
     const body = JSON.parse(text) as { clef: unknown; analysis: { labelledStories: number } };
     expect(body.clef).toBeNull();
-    expect(body.analysis.labelledStories).toBe(6);
+    expect(body.analysis.labelledStories).toBe(7);
   });
 });
 
@@ -223,5 +254,6 @@ describe("Clef comparison on the admin page", () => {
     const source = readFileSync("public/app.js", "utf8");
     expect(source).toContain("clefComparisonHtml(data.clef)");
     expect(source).toContain("Clef's scores are not read or shown until");
+    expect(source).toContain("set aside");
   });
 });

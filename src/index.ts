@@ -1,7 +1,7 @@
 import { backfillClef, clefShadowModel } from "./clef";
 import { summarizeClefComparison } from "./clef-analysis";
 import { generateLatestEdition } from "./generation";
-import { runJev, runJevDirect } from "./jev";
+import { buildJevQuestions, runJev, runJevDirect } from "./jev";
 import { getActiveProfile, getEdition, getSupplementalShadowRun, jevLedgerStats, latestEdition, latestJevReviewShadowRun, latestRunStatus, latestScheduledRunStatus, latestSupplementalShadowRun, listEditions, listJevLabelEvents, listClefScores, listJevLabelEventsForRun, listJevVerdicts, recordJevLabelEvents, recordJevVerdict, scheduledHeartbeat, updateProfile } from "./repository";
 import type { LabelEvent } from "./jev-ledger";
 import type { SupplementalShadowReport } from "./contracts";
@@ -317,7 +317,8 @@ async function api(request: Request, env: Env, url: URL, ctx: ExecutionContext):
     let clef = null;
     try {
       const urls = [...new Set([...reports.values()].flatMap((report) => reviewPool(report).map((item) => item.url)))];
-      clef = summarizeClefComparison(rawEvents, reports, await listClefScores(env.DB, clefShadowModel(env), urls));
+      const questionHash = await jevQuestionFingerprint(buildJevQuestions(await getActiveProfile(env.DB), []));
+      clef = summarizeClefComparison(rawEvents, reports, await listClefScores(env.DB, clefShadowModel(env), urls), { questionHash });
     } catch (caught) {
       console.warn(JSON.stringify({ message: "ai-signal clef comparison unavailable", error: caught instanceof Error ? caught.message : String(caught) }));
     }

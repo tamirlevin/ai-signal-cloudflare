@@ -456,7 +456,8 @@ function clefComparisonHtml(clef) {
   if (!clef) return "Unavailable right now. The rest of this panel is unaffected.";
   const g = clef.gate;
   const left = [g.excluded.unavailable ? `${g.excluded.unavailable} decided labels have no retained run to rebuild from` : "", g.excluded.incompleteCoverage ? `${g.excluded.incompleteCoverage} fall in runs where Clef is missing for part of the pool` : ""].filter(Boolean);
-  const note = left.length ? `<br><span class="muted">Left out: ${escape(left.join("; "))}.</span>` : "";
+  const sample = g.questionHash ? `<br><span class="muted">Counting labels made under question set ${escape(g.questionHash.slice(0, 8))}${g.setAside ? `; ${escape(g.setAside)} decided labels made under other question sets are set aside` : ""}.</span>` : "";
+  const note = (left.length ? `<br><span class="muted">Left out: ${escape(left.join("; "))}.</span>` : "") + sample;
   if (!clef.result) return `<strong>Locked.</strong> Clef's scores are not read or shown until both frames hold ${escape(g.needed)} decided stories: paired disagreements ${escape(g.paired.decided)} of ${escape(g.needed)}, dropped pool ${escape(g.dropped.decided)} of ${escape(g.needed)}. Until then the comparison cannot be tuned while you read it.${note}`;
   const r = clef.result;
   const sep = (label, s) => `${label} ${decimal(s.separation)} (would pick ${escape(s.publishPicked)} of ${escape(s.publish)} publishable, ${escape(s.rejectPicked)} of ${escape(s.reject)} rejected)`;
