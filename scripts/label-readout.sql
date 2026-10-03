@@ -2,8 +2,8 @@
 -- Run against staging, for example:
 --   npx wrangler d1 execute ai-signal-staging --env staging --remote --file scripts/label-readout.sql
 -- These are the queries behind the 2 October 2026 readout in PROJECT_HISTORY.md. They are not the
--- in-app "How Jev is doing" panel; check numbers against it. Add a Clef readout only after the
--- comparison bar in PROJECT_HISTORY.md is met, and do not read Clef results before then.
+-- in-app "How Jev is doing" panel; check numbers against it. The panel's "Clef versus Jev" block is the
+-- gated Clef readout: do not add Clef scores to this script or read them by SQL before it opens.
 --
 -- How to read them: in the gate-only cells the rules picked the story and Jev would not; in the
 -- jev-only cells the reverse. "publish" means the owner would publish it. The rules are right on

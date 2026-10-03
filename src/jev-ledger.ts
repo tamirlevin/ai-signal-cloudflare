@@ -570,7 +570,7 @@ function spearman(left: number[], right: number[]): number | null {
 }
 
 /** Exact two-sided sign test on discordant pairs under a fair coin. */
-function signTest(first: number, second: number): number | null {
+export function signTest(first: number, second: number): number | null {
   const n = first + second;
   if (!n) return null;
   const tail = Math.min(first, second);

@@ -406,6 +406,19 @@ export async function scoredClefUrls(db: D1Database, questionHash: string, model
   return found;
 }
 
+/** Stored Clef reader_wants for these stories, one row per story and question fingerprint. */
+export async function listClefScores(db: D1Database, model: string, urls: string[]): Promise<Array<{ storyUrl: string; questionHash: string; readerWants: number | null }>> {
+  const rows: Array<{ storyUrl: string; questionHash: string; readerWants: number | null }> = [];
+  for (let index = 0; index < urls.length; index += 90) {
+    const chunk = urls.slice(index, index + 90);
+    const marks = chunk.map((_, position) => `?${position + 2}`).join(", ");
+    const result = await db.prepare(`SELECT story_url, question_hash, reader_wants FROM clef_judgments WHERE model = ?1 AND story_url IN (${marks})`)
+      .bind(model, ...chunk).all<{ story_url: string; question_hash: string; reader_wants: number | null }>();
+    for (const row of result.results) rows.push({ storyUrl: row.story_url, questionHash: row.question_hash, readerWants: row.reader_wants });
+  }
+  return rows;
+}
+
 /** Ledger stories with no Clef score yet under this fingerprint, labelled stories first. */
 export async function unscoredClefStories(db: D1Database, questionHash: string, model: string, limit: number): Promise<{ stories: Array<{ storyUrl: string; title: string; summary: string }>; remaining: number }> {
   const missing = "FROM jev_judgments j WHERE j.question_hash = ?1 AND NOT EXISTS (SELECT 1 FROM clef_judgments c WHERE c.story_url = j.story_url AND c.question_hash = j.question_hash AND c.model = ?2)";

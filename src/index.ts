@@ -1,11 +1,12 @@
-import { backfillClef } from "./clef";
+import { backfillClef, clefShadowModel } from "./clef";
+import { summarizeClefComparison } from "./clef-analysis";
 import { generateLatestEdition } from "./generation";
 import { runJev, runJevDirect } from "./jev";
-import { getActiveProfile, getEdition, getSupplementalShadowRun, jevLedgerStats, latestEdition, latestJevReviewShadowRun, latestRunStatus, latestScheduledRunStatus, latestSupplementalShadowRun, listEditions, listJevLabelEvents, listJevLabelEventsForRun, listJevVerdicts, recordJevLabelEvents, recordJevVerdict, scheduledHeartbeat, updateProfile } from "./repository";
+import { getActiveProfile, getEdition, getSupplementalShadowRun, jevLedgerStats, latestEdition, latestJevReviewShadowRun, latestRunStatus, latestScheduledRunStatus, latestSupplementalShadowRun, listEditions, listJevLabelEvents, listClefScores, listJevLabelEventsForRun, listJevVerdicts, recordJevLabelEvents, recordJevVerdict, scheduledHeartbeat, updateProfile } from "./repository";
 import type { LabelEvent } from "./jev-ledger";
 import type { SupplementalShadowReport } from "./contracts";
 import { findJevDisagreements, jevVerdictStats } from "./verdicts";
-import { buildDroppedBatch, buildPairedBatch, enrichEventsWithPicks, jevQuestionFingerprint, summarizeJevLabels, type JevDecision, type ReviewBatch, type ReviewMode } from "./jev-ledger";
+import { buildDroppedBatch, buildPairedBatch, enrichEventsWithPicks, jevQuestionFingerprint, reviewPool, summarizeJevLabels, type JevDecision, type ReviewBatch, type ReviewMode } from "./jev-ledger";
 import { runSupplementalShadow } from "./supplemental";
 import { ValidationError } from "./validation";
 import { listVisits, recordVisit, requestLocation, visitorIdentity, visitorSetCookie } from "./visits";
@@ -304,13 +305,23 @@ async function api(request: Request, env: Env, url: URL, ctx: ExecutionContext):
   if (request.method === "GET" && url.pathname === "/api/jev-analysis") {
     if (!(await isAdmin(request, env))) return error("unauthorized", 401);
     const [rawEvents, ledger] = await Promise.all([listJevLabelEvents(env.DB), jevLedgerStats(env.DB)]);
-    // Labels made before judge picks were recorded get them back from the run's retained report.
+    // Each labelled run's retained report: older labels get their judge picks back from it, and the Clef
+    // comparison rebuilds each run's pool from it. A pruned run is simply absent.
     const reports = new Map<string, SupplementalShadowReport>();
-    for (const runId of new Set(rawEvents.filter((event) => event.kind !== "rank" && event.kind !== "repeat" && !event.snapshotJson.includes('"picks"')).map((event) => event.runId))) {
+    for (const runId of new Set(rawEvents.filter((event) => event.kind !== "rank").map((event) => event.runId))) {
       const shadow = await getSupplementalShadowRun(env.DB, runId);
       if (shadow?.report) reports.set(runId, shadow.report);
     }
-    return json({ analysis: summarizeJevLabels(enrichEventsWithPicks(rawEvents, reports)), ledger });
+    // Isolated: a problem here must never take the main analysis down. The result stays locked, counts only,
+    // until both frames hold enough decided stories (see clef-analysis.ts).
+    let clef = null;
+    try {
+      const urls = [...new Set([...reports.values()].flatMap((report) => reviewPool(report).map((item) => item.url)))];
+      clef = summarizeClefComparison(rawEvents, reports, await listClefScores(env.DB, clefShadowModel(env), urls));
+    } catch (caught) {
+      console.warn(JSON.stringify({ message: "ai-signal clef comparison unavailable", error: caught instanceof Error ? caught.message : String(caught) }));
+    }
+    return json({ analysis: summarizeJevLabels(enrichEventsWithPicks(rawEvents, reports)), ledger, clef });
   }
   if (request.method === "POST" && url.pathname === "/api/jev-verdicts") {
     if (!(await isAdmin(request, env))) return error("unauthorized", 401);

@@ -452,6 +452,18 @@ async function saveJevRanks() {
 function percent(value) { return value === null || value === undefined ? "n/a" : `${Math.round(value * 100)}%`; }
 function decimal(value) { return value === null || value === undefined ? "n/a" : Number(value).toFixed(2); }
 
+function clefComparisonHtml(clef) {
+  if (!clef) return "Unavailable right now. The rest of this panel is unaffected.";
+  const g = clef.gate;
+  const left = [g.excluded.unavailable ? `${g.excluded.unavailable} decided labels have no retained run to rebuild from` : "", g.excluded.incompleteCoverage ? `${g.excluded.incompleteCoverage} fall in runs where Clef is missing for part of the pool` : ""].filter(Boolean);
+  const note = left.length ? `<br><span class="muted">Left out: ${escape(left.join("; "))}.</span>` : "";
+  if (!clef.result) return `<strong>Locked.</strong> Clef's scores are not read or shown until both frames hold ${escape(g.needed)} decided stories: paired disagreements ${escape(g.paired.decided)} of ${escape(g.needed)}, dropped pool ${escape(g.dropped.decided)} of ${escape(g.needed)}. Until then the comparison cannot be tuned while you read it.${note}`;
+  const r = clef.result;
+  const sep = (label, s) => `${label} ${decimal(s.separation)} (would pick ${escape(s.publishPicked)} of ${escape(s.publish)} publishable, ${escape(s.rejectPicked)} of ${escape(s.reject)} rejected)`;
+  const verdict = { "better": "Clef is better than Jev on your labels.", "at-least-as-good": "Clef is at least as good as Jev on your labels.", "not-shown": "Not shown: Clef did not meet the bar." }[r.verdict];
+  return `<strong>${escape(verdict)}</strong><br>Dropped pool, separation (share of publishable stories picked minus share of rejected ones): ${sep("Clef", r.dropped.clef)}; ${sep("Jev", r.dropped.jev)}.<br>Paired sample: on ${escape(r.paired.discordant)} of ${escape(r.paired.stories)} stories where Clef and Jev differ, Clef alone right ${escape(r.paired.clefOnlyRight)}, Jev alone right ${escape(r.paired.jevOnlyRight)}${r.paired.pValue === null ? "" : ` (sign test p ${Number(r.paired.pValue).toFixed(2)})`}.<br><span class="muted">Bar fixed on 2 October 2026 before any Clef score was read. At least as good: separation within 0.10 of Jev's or higher, and not significantly worse on the stories where they differ. Better: also ahead with p below 0.10 on at least 20 of them; a tie is not better. Both judges stay shadow-only.</span>${note}`;
+}
+
 function renderJevAnalysis(data) {
   const a = data.analysis;
   const rate = (estimate) => `${estimate.publish} publish · ${estimate.reject} reject · ${estimate.unsure} unsure (n ${estimate.n})`;
@@ -461,6 +473,7 @@ function renderJevAnalysis(data) {
   app.querySelector("#jev-analysis").innerHTML = `<dl class="jev-analysis-list">
     <dt>Ledger</dt><dd>${escape(data.ledger.judgments)} Jev judgments over ${escape(data.ledger.stories)} stories since ${escape(data.ledger.firstSeenAt ?? "n/a")}. ${escape(a.labelledStories)} stories labelled by you.</dd>
     <dt>Bar</dt><dd><ul class="jev-bar">${bar}</ul><span class="muted">Confirmed by you on 29 September 2026. If you change it, do so before reading results, not after.</span></dd>
+    <dt>Clef versus Jev</dt><dd>${clefComparisonHtml(data.clef)}</dd>
     <dt>Your consistency</dt><dd>${a.consistency.pairs ? `${percent(a.consistency.rate)} same decision on ${escape(a.consistency.pairs)} repeats (${percent(a.consistency.publishAgreementRate)} on publish versus not). No judge can beat this.` : "No repeats yet. They appear in paired samples once a label is three days old."}</dd>
     <dt>Jev versus the rules</dt><dd><strong>Clear disagreements</strong> (distance from Jev's cut at least ${escape(a.headToHead.clearMargin)}): ${h2h(a.headToHead.clear)}<br><strong>All disagreements:</strong> ${h2h(a.headToHead.all)}<br>Rules picked, Jev would drop: ${rate(a.headToHead.all.gateOnly)}<br>Rules dropped, Jev would include: ${rate(a.headToHead.all.jevOnly)}</dd>
     <dt>Three judges, same stories</dt><dd>On ${escape(a.judges.n)} decided paired-sample stories, matching your publish/reject: rules ${escape(a.judges.gateRight)}, Jev ${escape(a.judges.jevRight)}, reranker ${escape(a.judges.rerankerRight)} of the ${escape(a.judges.rerankerN)} it scored.<br>${versus("Jev versus reranker", a.judges.jevVsReranker)}<br>${versus("Jev versus rules", a.judges.jevVsGate)}</dd>
