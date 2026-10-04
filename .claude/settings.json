@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(npm ci)",
+      "Bash(npm run check)",
+      "Bash(npm run dry-run)",
+      "Bash(npx wrangler whoami)",
+      "Bash(npx wrangler deployments list *)",
+      "Bash(npx wrangler versions view *)",
+      "Bash(npx wrangler d1 migrations list *)"
+    ],
+    "ask": [
+      "Bash(npx wrangler deploy)",
+      "Bash(npx wrangler deploy --env *)",
+      "Bash(npx wrangler deploy --strict *)",
+      "Bash(npx wrangler deploy --tag *)",
+      "Bash(wrangler deploy)",
+      "Bash(wrangler deploy --env *)",
+      "Bash(wrangler deploy --strict *)",
+      "Bash(wrangler deploy --tag *)",
+      "Bash(npx wrangler d1 execute *)",
+      "Bash(wrangler d1 execute *)",
+      "Bash(npx wrangler d1 migrations apply *)",
+      "Bash(wrangler d1 migrations apply *)",
+      "Bash(npx wrangler rollback *)",
+      "Bash(wrangler rollback *)",
+      "Bash(npx wrangler versions deploy *)",
+      "Bash(wrangler versions deploy *)",
+      "Bash(git push *)"
+    ],
+    "deny": [
+      "Bash(git push *--force*)",
+      "Bash(git push *-f)",
+      "Bash(git push *-f *)",
+      "Bash(git reset --hard *)",
+      "Bash(git clean *)",
+      "Bash(git branch -D *)",
+      "Bash(npx wrangler secret *)",
+      "Bash(wrangler secret *)",
+      "Bash(npx wrangler delete *)",
+      "Bash(wrangler delete *)",
+      "Bash(npx wrangler d1 delete *)",
+      "Bash(wrangler d1 delete *)",
+      "Bash(npx wrangler d1 time-travel restore *)",
+      "Bash(wrangler d1 time-travel restore *)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/cold-boot.sh",
+            "timeout": 15,
+            "statusMessage": "Reading git state..."
+          }
+        ]
+      }
+    ]
+  }
+}

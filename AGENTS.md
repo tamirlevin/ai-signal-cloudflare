@@ -27,7 +27,7 @@ Before proposing or changing anything:
    uname -sm
    ```
 
-   Fetch `origin` first when network access is available. If it is not, say that the remote reference may be stale. `uname -sm` identifies the working machine; see Working machines below.
+   Fetch `origin` first when network access is available. If it is not, say that the remote reference may be stale. `uname -sm` identifies the working machine; see Working machines below. In Claude Code, `.claude/hooks/cold-boot.sh` prints the machine label, branch, SHA, and Git state at session start. It never fetches, so remote references may be stale and the fetch above still applies.
 3. Preserve dirty or user-owned changes. Never clean, reset, or overwrite them automatically.
 4. For production or current-state questions, use relevant read-only evidence rather than relying on documentation alone. Typical checks are:
 
@@ -92,6 +92,22 @@ Do not smooth over conflicting evidence or convert an unverified inference into 
 - Preserve the architectural guardrails in `PROJECT_HISTORY.md`, especially the deterministic daily story inventory, equal-source candidate pool, 36-hour preference/48-hour normal window with a 72-hour fallback below 10 qualified candidates, no X-only cards, source-bound URLs, no weak padding, preservation of the last good edition, and owner-only guarded republishing.
 - Keep Jev, Clef, and reranker judgments advisory and shadow-only. Admin review labels, ranks, question-set versions, the Jev judgments ledger, and run snapshots are research data; they do not automatically change the selection or publication path.
 - Do not create session transcripts, routine progress logs, or another project-memory file in the repository.
+
+## Governance: allow, ask, block
+
+Four verbs say what an agent may do without a human. They are written here for every agent, Codex included. Claude Code also enforces them through `.claude/settings.json`, so a change to this table needs the same change there.
+
+| Verb | Meaning | In this project |
+| --- | --- | --- |
+| Allow | Runs without asking. | `npm ci`, `npm run check`, `npm run dry-run`, `npx wrangler whoami`, `wrangler deployments list`, `versions view`, `d1 migrations list`, and Git reads. |
+| Ask | Needs a human yes with the exact command in view. | `wrangler deploy` in any environment, `wrangler d1 execute` (a remote read can also be a write), `d1 migrations apply`, `wrangler rollback`, `wrangler versions deploy`, and `git push`. |
+| Block | A human runs it, not an agent. | `git push --force`, `git reset --hard`, `git clean`, `git branch -D`, `wrangler secret`, deleting a Worker or a D1 database, and D1 time-travel restore. |
+| Pre-approved | An ask action the owner has already named in the current request, such as "deploy it to staging". | Approval covers that action only, never the next one. |
+
+- When an action is blocked, hand the exact command and the reason to the owner. Do not look for another form of the same command.
+- Done means evidence. A change is done only when its evidence is recorded where the next session will find it: check output, deployment and version metadata, endpoint and D1 reads, and any pending verification in `PROJECT_HISTORY.md`. Say what could not be verified and record it as pending; never call it done.
+- Stopping or pausing does not undo an action. Record the rollback target before any deploy, and automate only what can be reversed (Git history, the previous Worker version, the preserved last good edition). A production D1 write, a secret change, a republish, or a message to another person is never automatic.
+- Claude Code checks deny rules, then ask, then allow, and the first match wins. A rule matches command text and is a tripwire, not a wall: the same program run another way may not match. The rules above therefore still apply where nothing blocks, and they bind Codex and other tools by this text alone.
 
 ## Verification and release
 
