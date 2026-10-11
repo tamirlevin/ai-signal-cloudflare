@@ -7,6 +7,7 @@ import { DEFAULT_PROFILE } from "../src/contracts";
 import worker from "../src/index";
 import { buildJevQuestions } from "../src/jev";
 import { jevQuestionFingerprint, type JevDecision, type JevLabelKind, type LabelEvent } from "../src/jev-ledger";
+import { getSupplementalShadowRun, recordSupplementalShadowRun } from "../src/repository";
 
 /**
  * One run is twelve stories. The rules select s0..s3 (K = 4). Jev's top 4 by reader_wants is
@@ -246,6 +247,31 @@ describe("Clef comparison endpoint", () => {
     const body = JSON.parse(text) as { clef: unknown; analysis: { labelledStories: number } };
     expect(body.clef).toBeNull();
     expect(body.analysis.labelledStories).toBe(7);
+  });
+
+  it.each(["staging", "production", undefined] as const)("retains comparison evidence past 15 runs only in staging (%s), including failed writes", async (environmentName) => {
+    const { db, hash } = await database(() => true);
+    try {
+      for (const name of STORIES) {
+        db.prepare("INSERT INTO clef_judgments (story_url, question_hash, model, question_set_version, scored_at) VALUES (?1, ?2, 'clef', 'reader-want-v1', '2026-10-02T00:16:00Z')").run(url("run-1", name), hash);
+      }
+      const write = async (index: number) => recordSupplementalShadowRun(d1(db), {
+        trigger: "cron", status: index % 2 ? "failed" : "healthy",
+        startedAt: new Date(Date.parse("2026-10-03T00:00:00Z") + index * 28_800_000).toISOString(), durationMs: 0
+      }, environmentName);
+      for (let index = 0; index < 16; index++) await write(index);
+      const staging = environmentName === "staging";
+      expect(await getSupplementalShadowRun(d1(db), "run-1")).toEqual(staging ? expect.objectContaining({ id: "run-1" }) : null);
+      const { text } = await analysis(db);
+      expect(JSON.parse(text).clef).toMatchObject({
+        gate: { open: false, paired: { decided: staging ? 4 : 0 }, excluded: { unavailable: staging ? 0 : 6 } }, result: null
+      });
+      for (let index = 16; index < 61; index++) await write(index);
+      expect(db.prepare("SELECT COUNT(*) AS n FROM supplemental_shadow_runs").get()).toMatchObject({ n: staging ? 60 : 15 });
+      expect(await getSupplementalShadowRun(d1(db), "run-1")).toBeNull();
+    } finally {
+      db.close();
+    }
   });
 });
 

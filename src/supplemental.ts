@@ -1136,7 +1136,7 @@ export async function runSupplementalShadow(env: Env, trigger: "cron" | "manual"
     const failedSources = report.sources.filter((source) => source.status === "failed").length;
     const degradedSources = report.sources.filter((source) => source.status === "degraded").length;
     const status = failedSources === report.sources.length ? "failed" : failedSources || degradedSources ? "degraded" : "healthy";
-    const runId = await recordSupplementalShadowRun(env.DB, { trigger, status, startedAt, durationMs: Date.now() - started, report });
+    const runId = await recordSupplementalShadowRun(env.DB, { trigger, status, startedAt, durationMs: Date.now() - started, report }, env.ENVIRONMENT);
     if (jev && jevQuestions) await recordJevLedger(env, runId, report, jevQuestions, issueDate);
     if (clefShadowEnabled(env)) {
       const clefTitles = await preTodayPriorTitles(env.DB, issueDate).catch(() => [] as string[]);
@@ -1146,7 +1146,7 @@ export async function runSupplementalShadow(env: Env, trigger: "cron" | "manual"
     return { status, report };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await recordSupplementalShadowRun(env.DB, { trigger, status: "failed", startedAt, durationMs: Date.now() - started, errorCode: "SHADOW_COLLECTION_FAILED", errorMessage: message });
+    await recordSupplementalShadowRun(env.DB, { trigger, status: "failed", startedAt, durationMs: Date.now() - started, errorCode: "SHADOW_COLLECTION_FAILED", errorMessage: message }, env.ENVIRONMENT);
     console.error(JSON.stringify({ message: "ai-signal supplemental shadow failed", error: message }));
     return { status: "failed", error: message };
   }

@@ -209,7 +209,8 @@ export async function recordSupplementalShadowRun(
     report?: SupplementalShadowReport;
     errorCode?: string;
     errorMessage?: string;
-  }
+  },
+  environment: Env["ENVIRONMENT"] = "production"
 ): Promise<string> {
   const finishedAt = new Date().toISOString();
   const id = crypto.randomUUID();
@@ -228,7 +229,9 @@ export async function recordSupplementalShadowRun(
         finishedAt,
         run.durationMs
       ),
-    db.prepare("DELETE FROM supplemental_shadow_runs WHERE id IN (SELECT id FROM supplemental_shadow_runs ORDER BY started_at DESC LIMIT -1 OFFSET 15)")
+    // Staging needs a longer evidence window for blind judge comparisons.
+    db.prepare("DELETE FROM supplemental_shadow_runs WHERE id IN (SELECT id FROM supplemental_shadow_runs ORDER BY started_at DESC LIMIT -1 OFFSET ?1)")
+      .bind(environment === "staging" ? 60 : 15)
   ]);
   return id;
 }

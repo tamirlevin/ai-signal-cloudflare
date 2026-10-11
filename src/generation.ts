@@ -247,7 +247,7 @@ export async function generateLatestEdition(env: Env, trigger: Trigger, options:
     const degradedSources = report.sources.filter((source) => source.status === "degraded").length;
     const sourceStatus = failedSources === report.sources.length ? "failed" : failedSources || degradedSources ? "degraded" : "healthy";
     try {
-      await recordSupplementalShadowRun(env.DB, { trigger, status: sourceStatus, startedAt: supplementalStartedAt, durationMs: Date.now() - supplementalStarted, report });
+      await recordSupplementalShadowRun(env.DB, { trigger, status: sourceStatus, startedAt: supplementalStartedAt, durationMs: Date.now() - supplementalStarted, report }, env.ENVIRONMENT);
     } catch (reportError) {
       console.warn(JSON.stringify({ message: "ai-signal source report could not be stored; publication continues", issueUrl, error: reportError instanceof Error ? reportError.message : String(reportError) }));
     }
