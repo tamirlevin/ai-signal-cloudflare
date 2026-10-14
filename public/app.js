@@ -22,7 +22,7 @@ const rankingTitle = document.querySelector("#ranking-title");
 const rankingContent = document.querySelector("#ranking-content");
 const closeRanking = document.querySelector("#close-ranking");
 const rankingPersonalise = document.querySelector("#ranking-personalise");
-const state = { baseProfile: null, override: null, previewOverride: null, edition: null, historyEditions: null, adminProfile: null, collectionStatus: null, isHistoricalEdition: false, readerView: "hot", rankingItems: new Map(), jevBatch: null };
+const state = { baseProfile: null, override: null, previewOverride: null, edition: null, historyEditions: null, adminProfile: null, collectionStatus: null, isHistoricalEdition: false, readerView: "hot", rankingItems: new Map() };
 const READER_VIEWS = [
   { id: "synthesis", label: "Synthesis" },
   { id: "hot", label: "Hot topics" },
@@ -305,193 +305,38 @@ function visitPanel() {
   return `<section class="visit-panel"><h2>Anonymous visit entries</h2><p class="muted">One entry per anonymous browser per UTC day. Country, region and city are recorded when Cloudflare can provide them. No names, IP addresses, clicks, or reading time are stored.</p><div class="visit-actions"><button class="button secondary" id="load-visits" type="button">Load recent visits</button><p class="visit-total" id="visit-status" aria-live="polite"></p></div><div class="visit-summary" id="visit-summary" hidden></div><div class="visit-list" id="visit-list" hidden></div></section>`;
 }
 
-function jevReviewPanel() {
-  return `<section class="visit-panel"><h2>Jev and taste review</h2><p class="muted">Label the story from its title and summary alone. Nothing any judge said, and no sample group, is shown until you save the batch. A <strong>paired sample</strong> is mostly the stories where the rules and Jev's top picks disagree most clearly, plus a few anchors and repeats (three or more days apart) that measure your own consistency. The <strong>dropped pool</strong> is the stories the rules dropped that you have not judged. A story can be labelled once in each mode: the two modes frame the choice differently (in the dropped pool you know the rules rejected every story), so they are counted separately and never pooled. Nothing here changes an edition.</p><div class="visit-actions"><button class="button secondary" id="load-jev-paired" type="button">Load paired sample</button><button class="button secondary" id="load-jev-dropped" type="button">Load dropped pool</button><p class="visit-total" id="jev-review-status" aria-live="polite"></p></div><div class="visit-summary" id="jev-review-meta" hidden></div><div class="jev-review-list" id="jev-review-list" hidden></div><div class="admin-actions"><button class="button" id="save-jev-labels" type="button" hidden>Save labels</button></div><div id="jev-rank-panel" hidden><h3>Rank your publish choices</h3><p class="muted">1 is strongest. Optional, but it is the only record of order.</p><div id="jev-rank-list"></div><div class="admin-actions"><button class="button" id="save-jev-ranks" type="button">Save ranking</button><button class="button secondary" id="skip-jev-ranks" type="button">Skip ranking</button></div></div><h3>How Jev is doing</h3><div class="visit-actions"><button class="button secondary" id="load-jev-analysis" type="button">Refresh results</button></div><div id="jev-analysis" class="jev-analysis" hidden></div></section>`;
+function judgePanel() {
+  return `<section class="visit-panel"><h2>Judge readout</h2><p class="muted">Clef on Workers AI scores the shadow pool's stories against the same question set the rules see, one call per story. Judgments stay advisory: nothing here changes an edition. Read the score beside the rules' decision to see where the judge and the rules disagree.</p><div class="visit-actions"><button class="button secondary" id="load-judge-latest" type="button">Load latest judge scores</button><p class="visit-total" id="judge-status" aria-live="polite"></p></div><div class="visit-summary" id="judge-summary" hidden></div><div class="judge-list" id="judge-list" hidden></div></section>`;
 }
 
-function renderAdmin(profile) {
-  state.adminProfile = profile;
-  app.innerHTML = `<section class="admin"><div class="banner"><p class="eyebrow">Owner controls</p><h1>AI Signal administration</h1><p>Global profile changes affect future generation only. Browser personalisation remains local and is not shown here.</p></div><div class="admin-panel"><label>Admin token <input id="admin-token" type="password" autocomplete="off"></label><p class="muted">Used only for the request you submit below; it is not stored in the browser.</p>${adminControls(profile)}<div class="admin-actions"><button class="button" id="save-global-profile" type="button">Save global Profile v${profile.version + 1}</button><button class="button secondary" id="run-refresh" type="button">Build today's edition</button><button class="button secondary" id="run-republish" type="button">Republish today's edition (once daily)</button></div><p class="muted">Normal refresh skips today's edition after it has been published. Republish replaces that daily edition so you can test a code or profile change; one successful republish is allowed per Melbourne calendar day.</p><p class="status" id="admin-status" aria-live="polite"></p></div>${jevReviewPanel()}${visitPanel()}</section>`;
-  app.querySelectorAll("[data-admin-weight]").forEach((input) => input.addEventListener("input", () => { input.previousElementSibling.querySelector("output").textContent = weightLabel(Number(input.value)); }));
-  app.querySelector("#admin-story-budget").addEventListener("input", (event) => { app.querySelector("#admin-budget-value").textContent = event.target.value; });
-  app.querySelector("#save-global-profile").addEventListener("click", saveGlobalProfile);
-  app.querySelector("#run-refresh").addEventListener("click", runRefresh);
-  app.querySelector("#run-republish").addEventListener("click", () => runRefresh(true));
-  app.querySelector("#load-visits").addEventListener("click", loadVisits);
-  app.querySelector("#load-jev-paired").addEventListener("click", () => loadJevBatch("paired"));
-  app.querySelector("#load-jev-dropped").addEventListener("click", () => loadJevBatch("dropped"));
-  app.querySelector("#save-jev-labels").addEventListener("click", () => saveJevLabels());
-  app.querySelector("#save-jev-ranks").addEventListener("click", () => saveJevRanks());
-  app.querySelector("#skip-jev-ranks").addEventListener("click", () => { app.querySelector("#jev-rank-panel").hidden = true; setJevStatus("Ranking skipped. Your publish/reject labels are saved."); });
-  app.querySelector("#load-jev-analysis").addEventListener("click", () => loadJevAnalysis());
+function judgeValue(value) { return value === null || value === undefined ? "\u2014" : Number(value).toFixed(2); }
+
+function judgeOutcomeLabel(outcome) {
+  return { selected: "Rules picked", rankedOut: "Ranked out", noUsableEvidence: "No usable evidence", weakProfileFit: "Weak profile fit" }[outcome] ?? outcome;
 }
 
-function globalProfileCandidate() {
-  const profile = structuredClone(state.adminProfile);
-  profile.version += 1;
-  profile.storyBudget = Number(app.querySelector("#admin-story-budget").value);
-  profile.weights.forEach((weight) => { weight.value = Number(app.querySelector(`[data-admin-weight="${CSS.escape(weight.id)}"]`).value); });
-  profile.exceptionalStoryOverride = app.querySelector("#admin-exceptional").checked;
-  profile.safeguards.watchPermissions = app.querySelector("#admin-watch-permissions").checked;
-  profile.safeguards.watchGeography = app.querySelector("#admin-watch-geography").checked;
-  return profile;
-}
-
-function adminToken() { return app.querySelector("#admin-token").value; }
-function setJevStatus(message) { app.querySelector("#jev-review-status").textContent = message; }
-
-function jevScoreLine(assessment) {
-  const value = (number) => number === null || number === undefined ? "—" : Number(number).toFixed(2);
-  const jev = `Jev: reader wants ${value(assessment.readerWants)} · new ${value(assessment.novel)} · substantive ${value(assessment.substantive)} · interest ${assessment.interest ?? "unscored"}`;
-  const reranker = assessment.reranker ? `Reranker: rank ${assessment.reranker.rank ?? "—"} · relevance ${value(assessment.reranker.relevance)} · interest ${assessment.reranker.winningInterest ?? "—"}` : "Reranker unavailable for this story.";
-  const picks = assessment.picks ? `<p>Would pick: rules ${assessment.picks.gate ? "yes" : "no"} · Jev ${assessment.picks.jev ? "yes" : "no"} · reranker ${assessment.picks.reranker ? "yes" : "no"} · distance from Jev's cut ${value(assessment.picks.margin)} (top ${escape(assessment.picks.k)})</p>` : "";
-  return `<p>Rules: ${escape(assessment.gateOutcome)}</p>${picks}<p>${escape(jev)}</p><p>${escape(reranker)}</p>`;
-}
-
-const JEV_KIND_LABELS = {
-  "disagree-gate-only": "Rules picked · Jev would drop",
-  "disagree-jev-only": "Rules dropped · Jev would include",
-  "anchor-both-in": "Both picked",
-  "anchor-both-out": "Both dropped",
-  "repeat": "Repeat of an earlier story",
-  "dropped-pool": "Dropped by the rules"
-};
-
-function jevReviewCard(item, index, saved) {
-  const id = `jev-review-${index}`;
-  const names = (item.sourceNames?.length ? item.sourceNames : item.sourceIds ?? []).join(" · ") || "Source not recorded";
-  const safeUrl = /^https?:\/\//i.test(item.url ?? "") ? item.url : "";
-  const sources = safeUrl ? `<a href="${escape(safeUrl)}" target="_blank" rel="noreferrer">Open source</a>` : "Source link unavailable";
-  const decisions = [["publish", "I would publish"], ["reject", "I would reject"], ["unsure", "Unsure"]];
-  const controls = decisions.map(([value, label]) => `<label><input type="radio" name="${id}-decision" value="${value}" ${item.decision === value ? "checked" : ""} ${saved ? "disabled" : ""}> ${label}</label>`).join("");
-  const group = saved && item.kind ? `<p>Sample group: ${escape(JEV_KIND_LABELS[item.kind] ?? item.kind)}${item.cellPopulation ? ` · drawn ${escape(item.cellSampled)} of ${escape(item.cellPopulation)}` : ""}</p>` : "";
-  const assessment = item.assessment ? `<details class="jev-review-assessment"><summary>Scores and picks (revealed after saving)</summary>${group}${jevScoreLine(item.assessment)}</details>` : "";
-  return `<article class="jev-review-item" data-review-url="${escape(item.url)}"><div class="jev-review-heading"><span class="eyebrow">Story ${index + 1}</span></div><h3>${safeUrl ? `<a href="${escape(safeUrl)}" target="_blank" rel="noreferrer">${escape(item.title)}</a>` : escape(item.title)}</h3><p>${escape(item.summary || "No summary recorded for this story.")}</p><p class="jev-review-source">${escape(names)} · ${escape(item.publishedAt || "Date unavailable")} · ${sources}</p><fieldset class="jev-review-choice"><legend>Would you include this in an edition?</legend>${controls}</fieldset>${assessment}</article>`;
-}
-
-function renderJevBatch(data) {
-  state.jevBatch = data;
-  const meta = app.querySelector("#jev-review-meta");
-  const list = app.querySelector("#jev-review-list");
-  const save = app.querySelector("#save-jev-labels");
-  const saved = data.state === "saved";
-  const pool = data.poolSize === undefined ? "" : ` · pool ${escape(data.poolSize)}, top ${escape(data.jevK)} picked${data.unscoredSelected ? `, ${escape(data.unscoredSelected)} rules-selected unscored by Jev` : ""}${data.mode === "dropped" && data.complete === false ? ", batch is a capped sample" : ""}`;
-  meta.innerHTML = `<strong>${data.items.length} stories</strong> · ${data.mode === "dropped" ? "dropped pool" : "paired sample"} · issue ${escape(data.issueDate)} · profile v${escape(data.profileVersion ?? "unknown")} · source pack ${escape(data.sourcePack?.id ?? "unknown")} v${escape(data.sourcePack?.version ?? "?")} · Jev questions ${escape(data.questionSetVersion)}${pool}${saved ? " · saved" : ""}`;
-  meta.hidden = false;
-  app.querySelector("#jev-rank-panel").hidden = true;
-  if (!data.items.length) {
-    list.innerHTML = `<p class="muted">Nothing left to judge in this run: every eligible story already has your vote.</p>`;
-    save.hidden = true;
-    list.hidden = false;
-    return;
-  }
-  const questionLabels = Object.keys(data.questions ?? {}).map((key) => `<code>${escape(key)}</code>`).join(" · ");
-  list.innerHTML = `<details class="jev-review-questions"><summary>Question set ${escape(data.questionSetVersion)} · ${questionLabels || "labels unavailable"}</summary><pre>${escape(JSON.stringify(data.questions, null, 2))}</pre></details>${data.items.map((item, index) => jevReviewCard(item, index, saved)).join("")}`;
+function renderJudgeReadout(data) {
+  const summary = app.querySelector("#judge-summary");
+  const list = app.querySelector("#judge-list");
+  const scores = data.scores ?? [];
+  setJudgeStatus(`${scores.length} stories scored${data.questionSetVersion ? ` under question set ${escape(data.questionSetVersion)}` : ""}.`);
+  summary.innerHTML = scores.length
+    ? `<p>Generated ${escape(data.generatedAt)}</p><p>Reader wants averages ${judgeValue(scores.reduce((sum, item) => sum + (item.readerWants ?? 0), 0) / scores.length)}; ${scores.filter((item) => item.outcome === "selected").length} of them were picked by the rules.</p>`
+    : "<p>No judge scores in the latest run.</p>";
+  list.innerHTML = scores.map((item) => `<article class="judge-item"><h3>${escape(item.title)}</h3><p class="judge-score"><span>Rules: ${escape(judgeOutcomeLabel(item.outcome))}</span> · <span>Reader wants ${judgeValue(item.readerWants)}</span> · <span>New ${judgeValue(item.novel)}</span> · <span>Substantive ${judgeValue(item.substantive)}</span> · <span>Interest ${escape(item.interest ?? "unscored")}</span></p></article>`).join("");
+  summary.hidden = false;
   list.hidden = false;
-  save.hidden = saved;
-  if (saved && data.mode === "paired") {
-    const publish = data.items.filter((item) => item.decision === "publish" && item.kind !== "repeat");
-    renderJevRankStep(publish.map((item) => ({ url: item.url, title: item.title, rankPosition: item.rankPosition })));
-  }
 }
 
-function renderJevRankStep(rankable) {
-  const panel = app.querySelector("#jev-rank-panel");
-  if (!rankable.length) { panel.hidden = true; return; }
-  const ordered = [...rankable].sort((left, right) => (left.rankPosition ?? 99) - (right.rankPosition ?? 99));
-  app.querySelector("#jev-rank-list").innerHTML = ordered.map((item, index) => `<label class="jev-review-rank-wrap" data-rank-url="${escape(item.url)}"><input class="jev-review-rank" type="number" min="1" max="${ordered.length}" step="1" value="${item.rankPosition ?? index + 1}" aria-label="Rank for ${escape(item.title)}"> ${escape(item.title)}</label>`).join("");
-  panel.hidden = false;
-}
-
-async function loadJevBatch(mode) {
+async function loadJudgeLatest() {
   const token = adminToken();
-  if (!token) { setJevStatus("Enter the admin token first."); return; }
-  setJevStatus("Loading…");
+  if (!token) { setJudgeStatus("Enter the admin token first."); return; }
   try {
-    const data = await request(`/api/jev-review-batch?mode=${encodeURIComponent(mode)}`, { headers: { Authorization: `Bearer ${token}` } });
-    renderJevBatch(data);
-    setJevStatus(data.state === "saved" ? "This run's batch is already saved; showing your labels." : data.items.length ? `${data.items.length} stories loaded. Scores stay folded until you open them.` : "No stories to judge in this run.");
-  } catch (caught) { setJevStatus(caught.message); }
+    renderJudgeReadout(await request("/api/judge-latest", { headers: { Authorization: `Bearer ${token}` } }));
+  } catch (caught) { setJudgeStatus(caught.message); }
 }
 
-async function saveJevLabels() {
-  const token = adminToken();
-  const batch = state.jevBatch;
-  if (!token) { setJevStatus("Enter the admin token first."); return; }
-  if (!batch) return;
-  const labels = [...app.querySelectorAll(".jev-review-item")].map((card) => ({ story_url: card.dataset.reviewUrl, decision: card.querySelector('input[type="radio"]:checked')?.value }));
-  if (labels.some((label) => !label.decision)) { setJevStatus("Choose publish, reject or unsure for every story before saving."); return; }
-  const button = app.querySelector("#save-jev-labels");
-  button.disabled = true;
-  setJevStatus("Saving labels…");
-  try {
-    const result = await request("/api/jev-labels", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ mode: batch.mode, run_id: batch.runId, labels }) });
-    const reloaded = await request(`/api/jev-review-batch?mode=${encodeURIComponent(batch.mode)}&run_id=${encodeURIComponent(batch.runId)}`, { headers: { Authorization: `Bearer ${token}` } });
-    renderJevBatch(reloaded);
-    setJevStatus(`${result.saved} labels saved.${result.rankable?.length ? " Rank your publish choices below, or skip." : ""}`);
-    await loadJevAnalysis();
-  } catch (caught) { setJevStatus(caught.message); }
-  finally { button.disabled = false; }
-}
-
-async function saveJevRanks() {
-  const token = adminToken();
-  const batch = state.jevBatch;
-  if (!token) { setJevStatus("Enter the admin token first."); return; }
-  if (!batch) return;
-  const ranks = [...app.querySelectorAll("#jev-rank-list [data-rank-url]")].map((row) => ({ story_url: row.dataset.rankUrl, rank_position: Number(row.querySelector("input").value) }));
-  const ordered = ranks.map((entry) => entry.rank_position).sort((left, right) => left - right);
-  if (ordered.some((position, index) => !Number.isInteger(position) || position !== index + 1)) { setJevStatus(`Rank with unique numbers from 1 to ${ranks.length}; 1 is strongest.`); return; }
-  try {
-    await request("/api/jev-labels/ranks", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ run_id: batch.runId, ranks }) });
-    setJevStatus("Ranking saved.");
-    await loadJevAnalysis();
-  } catch (caught) { setJevStatus(caught.message); }
-}
-
-function percent(value) { return value === null || value === undefined ? "n/a" : `${Math.round(value * 100)}%`; }
-function decimal(value) { return value === null || value === undefined ? "n/a" : Number(value).toFixed(2); }
-
-function clefComparisonHtml(clef) {
-  if (!clef) return "Unavailable right now. The rest of this panel is unaffected.";
-  const g = clef.gate;
-  const left = [g.excluded.unavailable ? `${g.excluded.unavailable} decided labels have no retained run to rebuild from` : "", g.excluded.incompleteCoverage ? `${g.excluded.incompleteCoverage} fall in runs where Clef is missing for part of the pool` : ""].filter(Boolean);
-  const sample = g.questionHash ? `<br><span class="muted">Counting labels made under question set ${escape(g.questionHash.slice(0, 8))}${g.setAside ? `; ${escape(g.setAside)} decided labels made under other question sets are set aside` : ""}.</span>` : "";
-  const note = (left.length ? `<br><span class="muted">Left out: ${escape(left.join("; "))}.</span>` : "") + sample;
-  if (!clef.result) return `<strong>Locked.</strong> Clef's scores are not read or shown until both frames hold ${escape(g.needed)} decided stories: paired disagreements ${escape(g.paired.decided)} of ${escape(g.needed)}, dropped pool ${escape(g.dropped.decided)} of ${escape(g.needed)}. Until then the comparison cannot be tuned while you read it.${note}`;
-  const r = clef.result;
-  const sep = (label, s) => `${label} ${decimal(s.separation)} (would pick ${escape(s.publishPicked)} of ${escape(s.publish)} publishable, ${escape(s.rejectPicked)} of ${escape(s.reject)} rejected)`;
-  const verdict = { "better": "Clef is better than Jev on your labels.", "at-least-as-good": "Clef is at least as good as Jev on your labels.", "not-shown": "Not shown: Clef did not meet the bar." }[r.verdict];
-  return `<strong>${escape(verdict)}</strong><br>Dropped pool, separation (share of publishable stories picked minus share of rejected ones): ${sep("Clef", r.dropped.clef)}; ${sep("Jev", r.dropped.jev)}.<br>Paired sample: on ${escape(r.paired.discordant)} of ${escape(r.paired.stories)} stories where Clef and Jev differ, Clef alone right ${escape(r.paired.clefOnlyRight)}, Jev alone right ${escape(r.paired.jevOnlyRight)}${r.paired.pValue === null ? "" : ` (sign test p ${Number(r.paired.pValue).toFixed(2)})`}.<br><span class="muted">Bar fixed on 2 October 2026 before any Clef score was read. At least as good: separation within 0.10 of Jev's or higher, and not significantly worse on the stories where they differ. Better: also ahead with p below 0.10 on at least 20 of them; a tie is not better. Both judges stay shadow-only.</span>${note}`;
-}
-
-function renderJevAnalysis(data) {
-  const a = data.analysis;
-  const rate = (estimate) => `${estimate.publish} publish · ${estimate.reject} reject · ${estimate.unsure} unsure (n ${estimate.n})`;
-  const h2h = (block) => block.decided ? `Jev right on ${escape(block.jevRight)} of ${escape(block.decided)} (${percent(block.jevRightShare)}); reading unsure as "would not add": ${percent(block.jevRightShareUnsureAsReject)} of ${escape(block.decidedUnsureAsReject)}.` : "Nothing decided yet.";
-  const versus = (label, c) => c.discordant ? `${label}: differ on ${escape(c.discordant)} stories; the first alone right ${escape(c.firstOnlyRight)}, the second alone right ${escape(c.secondOnlyRight)}${c.pValue === null ? "" : ` (sign test p ${Number(c.pValue).toFixed(2)})`}.` : `${label}: no stories where they differ yet.`;
-  const bar = a.bar.map((item) => `<li><strong>${item.status === "pass" ? "Pass" : item.status === "fail" ? "Fail" : "Not enough data"}</strong> · ${escape(item.label)}<br><span class="muted">${escape(item.detail)}</span></li>`).join("");
-  app.querySelector("#jev-analysis").innerHTML = `<dl class="jev-analysis-list">
-    <dt>Ledger</dt><dd>${escape(data.ledger.judgments)} Jev judgments over ${escape(data.ledger.stories)} stories since ${escape(data.ledger.firstSeenAt ?? "n/a")}. ${escape(a.labelledStories)} stories labelled by you.</dd>
-    <dt>Bar</dt><dd><ul class="jev-bar">${bar}</ul><span class="muted">Confirmed by you on 29 September 2026. If you change it, do so before reading results, not after.</span></dd>
-    <dt>Clef versus Jev</dt><dd>${clefComparisonHtml(data.clef)}</dd>
-    <dt>Your consistency</dt><dd>${a.consistency.pairs ? `${percent(a.consistency.rate)} same decision on ${escape(a.consistency.pairs)} repeats (${percent(a.consistency.publishAgreementRate)} on publish versus not). No judge can beat this.` : "No repeats yet. They appear in paired samples once a label is three days old."}</dd>
-    <dt>Jev versus the rules</dt><dd><strong>Clear disagreements</strong> (distance from Jev's cut at least ${escape(a.headToHead.clearMargin)}): ${h2h(a.headToHead.clear)}<br><strong>All disagreements:</strong> ${h2h(a.headToHead.all)}<br>Rules picked, Jev would drop: ${rate(a.headToHead.all.gateOnly)}<br>Rules dropped, Jev would include: ${rate(a.headToHead.all.jevOnly)}</dd>
-    <dt>Three judges, same stories</dt><dd>On ${escape(a.judges.n)} decided paired-sample stories, matching your publish/reject: rules ${escape(a.judges.gateRight)}, Jev ${escape(a.judges.jevRight)}, reranker ${escape(a.judges.rerankerRight)} of the ${escape(a.judges.rerankerN)} it scored.<br>${versus("Jev versus reranker", a.judges.jevVsReranker)}<br>${versus("Jev versus rules", a.judges.jevVsGate)}</dd>
-    <dt>Anchors</dt><dd>Both picked: ${rate(a.anchors.bothIn)}<br>Both dropped: ${rate(a.anchors.bothOut)}</dd>
-    <dt>What the rules drop</dt><dd>Dropped pool: ${rate(a.droppedPool)}${a.droppedPool.rescuedPerDay === null ? "" : ` · you would rescue about ${decimal(a.droppedPool.rescuedPerDay)} a day over ${escape(a.droppedPool.days)} day(s), a lower bound`}<br>Of those, Jev would have picked ${rate(a.droppedByCell.jevOnly)}; neither would ${rate(a.droppedByCell.bothOut)}</dd>
-    <dt>Ranking quality</dt><dd>reader_wants AUC ${decimal(a.ranking.readerWantsAuc)} · reranker (raw score) AUC ${decimal(a.ranking.rerankerAuc)} (n ${escape(a.ranking.n)}; the sample is skewed toward disagreements, so use these to compare judges, not as absolute accuracy) · rank correlation ${decimal(a.ranking.meanRankCorrelation)} over ${escape(a.ranking.rankRuns)} run(s)</dd>
-  </dl>`;
-  app.querySelector("#jev-analysis").hidden = false;
-}
-
-async function loadJevAnalysis() {
-  const token = adminToken();
-  if (!token) { setJevStatus("Enter the admin token first."); return; }
-  try {
-    renderJevAnalysis(await request("/api/jev-analysis", { headers: { Authorization: `Bearer ${token}` } }));
-  } catch (caught) { setJevStatus(caught.message); }
-}
+function setJudgeStatus(message) { app.querySelector("#judge-status").textContent = message; }
 
 function setAdminStatus(message) { app.querySelector("#admin-status").textContent = message; }
 function clearAdminToken() { app.querySelector("#admin-token").value = ""; }

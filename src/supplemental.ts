@@ -17,10 +17,9 @@ import type {
 } from "./contracts";
 import { categoryForProfile, compactIssueInventory, isPermissionDesignSignal, scoreCandidateForProfile } from "./editorial";
 import { fetchLatestRss } from "./rss";
-import { getActiveProfile, getEdition, latestEdition, listEditions, melbourneCalendarDay, recordJevJudgments, recordSupplementalShadowRun } from "./repository";
+import { getActiveProfile, getEdition, latestEdition, listEditions, melbourneCalendarDay, recordSupplementalShadowRun } from "./repository";
 import { clefShadowEnabled, runClefShadow } from "./clef";
-import { buildJudgmentRows, jevQuestionFingerprint } from "./jev-ledger";
-import { buildJevQuestions, JEV_QUESTION_SET_VERSION, jevShadowEnabled, MAX_JEV_TEXTS, scoreJevShadow, type JevQuestion, type JevShadowScores } from "./jev";
+import { buildJudgeQuestions, judgeQuestionFingerprint, JUDGE_QUESTION_SET_VERSION, MAX_JUDGE_TEXTS, type JudgeAnswers, type JudgeScores } from "./judge";
 import { getSourcePack } from "./source-packs";
 import { attachTriageScores, rankTriageScores, scoreTriage, triageShadowEnabled, type TriageScores } from "./triage";
 
@@ -985,8 +984,8 @@ export function buildDailySourceReport(input: {
   generatedAt: string;
   profile: Profile;
   triage?: Map<string, TriageScores>;
-  jev?: Map<string, JevShadowScores>;
-  jevQuestions?: Record<string, JevQuestion>;
+  judge?: Map<string, JudgeScores>;
+  judgeQuestions?: JudgeAnswers;
 }): SupplementalShadowReport {
   const allCandidates = input.sourceResults.flatMap((result) => result.candidates);
   const selected = input.inventory.candidates.map((candidate): SupplementalShadowReport["wouldAdd"][number] => ({
@@ -1008,9 +1007,9 @@ export function buildDailySourceReport(input: {
       return { ...item, relevance: scores?.relevance ?? null, rawRelevance: scores?.raw ?? null, winningInterest: scores?.winningInterest ?? null, novelty: scores?.novelty ?? null };
     }))
     : undefined;
-  const jevScores = input.jev?.size
-    ? input.inventory.evaluated.slice(0, MAX_JEV_TEXTS).map((item) => {
-      const scores = input.jev!.get(item.url);
+  const judgeScores = input.judge?.size
+    ? input.inventory.evaluated.slice(0, MAX_JUDGE_TEXTS).map((item) => {
+      const scores = input.judge!.get(item.url);
       return { url: item.url, title: item.title.slice(0, 300), summary: item.summary.slice(0, 600), publishedAt: item.publishedAt, sourceIds: item.sourceIds, interest: scores?.interest ?? null, interestConfidence: scores?.interestConfidence ?? null, novel: scores?.novel ?? null, substantive: scores?.substantive ?? null, readerWants: scores?.readerWants ?? null, outcome: item.outcome };
     })
     : undefined;
@@ -1023,7 +1022,7 @@ export function buildDailySourceReport(input: {
     mode: "daily-pool",
     generatedAt: input.generatedAt,
     profileVersion: input.profile.version,
-    ...(jevScores && input.jevQuestions ? { jevQuestionSetVersion: JEV_QUESTION_SET_VERSION, jevQuestions: input.jevQuestions } : {}),
+    ...(judgeScores && input.judgeQuestions ? { judgeQuestionSetVersion: JUDGE_QUESTION_SET_VERSION, judgeQuestions: input.judgeQuestions } : {}),
     baseIssue: { url: input.issue.url, issueDate: input.issue.issueDate, publicationDate: input.issue.publicationDate },
     sourcePack: { id: pack.id, version: pack.version },
     limits: { modelCandidates: 18, publishedStories: 14 },
@@ -1050,7 +1049,7 @@ export function buildDailySourceReport(input: {
     wouldAdd: selected,
     selectedForBlend: selected,
     ...(triageScores ? { triageScores } : {}),
-    ...(jevScores ? { jevScores } : {})
+    ...(judgeScores ? { judgeScores } : {})
   };
 }
 
@@ -1071,7 +1070,7 @@ export async function collectSupplementalShadow(input: { rssUrl: string; profile
   return buildDailySourceReport({ issue, sourceResults, inventory, generatedAt: now.toISOString(), profile: input.profile });
 }
 
-/** Titles from the latest edition before today, so Jev novelty is judged on the
+/** Titles from the latest edition before today, so the judge's novelty question is judged on the
  *  right timescale instead of the same-day republish loop. */
 export async function preTodayPriorTitles(db: D1Database, today: string): Promise<string[]> {
   const latest = await latestEdition(db).catch(() => null);
@@ -1081,22 +1080,6 @@ export async function preTodayPriorTitles(db: D1Database, today: string): Promis
   if (!previous) return latest ? latest.signals.map((signal) => `${signal.title} — ${signal.summary}`) : [];
   const full = await getEdition(db, previous.issueDate).catch(() => null);
   return full ? full.signals.map((signal) => `${signal.title} — ${signal.summary}`) : [];
-}
-
-/** Best-effort: the ledger is research data, so a failure here never fails the shadow run. */
-async function recordJevLedger(env: Env, runId: string, report: SupplementalShadowReport, questions: Record<string, JevQuestion>, issueDate: string): Promise<void> {
-  try {
-    const live = await latestEdition(env.DB).catch(() => null);
-    const publishedUrls = new Set<string>();
-    if (live && live.issueDate === issueDate) {
-      for (const signal of live.signals) publishedUrls.add(signal.url);
-      for (const topic of live.hotTopics) for (const source of topic.sources) publishedUrls.add(source.url);
-    }
-    const rows = buildJudgmentRows({ runId, report, questionHash: await jevQuestionFingerprint(questions), publishedUrls, seenAt: new Date().toISOString() });
-    await recordJevJudgments(env.DB, rows);
-  } catch (error) {
-    console.warn(JSON.stringify({ message: "ai-signal jev ledger write skipped", runId, error: error instanceof Error ? error.message : String(error) }));
-  }
 }
 
 export async function runSupplementalShadow(env: Env, trigger: "cron" | "manual" | "local-scheduled"): Promise<{ status: "healthy" | "degraded" | "failed"; report?: SupplementalShadowReport; error?: string }> {
@@ -1122,25 +1105,20 @@ export async function runSupplementalShadow(env: Env, trigger: "cron" | "manual"
       const priorTexts = prior ? prior.signals.map((signal) => `${signal.title} — ${signal.summary}`) : [];
       triage = await scoreTriage(env.AI, profile, inventory.evaluated, priorTexts);
     }
-    let jev: Map<string, JevShadowScores> | undefined;
-    let jevQuestions: Record<string, JevQuestion> | undefined;
-    const jevKey = (env as Env & { TYPESAFE_API_KEY?: string }).TYPESAFE_API_KEY;
-    if (jevShadowEnabled(env) && jevKey) {
+    let judge: Map<string, JudgeScores> | undefined;
+    let judgeQuestions: JudgeAnswers | undefined;
+    if (clefShadowEnabled(env)) {
       const priorTitles = await preTodayPriorTitles(env.DB, issueDate).catch(() => [] as string[]);
-      jevQuestions = buildJevQuestions(profile, priorTitles);
-      jev = await scoreJevShadow(jevKey, profile, inventory.evaluated, priorTitles, fetch, jevQuestions);
-      console.log(JSON.stringify({ message: "ai-signal jev shadow completed", issueUrl: issue.url, scored: jev.size, pool: inventory.evaluated.length }));
+      judgeQuestions = buildJudgeQuestions(profile, priorTitles);
     }
-    const report = buildDailySourceReport({ issue, sourceResults, inventory, generatedAt: new Date().toISOString(), profile, triage, jev, jevQuestions });
+    const report = buildDailySourceReport({ issue, sourceResults, inventory, generatedAt: new Date().toISOString(), profile, triage, judge, judgeQuestions });
     if (triage?.size) attachTriageScores(report, triage);
     const failedSources = report.sources.filter((source) => source.status === "failed").length;
     const degradedSources = report.sources.filter((source) => source.status === "degraded").length;
     const status = failedSources === report.sources.length ? "failed" : failedSources || degradedSources ? "degraded" : "healthy";
     const runId = await recordSupplementalShadowRun(env.DB, { trigger, status, startedAt, durationMs: Date.now() - started, report }, env.ENVIRONMENT);
-    if (jev && jevQuestions) await recordJevLedger(env, runId, report, jevQuestions, issueDate);
-    if (clefShadowEnabled(env)) {
-      const clefTitles = await preTodayPriorTitles(env.DB, issueDate).catch(() => [] as string[]);
-      await runClefShadow(env, { items: inventory.evaluated, questions: jevQuestions ?? buildJevQuestions(profile, clefTitles), runId });
+    if (clefShadowEnabled(env) && judgeQuestions) {
+      await runClefShadow(env, { items: inventory.evaluated, questions: judgeQuestions, runId });
     }
     console.log(JSON.stringify({ message: "ai-signal supplemental shadow completed", status, baseIssue: report.baseIssue.url, totals: report.totals }));
     return { status, report };

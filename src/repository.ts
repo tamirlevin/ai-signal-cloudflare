@@ -3,8 +3,6 @@ import { DEFAULT_PROFILE } from "./contracts";
 import { ModelJsonError, ModelOutputTruncatedError } from "./editorial";
 import { normalizeEditionStories } from "./story-normalization";
 import { synthesisNeedsRepair, ValidationError, validateEdition, validateProfile } from "./validation";
-import type { JevVerdictRow } from "./verdicts";
-import type { JudgmentRow, LabelEvent } from "./jev-ledger";
 
 type EditionRow = {
   id: string;
@@ -279,100 +277,6 @@ export async function getSupplementalShadowRun(db: D1Database, runId: string): P
   return row ? supplementalShadowFromRow(row) : null;
 }
 
-/** Returns the newest retained run that has a versioned Jev question snapshot. */
-export async function latestJevReviewShadowRun(db: D1Database): Promise<SupplementalShadowRun | null> {
-  const result = await db.prepare(`SELECT ${SUPPLEMENTAL_SHADOW_COLUMNS} FROM supplemental_shadow_runs WHERE report_json IS NOT NULL ORDER BY started_at DESC LIMIT 15`).all<SupplementalShadowDbRow>();
-  for (const row of result.results) {
-    const shadow = supplementalShadowFromRow(row);
-    if (shadow.report?.jevQuestionSetVersion && shadow.report.jevQuestions) return shadow;
-  }
-  return null;
-}
-
-export function errorCode(error: unknown): string {
-  if (error instanceof ValidationError) return "VALIDATION_FAILED";
-  if (error instanceof ModelOutputTruncatedError) return "MODEL_OUTPUT_TRUNCATED";
-  if (error instanceof SyntaxError || error instanceof ModelJsonError) return "MODEL_JSON_INVALID";
-  if (error instanceof Error && /(?:3007|3046|request timeout|timed out)/i.test(error.message)) return "MODEL_TIMEOUT";
-  return "GENERATION_FAILED";
-}
-
-type JevVerdictDbRow = {
-  story_url: string;
-  story_title: string;
-  issue_date: string;
-  reranker_relevance: number | null;
-  reranker_rank: number | null;
-  reranker_interest: string | null;
-  jev_interest: string | null;
-  jev_interest_confidence: number | null;
-  jev_novel: number | null;
-  jev_substantive: number | null;
-  jev_reader_wants: number | null;
-  jev_recommendation: "publish" | "reject";
-  jev_confident: number;
-  gate_outcome: string;
-  verdict: 1 | -1;
-  created_at: string;
-  updated_at: string;
-};
-
-function toVerdictRow(row: JevVerdictDbRow): JevVerdictRow {
-  return {
-    storyUrl: row.story_url,
-    storyTitle: row.story_title,
-    issueDate: row.issue_date,
-    rerankerRelevance: row.reranker_relevance,
-    rerankerRank: row.reranker_rank,
-    rerankerInterest: row.reranker_interest,
-    jevInterest: row.jev_interest,
-    jevInterestConfidence: row.jev_interest_confidence,
-    jevNovel: row.jev_novel,
-    jevSubstantive: row.jev_substantive,
-    jevReaderWants: row.jev_reader_wants,
-    jevRecommendation: row.jev_recommendation,
-    jevConfident: row.jev_confident === 1,
-    gateOutcome: row.gate_outcome,
-    verdict: row.verdict,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at
-  };
-}
-
-/** Owner verdict on one Jev/gate disagreement, snapshotted so later code or
- *  pack changes cannot rewrite history. Re-verdicting overwrites. */
-export async function recordJevVerdict(db: D1Database, row: Omit<JevVerdictRow, "createdAt" | "updatedAt">): Promise<void> {
-  const now = new Date().toISOString();
-  await db.prepare("INSERT INTO jev_verdicts (story_url, story_title, issue_date, reranker_relevance, reranker_rank, reranker_interest, jev_interest, jev_interest_confidence, jev_novel, jev_substantive, jev_reader_wants, jev_recommendation, jev_confident, gate_outcome, verdict, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17) ON CONFLICT(story_url) DO UPDATE SET story_title = excluded.story_title, issue_date = excluded.issue_date, reranker_relevance = excluded.reranker_relevance, reranker_rank = excluded.reranker_rank, reranker_interest = excluded.reranker_interest, jev_interest = excluded.jev_interest, jev_interest_confidence = excluded.jev_interest_confidence, jev_novel = excluded.jev_novel, jev_substantive = excluded.jev_substantive, jev_reader_wants = excluded.jev_reader_wants, jev_recommendation = excluded.jev_recommendation, jev_confident = excluded.jev_confident, gate_outcome = excluded.gate_outcome, verdict = excluded.verdict, updated_at = excluded.updated_at")
-    .bind(row.storyUrl, row.storyTitle, row.issueDate, row.rerankerRelevance, row.rerankerRank, row.rerankerInterest, row.jevInterest, row.jevInterestConfidence, row.jevNovel, row.jevSubstantive, row.jevReaderWants, row.jevRecommendation, row.jevConfident ? 1 : 0, row.gateOutcome, row.verdict, now, now)
-    .run();
-}
-
-export async function listJevVerdicts(db: D1Database): Promise<JevVerdictRow[]> {
-  const result = await db.prepare("SELECT story_url, story_title, issue_date, reranker_relevance, reranker_rank, reranker_interest, jev_interest, jev_interest_confidence, jev_novel, jev_substantive, jev_reader_wants, jev_recommendation, jev_confident, gate_outcome, verdict, created_at, updated_at FROM jev_verdicts ORDER BY updated_at DESC").all<JevVerdictDbRow>();
-  return result.results.map(toVerdictRow);
-}
-
-/**
- * Records one shadow run's Jev scores in the durable ledger. The first non-null score per
- * question fingerprint is kept; later sightings only refresh the gate outcome and flags.
- */
-export async function recordJevJudgments(db: D1Database, rows: JudgmentRow[]): Promise<void> {
-  if (!rows.length) return;
-  const statement = "INSERT INTO jev_judgments (story_url, question_hash, question_set_version, title, summary, published_at, source_ids_json, first_run_id, issue_date, first_seen_at, last_seen_at, times_seen, interest, interest_confidence, novel, substantive, reader_wants, reranker_relevance, reranker_raw, reranker_rank, reranker_interest, gate_outcome, ever_selected, ever_published, profile_version, source_pack_id, source_pack_version) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10, 1, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25) "
-    + "ON CONFLICT(story_url, question_hash) DO UPDATE SET last_seen_at = excluded.last_seen_at, times_seen = jev_judgments.times_seen + 1, gate_outcome = excluded.gate_outcome, "
-    + "ever_selected = MAX(jev_judgments.ever_selected, excluded.ever_selected), ever_published = MAX(jev_judgments.ever_published, excluded.ever_published), "
-    + "interest = COALESCE(jev_judgments.interest, excluded.interest), interest_confidence = COALESCE(jev_judgments.interest_confidence, excluded.interest_confidence), "
-    + "novel = COALESCE(jev_judgments.novel, excluded.novel), substantive = COALESCE(jev_judgments.substantive, excluded.substantive), reader_wants = COALESCE(jev_judgments.reader_wants, excluded.reader_wants), "
-    + "reranker_relevance = COALESCE(jev_judgments.reranker_relevance, excluded.reranker_relevance), reranker_raw = COALESCE(jev_judgments.reranker_raw, excluded.reranker_raw), "
-    + "reranker_rank = COALESCE(jev_judgments.reranker_rank, excluded.reranker_rank), reranker_interest = COALESCE(jev_judgments.reranker_interest, excluded.reranker_interest)";
-  await db.batch(rows.map((row) => db.prepare(statement).bind(
-    row.storyUrl, row.questionHash, row.questionSetVersion, row.title, row.summary, row.publishedAt, row.sourceIdsJson, row.firstRunId, row.issueDate, row.seenAt,
-    row.interest, row.interestConfidence, row.novel, row.substantive, row.readerWants, row.rerankerRelevance, row.rerankerRaw, row.rerankerRank, row.rerankerInterest,
-    row.gateOutcome, row.selected ? 1 : 0, row.published ? 1 : 0, row.profileVersion, row.sourcePackId, row.sourcePackVersion
-  )));
-}
-
 export type ClefJudgmentRow = {
   storyUrl: string;
   questionHash: string;
@@ -386,6 +290,14 @@ export type ClefJudgmentRow = {
   substantive: number | null;
   readerWants: number | null;
 };
+
+export function errorCode(error: unknown): string {
+  if (error instanceof ValidationError) return "VALIDATION_FAILED";
+  if (error instanceof ModelOutputTruncatedError) return "MODEL_OUTPUT_TRUNCATED";
+  if (error instanceof SyntaxError || error instanceof ModelJsonError) return "MODEL_JSON_INVALID";
+  if (error instanceof Error && /(?:3007|3046|request timeout|timed out)/i.test(error.message)) return "MODEL_TIMEOUT";
+  return "GENERATION_FAILED";
+}
 
 /** Records Clef scores. The first score per story, question fingerprint and model is kept. */
 export async function recordClefJudgments(db: D1Database, rows: ClefJudgmentRow[]): Promise<void> {
@@ -429,79 +341,4 @@ export async function unscoredClefStories(db: D1Database, questionHash: string, 
     .bind(questionHash, model, limit).all<{ story_url: string; title: string; summary: string }>();
   const total = await db.prepare(`SELECT COUNT(*) AS n ${missing}`).bind(questionHash, model).first<{ n: number }>();
   return { stories: rows.results.map((row) => ({ storyUrl: row.story_url, title: row.title, summary: row.summary })), remaining: total?.n ?? 0 };
-}
-
-export async function jevLedgerStats(db: D1Database): Promise<{ judgments: number; stories: number; withReaderWants: number; firstSeenAt: string | null }> {
-  const row = await db.prepare("SELECT COUNT(*) AS judgments, COUNT(DISTINCT story_url) AS stories, SUM(CASE WHEN reader_wants IS NOT NULL THEN 1 ELSE 0 END) AS with_wants, MIN(first_seen_at) AS first_seen FROM jev_judgments")
-    .first<{ judgments: number; stories: number; with_wants: number | null; first_seen: string | null }>();
-  return { judgments: row?.judgments ?? 0, stories: row?.stories ?? 0, withReaderWants: row?.with_wants ?? 0, firstSeenAt: row?.first_seen ?? null };
-}
-
-type JevLabelEventDbRow = {
-  id: number;
-  story_url: string;
-  question_hash: string;
-  question_set_version: string;
-  run_id: string;
-  issue_date: string;
-  kind: LabelEvent["kind"];
-  decision: LabelEvent["decision"];
-  rank_position: number | null;
-  cell_population: number | null;
-  cell_sampled: number | null;
-  pool_size: number | null;
-  jev_k: number | null;
-  snapshot_json: string;
-  created_at: string;
-};
-
-const LABEL_EVENT_COLUMNS = "id, story_url, question_hash, question_set_version, run_id, issue_date, kind, decision, rank_position, cell_population, cell_sampled, pool_size, jev_k, snapshot_json, created_at";
-
-function toLabelEvent(row: JevLabelEventDbRow): LabelEvent {
-  return {
-    id: row.id,
-    storyUrl: row.story_url,
-    questionHash: row.question_hash,
-    questionSetVersion: row.question_set_version,
-    runId: row.run_id,
-    issueDate: row.issue_date,
-    kind: row.kind,
-    decision: row.decision,
-    rankPosition: row.rank_position,
-    cellPopulation: row.cell_population,
-    cellSampled: row.cell_sampled,
-    poolSize: row.pool_size,
-    jevK: row.jev_k,
-    snapshotJson: row.snapshot_json,
-    createdAt: row.created_at
-  };
-}
-
-/** Every label event, oldest first, so the first vote per story is stable. */
-export async function listJevLabelEvents(db: D1Database): Promise<LabelEvent[]> {
-  const result = await db.prepare(`SELECT ${LABEL_EVENT_COLUMNS} FROM jev_label_events ORDER BY id ASC`).all<JevLabelEventDbRow>();
-  return result.results.map(toLabelEvent);
-}
-
-export async function listJevLabelEventsForRun(db: D1Database, runId: string): Promise<LabelEvent[]> {
-  const result = await db.prepare(`SELECT ${LABEL_EVENT_COLUMNS} FROM jev_label_events WHERE run_id = ?1 ORDER BY id ASC`).bind(runId).all<JevLabelEventDbRow>();
-  return result.results.map(toLabelEvent);
-}
-
-export type NewLabelEvent = Omit<LabelEvent, "id" | "createdAt"> & { profileVersion: number | null; sourcePackId: string | null; sourcePackVersion: number | null };
-
-/**
- * Appends label events. Events are never edited; a changed mind is a new event. A vote or
- * repeat is skipped when the same run already holds one for that story and kind, so two
- * open tabs saving the same batch cannot double-count it. Rank events may repeat.
- */
-export async function recordJevLabelEvents(db: D1Database, events: NewLabelEvent[]): Promise<void> {
-  if (!events.length) return;
-  const now = new Date().toISOString();
-  const columns = "story_url, question_hash, question_set_version, run_id, issue_date, kind, decision, rank_position, cell_population, cell_sampled, pool_size, jev_k, profile_version, source_pack_id, source_pack_version, snapshot_json, created_at";
-  const placeholders = "?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17";
-  const insert = `INSERT INTO jev_label_events (${columns}) VALUES (${placeholders})`;
-  const guarded = `INSERT INTO jev_label_events (${columns}) SELECT ${placeholders} WHERE NOT EXISTS (SELECT 1 FROM jev_label_events WHERE run_id = ?4 AND story_url = ?1 AND kind = ?6)`;
-  await db.batch(events.map((event) => db.prepare(event.kind === "rank" ? insert : guarded)
-    .bind(event.storyUrl, event.questionHash, event.questionSetVersion, event.runId, event.issueDate, event.kind, event.decision, event.rankPosition, event.cellPopulation, event.cellSampled, event.poolSize, event.jevK, event.profileVersion, event.sourcePackId, event.sourcePackVersion, event.snapshotJson, now)));
 }

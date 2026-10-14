@@ -3,8 +3,8 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it, vi } from "vitest";
 import { backfillClef, CLEF_MODELS, clefQuestions, clefShadowEnabled, clefShadowModel, runClefShadow, scoreClef } from "../src/clef";
 import { DEFAULT_PROFILE } from "../src/contracts";
-import { buildJevQuestions } from "../src/jev";
-import { jevQuestionFingerprint } from "../src/jev-ledger";
+import { buildJudgeQuestions, judgeQuestionFingerprint, JUDGE_QUESTION_SET_VERSION } from "../src/judge";
+
 import worker from "../src/index";
 import { recordClefJudgments, scoredClefUrls, unscoredClefStories, type ClefJudgmentRow } from "../src/repository";
 import { sqlite } from "./sqlite";
@@ -45,7 +45,7 @@ function database(): DatabaseSync {
   return db;
 }
 
-const questions = buildJevQuestions(DEFAULT_PROFILE, []);
+const questions = buildJudgeQuestions(DEFAULT_PROFILE, []);
 
 function addLedger(db: DatabaseSync, url: string, hash: string, seen = "2026-10-01T00:00:00Z") {
   db.prepare("INSERT INTO jev_judgments (story_url, question_hash, question_set_version, title, summary, first_run_id, issue_date, first_seen_at, last_seen_at, gate_outcome) VALUES (?1, ?2, 'reader-want-v1', ?3, ?4, 'run-1', '2026-10-01', ?5, ?5, 'selected')")
@@ -91,7 +91,7 @@ describe("clef shadow configuration", () => {
 
 describe("clef scoring", () => {
   it("stringifies structured instructions but leaves strings, criteria and the original set alone", () => {
-    const original = buildJevQuestions(DEFAULT_PROFILE, ["Earlier story"]);
+    const original = buildJudgeQuestions(DEFAULT_PROFILE, ["Earlier story"]);
     const copy = JSON.parse(JSON.stringify(original));
     const sent = clefQuestions(original);
     expect(Object.values(sent).every((question) => typeof question.instructions === "string")).toBe(true);
@@ -163,7 +163,7 @@ describe("clef storage", () => {
 describe("clef shadow run", () => {
   it("scores only stories that are not yet scored and records the run id", async () => {
     const db = database();
-    const hash = await jevQuestionFingerprint(questions);
+    const hash = await judgeQuestionFingerprint(questions);
     await recordClefJudgments(d1(db), [row("https://example.com/a", "clef", hash)]);
     const ai = { run: vi.fn(async () => clefAnswer(0.6)) };
     await runClefShadow({ DB: d1(db), AI: ai } as unknown as Env, { items, questions, runId: "run-9" });
@@ -191,7 +191,7 @@ describe("clef shadow run", () => {
 describe("clef backfill", () => {
   it("scores ledger stories under the current question fingerprint and reports what remains", async () => {
     const db = database();
-    const hash = await jevQuestionFingerprint(buildJevQuestions(DEFAULT_PROFILE, []));
+    const hash = await judgeQuestionFingerprint(buildJudgeQuestions(DEFAULT_PROFILE, []));
     addLedger(db, "https://example.com/a", hash);
     addLedger(db, "https://example.com/b", hash);
     addLedger(db, "https://example.com/c", hash);

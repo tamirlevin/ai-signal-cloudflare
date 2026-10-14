@@ -9,7 +9,7 @@ Treat chat history, handoffs, summaries, and agent memory as disposable hints un
 ## Branches and environments
 
 - `main` is production. It deploys to `signal.tamirlevin.dev` and is the stable baseline; experiment work does not change it, and anything reaches it only by merging under the release rules below.
-- `feature/mts-lane` is an experiment, deployed only to staging (`testsignal.tamirlevin.dev`). It tests whether introducing a judge (Jev and the Workers AI reranker) into candidate selection helps at all compared with the deterministic rules; a null or negative result is a valid outcome. It also carries the unmerged MTS Situations and AI Brief source lanes and the candidate-coverage gate that came with that work.
+- `feature/mts-lane` is an experiment, deployed only to staging (`testsignal.tamirlevin.dev`). It tests whether a judge (Clef on Workers AI, and the reranker) adds anything to candidate selection compared with the deterministic rules; a null or negative result is a valid outcome. It also carries the unmerged MTS Situations and AI Brief source lanes and the candidate-coverage gate that came with that work.
 
 ## Required cold boot
 
@@ -45,15 +45,16 @@ Before proposing or changing anything:
 
 ## Working machines
 
-The owner works on three known machines, and this repository may be run from any of them. None is the default; the owner chooses where to work as needed.
+The owner works on four known machines, and this repository may be run from any of them. None is the default; the owner chooses where to work as needed.
 
 | Label | Identify it with | Notes |
 | --- | --- | --- |
-| `intel-mac` | `uname -sm` reports `Darwin x86_64` | The earlier default. |
+| `intel-mac` | `uname -sm` reports `Darwin x86_64` | The earlier default; a 2020 27-inch iMac. |
 | `m2-mac` | `uname -sm` reports `Darwin arm64` | Normally Tuesdays and Wednesdays in the office. A terminal running under Rosetta reports `x86_64`; if in doubt, run `sysctl -n machdep.cpu.brand_string`. |
+| `dfp-mac-tamir` | `uname -sm` reports `Darwin arm64` and `hostname` reports `DFP-MAC-TAMIR.local` | Added 14 October 2026 at the owner's instruction. |
 | `omarchy` | `uname -sm` reports `Linux aarch64` and `hostname` reports `omarchy-mbp` | Arch Linux ARM running Omarchy. |
 
-Use these lowercase labels wherever a machine is recorded. A cloud agent session also reports `Linux`, so `uname -sm` alone cannot separate it from `omarchy`; check `hostname`. A machine that matches none of the three is treated as a cloud session or an unknown machine: ask the owner rather than assume, and do not use a label for it.
+Use these lowercase labels wherever a machine is recorded. A cloud agent session also reports `Linux`, so `uname -sm` alone cannot separate it from `omarchy`; check `hostname`. A machine that matches none of these is treated as a cloud session or an unknown machine: ask the owner rather than assume, and do not use a label for it. Two arm64 Macs therefore exist and are separated by hostname alone, so record the hostname alongside the label whenever an arm64 machine is used.
 
 **Session types.** A desktop (local) session needs a folder the owner chooses (use the non-synced clone) and may use a git worktree under `.claude/worktrees/`. A cloud session works from a fresh clone of GitHub, so push first; it has no Wrangler login. The Cloudflare connector, when enabled, gives read-only inspection of D1 through `d1_database_query` (SELECT only, never a write) of staging `ai-signal-staging` (`d1d32bf8-9edf-463a-b151-8ea54abc2e4d`) and production `ai-signal` (`376a852a-26db-4d2d-983c-b872b3361372`), plus Cloudflare documentation search; it has no deploy tool. Public endpoints and some documentation hosts may be blocked by the environment's network allowlist. Deploys, migrations, and secrets are the owner's steps from a known machine with a confirmed Wrangler login.
 
@@ -65,7 +66,7 @@ In a local session, identify the machine as above and state it with the branch a
 - **Cloudflare login.** `wrangler login` is per machine. Run `npx wrangler whoami` and confirm the intended account before any remote read or write.
 - **GitHub login.** Pushing needs a working credential on that machine (for example `gh auth status`). If the configured credential helper is broken, say so and ask before changing git configuration.
 - **Deploying.** `wrangler deploy` ships the working tree, not GitHub, so deploy only from a clean tree at a pushed SHA, with the Cloudflare login confirmed on that machine and the deploy authorized by the owner. Any of the three machines may deploy under those conditions.
-- **Identity.** Give each machine its own git author name (`Tamir Levin (intel-mac)`, `Tamir Levin (m2-mac)`, `Tamir Levin (omarchy)`) with the same `user.email`, set in the repository's own git configuration, so `git log` shows where a commit was made.
+- **Identity.** Give each machine its own git author name (`Tamir Levin (intel-mac)`, `Tamir Levin (m2-mac)`, `Tamir Levin (dfp-mac-tamir)`, `Tamir Levin (omarchy)`) with the same `user.email`, set in the repository's own git configuration, so `git log` shows where a commit was made.
 - **Provenance.** Put the machine label in every deploy `--message` and release record. Cloudflare version metadata is the record of which machine deployed last; do not keep a "last machine" file, which would be a progress log that goes stale.
 
 ## Source hierarchy
@@ -90,7 +91,7 @@ Do not smooth over conflicting evidence or convert an unverified inference into 
 - Read-only remote verification is appropriate when it is relevant and available.
 - When access is missing (a login, a network allowlist entry, a connector, a token), say exactly what is missing and ask the owner to supply it; do not work around it. A cloud session's allowlist, connectors, and secrets are set by its environment and apply to new sessions.
 - Preserve the architectural guardrails in `PROJECT_HISTORY.md`, especially the deterministic daily story inventory, equal-source candidate pool, 36-hour preference/48-hour normal window with a 72-hour fallback below 10 qualified candidates, no X-only cards, source-bound URLs, no weak padding, preservation of the last good edition, and owner-only guarded republishing.
-- Keep Jev, Clef, and reranker judgments advisory and shadow-only. Admin review labels, ranks, question-set versions, the Jev judgments ledger, and run snapshots are research data; they do not automatically change the selection or publication path.
+- Keep the Clef and reranker judgments advisory and shadow-only. The judge readout, question-set versions, the `clef_judgments` table, and run snapshots are research data; they do not automatically change the selection or publication path. Jev and the taste-labelling experiment were retired on 14 October 2026; their tables and rows are archive.
 - Do not create session transcripts, routine progress logs, or another project-memory file in the repository.
 
 ## Governance: allow, ask, block

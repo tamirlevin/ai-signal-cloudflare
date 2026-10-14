@@ -254,7 +254,7 @@ export type TriageScoredItem = {
   outcome: "selected" | "rankedOut" | "noUsableEvidence" | "weakProfileFit";
   sourceIds: SupplementalSourceId[];
 };
-export type JevScoredItem = {
+export type JudgeScoredItem = {
   url: string;
   title: string;
   summary?: string;
@@ -312,10 +312,10 @@ export type SupplementalShadowReport = {
   schemaVersion: 1;
   mode: "shadow" | "blend" | "daily-pool";
   generatedAt: string;
-  /** Profile and Jev question context used for the shadow evaluation. */
+  /** Profile and judge question context used for the shadow evaluation. */
   profileVersion?: number;
-  jevQuestionSetVersion?: string;
-  jevQuestions?: Record<string, unknown>;
+  judgeQuestionSetVersion?: string;
+  judgeQuestions?: Record<string, unknown>;
   baseIssue: { url: string; issueDate: string; publicationDate: string };
   sourcePack?: { id: SourcePackId; version: number };
   limits: { modelCandidates: 18; publishedStories: 14; tldr?: 3; alphaSignal?: 2; cloudflare?: 1 };
@@ -335,8 +335,8 @@ export type SupplementalShadowReport = {
   selectedForBlend?: ShadowCandidate[];
   /** Advisory per-item triage log over the full fresh pool, not just the selected. Absent unless triage shadow scoring ran. */
   triageScores?: TriageScoredItem[];
-  /** Advisory per-item Jev log over the full fresh pool. Absent unless Jev shadow scoring ran. */
-  jevScores?: JevScoredItem[];
+  /** Advisory per-item judge log over the full fresh pool. Absent unless judge shadow scoring ran. */
+  judgeScores?: JudgeScoredItem[];
 };
 export type SupplementalShadowRun = {
   id: string;
