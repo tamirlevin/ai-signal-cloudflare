@@ -7,6 +7,7 @@ import { buildJevQuestions } from "../src/jev";
 import { jevQuestionFingerprint } from "../src/jev-ledger";
 import worker from "../src/index";
 import { recordClefJudgments, scoredClefUrls, unscoredClefStories, type ClefJudgmentRow } from "../src/repository";
+import { sqlite } from "./sqlite";
 
 type Bound = Array<string | number | null>;
 
@@ -38,7 +39,7 @@ function d1(db: DatabaseSync): D1Database {
 }
 
 function database(): DatabaseSync {
-  const db = new DatabaseSync(":memory:");
+  const db = sqlite(new DatabaseSync(":memory:"));
   db.exec(readFileSync("migrations/0010_jev_ledger.sql", "utf8"));
   db.exec(readFileSync("migrations/0011_clef_judgments.sql", "utf8"));
   return db;

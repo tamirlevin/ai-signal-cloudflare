@@ -8,6 +8,7 @@ import worker from "../src/index";
 import { buildJevQuestions } from "../src/jev";
 import { jevQuestionFingerprint, type JevDecision, type JevLabelKind, type LabelEvent } from "../src/jev-ledger";
 import { getSupplementalShadowRun, recordSupplementalShadowRun } from "../src/repository";
+import { sqlite } from "./sqlite";
 
 /**
  * One run is twelve stories. The rules select s0..s3 (K = 4). Jev's top 4 by reader_wants is
@@ -208,7 +209,7 @@ describe("Clef comparison endpoint", () => {
     TRIAGE_SHADOW_ENABLED: "false", JEV_SHADOW_ENABLED: "false", CLEF_SHADOW_ENABLED: "false", RSS_URL: "https://news.smol.ai/rss.xml"
   }) as unknown as Env;
   const database = async (migrations: (name: string) => boolean): Promise<{ db: DatabaseSync; hash: string }> => {
-    const db = new DatabaseSync(":memory:");
+    const db = sqlite(new DatabaseSync(":memory:"));
     for (const name of readdirSync("migrations").filter((file) => file.endsWith(".sql")).sort()) if (migrations(name)) db.exec(readFileSync(`migrations/${name}`, "utf8"));
     db.prepare("INSERT INTO supplemental_shadow_runs (id, trigger, status, report_json, started_at, finished_at, duration_ms) VALUES ('run-1', 'cron', 'healthy', ?1, '2026-10-02T00:15:00Z', '2026-10-02T00:15:20Z', 20000)").run(JSON.stringify(report("run-1")));
     // No profile row in this schema, so the Worker falls back to the default profile; labels carry its fingerprint.
