@@ -175,11 +175,33 @@ describe("clef shadow run", () => {
     ]);
   });
 
+  // Regression test. On 15 October the deployed shadow report carried no judgeScores at all,
+  // because the shadow run scored into clef_judgments but never returned the scores to build
+  // the report from, so /api/judge-latest would have answered with an empty list forever.
+  it("returns the scores it just recorded, so the run's own report can carry them", async () => {
+    const db = database();
+    const ai = { run: vi.fn(async () => clefAnswer(0.6)) };
+    const scored = await runClefShadow({ DB: d1(db), AI: ai } as unknown as Env, { items, questions, runId: "run-9" });
+    expect(scored?.size).toBe(2);
+    expect(scored?.get("https://example.com/b")).toMatchObject({ readerWants: 0.6 });
+  });
+
+  it("returns undefined when every story is already scored, so the report omits the judge", async () => {
+    const db = database();
+    const hash = await judgeQuestionFingerprint(questions);
+    await recordClefJudgments(d1(db), [row("https://example.com/a", "clef", hash), row("https://example.com/b", "clef", hash)]);
+    const ai = { run: vi.fn(async () => clefAnswer(0.6)) };
+    await expect(runClefShadow({ DB: d1(db), AI: ai } as unknown as Env, { items, questions, runId: "run-9" })).resolves.toBeUndefined();
+    expect(ai.run).not.toHaveBeenCalled();
+  });
+
   it("never throws when the model or the database fails", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const db = database();
     const failing = { run: vi.fn(async () => { throw new Error("provider down"); }) };
-    await expect(runClefShadow({ DB: d1(db), AI: failing } as unknown as Env, { items, questions, runId: "run-9" })).resolves.toBeUndefined();
+    // A provider error still returns a scores map, empty, rather than throwing or undefined,
+    // so the caller can always treat the return value the same way.
+    await expect(runClefShadow({ DB: d1(db), AI: failing } as unknown as Env, { items, questions, runId: "run-9" })).resolves.toEqual(new Map());
     expect(db.prepare("SELECT COUNT(*) AS n FROM clef_judgments").get()).toEqual({ n: 0 });
     const broken = { prepare() { throw new Error("db down"); } } as unknown as D1Database;
     await expect(runClefShadow({ DB: broken, AI: failing } as unknown as Env, { items, questions, runId: null })).resolves.toBeUndefined();

@@ -1105,21 +1105,23 @@ export async function runSupplementalShadow(env: Env, trigger: "cron" | "manual"
       const priorTexts = prior ? prior.signals.map((signal) => `${signal.title} — ${signal.summary}`) : [];
       triage = await scoreTriage(env.AI, profile, inventory.evaluated, priorTexts);
     }
+    // The judge scores before the report is built, so the run's own report carries them, and the
+    // id is generated here so the judge rows in `clef_judgments` point back at this run. The id
+    // has to be known first because scoring happens before the run is recorded.
     let judge: Map<string, JudgeScores> | undefined;
     let judgeQuestions: JudgeAnswers | undefined;
+    const runId = crypto.randomUUID();
     if (clefShadowEnabled(env)) {
       const priorTitles = await preTodayPriorTitles(env.DB, issueDate).catch(() => [] as string[]);
       judgeQuestions = buildJudgeQuestions(profile, priorTitles);
+      judge = await runClefShadow(env, { items: inventory.evaluated, questions: judgeQuestions, runId });
     }
     const report = buildDailySourceReport({ issue, sourceResults, inventory, generatedAt: new Date().toISOString(), profile, triage, judge, judgeQuestions });
     if (triage?.size) attachTriageScores(report, triage);
     const failedSources = report.sources.filter((source) => source.status === "failed").length;
     const degradedSources = report.sources.filter((source) => source.status === "degraded").length;
     const status = failedSources === report.sources.length ? "failed" : failedSources || degradedSources ? "degraded" : "healthy";
-    const runId = await recordSupplementalShadowRun(env.DB, { trigger, status, startedAt, durationMs: Date.now() - started, report }, env.ENVIRONMENT);
-    if (clefShadowEnabled(env) && judgeQuestions) {
-      await runClefShadow(env, { items: inventory.evaluated, questions: judgeQuestions, runId });
-    }
+    await recordSupplementalShadowRun(env.DB, { id: runId, trigger, status, startedAt, durationMs: Date.now() - started, report }, env.ENVIRONMENT);
     console.log(JSON.stringify({ message: "ai-signal supplemental shadow completed", status, baseIssue: report.baseIssue.url, totals: report.totals }));
     return { status, report };
   } catch (error) {

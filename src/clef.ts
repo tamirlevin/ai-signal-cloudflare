@@ -82,20 +82,25 @@ function toRows(scores: Map<string, JudgeScores>, input: { questionHash: string;
 
 /**
  * Scores the shadow run's pool with Clef, skipping stories already scored under the same
- * question fingerprint and model. Best-effort: any error is logged and never fails the run.
+ * question fingerprint and model. Returns the scores just recorded so the caller can put them
+ * in the run's own report, and undefined when nothing new was scored or anything failed.
+ * Best-effort: any error is logged and never fails the run.
  */
-export async function runClefShadow(env: Env, input: { items: ScoreItem[]; questions: JudgeAnswers; runId: string | null }): Promise<void> {
+export async function runClefShadow(env: Env, input: { items: ScoreItem[]; questions: JudgeAnswers; runId: string | null }): Promise<Map<string, JudgeScores> | undefined> {
   try {
     const model = clefShadowModel(env);
     const questionHash = await judgeQuestionFingerprint(input.questions);
     const pool = input.items.slice(0, MAX_JUDGE_TEXTS);
     const done = await scoredClefUrls(env.DB, questionHash, model, pool.map((item) => item.url));
     const pending = pool.filter((item) => !done.has(item.url));
-    const result = pending.length ? await scoreClef(env.AI, model, pending, input.questions) : { scores: new Map<string, JudgeScores>(), attempted: 0, failed: 0 } as ClefScoreResult;
+    if (!pending.length) return undefined;
+    const result = await scoreClef(env.AI, model, pending, input.questions);
     await recordClefJudgments(env.DB, toRows(result.scores, { questionHash, model, runId: input.runId, scoredAt: new Date().toISOString() }));
     console.log(JSON.stringify({ message: "ai-signal clef shadow completed", model, pool: pool.length, alreadyScored: done.size, attempted: result.attempted, scored: result.scores.size, failed: result.failed, firstError: result.firstError }));
+    return result.scores;
   } catch (error) {
     console.warn(JSON.stringify({ message: "ai-signal clef shadow skipped", error: error instanceof Error ? error.message : String(error) }));
+    return undefined;
   }
 }
 

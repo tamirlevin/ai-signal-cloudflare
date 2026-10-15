@@ -200,6 +200,8 @@ export async function recordRun(
 export async function recordSupplementalShadowRun(
   db: D1Database,
   run: {
+    /** Supply when the id must be known before the run is recorded, so scores can carry it. */
+    id?: string;
     trigger: SupplementalShadowRun["trigger"];
     status: SupplementalShadowRun["status"];
     startedAt: string;
@@ -211,7 +213,7 @@ export async function recordSupplementalShadowRun(
   environment: Env["ENVIRONMENT"] = "production"
 ): Promise<string> {
   const finishedAt = new Date().toISOString();
-  const id = crypto.randomUUID();
+  const id = run.id ?? crypto.randomUUID();
   await db.batch([
     db.prepare("INSERT INTO supplemental_shadow_runs (id, trigger, status, base_issue_url, base_issue_date, report_json, error_code, error_message, started_at, finished_at, duration_ms) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)")
       .bind(
