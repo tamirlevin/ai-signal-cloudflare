@@ -1,4 +1,4 @@
-import type { Edition, JudgeGateRemoval, ModelAttemptAudit, RssIssue, RunResult, Source } from "./contracts";
+import type { Edition, ModelAttemptAudit, RssIssue, RunResult, Source, SupplementalShadowReport } from "./contracts";
 import { reviewEditorialEdition } from "./editorial-qa";
 import { deterministicEditorialEdition, editorialMessages, extractGeneratedEdition, generationInput, issueFromCandidateInventory, materializeCandidateStories, ModelJsonError, ModelOutputTruncatedError, modelResponseDiagnostic, type ModelResponseDiagnostic } from "./editorial";
 import { claimManualRepublish, completeManualRepublish, errorCode, getActiveProfile, insertEdition, latestEdition, melbourneCalendarDay, publishedEditionState, recordRun, recordSupplementalShadowRun, releaseManualRepublish, replaceEdition, type ManualRepublishClaim } from "./repository";
@@ -233,19 +233,22 @@ export async function generateLatestEdition(env: Env, trigger: Trigger, options:
     if (!inventory.candidates.length) throw new ValidationError(`No qualified stories were published inside the ${inventory.collection.maxFreshnessHours}-hour source window`);
     // The bounded judge gate runs on the deterministic selection and can only remove. It is
     // fail-open: any judge problem leaves the edition exactly as the rules would have built it.
-    let judgeGate: { removed: number; items: JudgeGateRemoval[] } | undefined;
+    // The outcome is recorded even when nothing is removed, so a quiet day is not confused with
+    // the gate being off.
+    let judgeGate: SupplementalShadowReport["judgeGate"];
     if (judgeGateEnabled(env)) {
       const priorTitles = await preTodayPriorTitles(env.DB, issue.issueDate).catch(() => [] as string[]);
       const questions = buildJudgeQuestions(profile, priorTitles);
       const items = inventory.candidates.map((candidate) => ({ url: candidate.sources[0]?.url ?? "", title: candidate.title, summary: candidate.summary }));
       const gate = await runClefGate(env, { items, questions });
-      if (gate?.scores.size) {
+      if (gate) {
         const removals = selectJudgeGateRemovals(inventory.candidates, gate.scores);
-        if (removals.length) {
-          applyJudgeRemovals(inventory, removals);
-          judgeGate = { removed: removals.length, items: removals };
-          console.warn(JSON.stringify({ message: "ai-signal judge gate trimmed candidates", issueUrl, removed: removals, remaining: inventory.candidates.length }));
-        }
+        if (removals.length) applyJudgeRemovals(inventory, removals);
+        judgeGate = { removed: removals.length, checked: gate.attempted, failed: gate.failed, items: removals };
+        console.log(JSON.stringify({ message: "ai-signal judge gate completed", issueUrl, removed: removals.length, checked: gate.attempted, failed: gate.failed, remaining: inventory.candidates.length }));
+      } else {
+        judgeGate = { removed: 0, checked: 0, failed: 0, items: [], skipped: true };
+        console.warn(JSON.stringify({ message: "ai-signal judge gate did not run", issueUrl }));
       }
     }
     const modelIssue = issueFromCandidateInventory(issue, inventory.candidates);

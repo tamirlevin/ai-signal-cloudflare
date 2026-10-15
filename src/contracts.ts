@@ -339,8 +339,13 @@ export type SupplementalShadowReport = {
   triageScores?: TriageScoredItem[];
   /** Advisory per-item judge log over the full fresh pool. Absent unless judge shadow scoring ran. */
   judgeScores?: JudgeScoredItem[];
-  /** Bounded judge gate outcome: candidates the judge removed after deterministic selection. Absent unless the gate ran and removed something. */
-  judgeGate?: { removed: number; items: JudgeGateRemoval[] };
+  /**
+   * Bounded judge gate outcome for a run that enabled the gate: how many candidates it scored and
+   * how many it removed. Present whenever the gate ran, even when it removed nothing, so a quiet
+   * day is distinguishable from the gate being off. `skipped` marks a gate that produced no scores
+   * (fail-open).
+   */
+  judgeGate?: { removed: number; checked: number; failed: number; items: JudgeGateRemoval[]; skipped?: boolean };
 };
 
 /**
