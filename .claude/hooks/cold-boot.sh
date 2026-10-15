@@ -3,11 +3,13 @@
 # Read-only, no network. It never fetches, so remote references may be stale.
 cd "${CLAUDE_PROJECT_DIR:-.}" || exit 0
 arch="$(uname -sm)"
-host="$(hostname)"
-case "$arch:$host" in
-  "Darwin x86_64:"*) machine="intel-mac" ;;
-  "Darwin arm64:"*) machine="m2-mac" ;;
-  "Linux aarch64:omarchy-mbp") machine="omarchy" ;;
+# macOS `hostname` is unreliable (HostName when set, else the default "Mac.localname"); use
+# scutil on Darwin so the Mac's computer name is what gets printed. See AGENTS.md.
+if [ "$(uname -s)" = "Darwin" ]; then host="$(scutil --get LocalHostName 2>/dev/null || hostname)"; else host="$(hostname)"; fi
+case "$arch" in
+  "Darwin x86_64") machine="intel-mac" ;;
+  "Darwin arm64")  machine="m2-mac" ;;
+  "Linux aarch64") case "$host" in omarchy-mbp) machine="omarchy" ;; *) machine="unknown: ask the owner and do not use a label" ;; esac ;;
   *) machine="unknown: ask the owner and do not use a label" ;;
 esac
 echo "AGENTS.md cold boot (read-only snapshot; origin was not fetched)"

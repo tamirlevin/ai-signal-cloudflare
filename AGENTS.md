@@ -27,7 +27,7 @@ Before proposing or changing anything:
    uname -sm
    ```
 
-   Fetch `origin` first when network access is available. If it is not, say that the remote reference may be stale. `uname -sm` identifies the working machine; see Working machines below. In Claude Code, `.claude/hooks/cold-boot.sh` prints the machine label, branch, SHA, and Git state at session start. It never fetches, so remote references may be stale and the fetch above still applies.
+   Fetch `origin` first when network access is available. If it is not, say that the remote reference may be stale. `uname -sm` identifies the working machine, and on macOS `scutil --get LocalHostName` names it; see Working machines below. In Claude Code, `.claude/hooks/cold-boot.sh` prints the machine label, branch, SHA, and Git state at session start. It never fetches, so remote references may be stale and the fetch above still applies.
 3. Preserve dirty or user-owned changes. Never clean, reset, or overwrite them automatically.
 4. For production or current-state questions, use relevant read-only evidence rather than relying on documentation alone. Typical checks are:
 
@@ -45,16 +45,17 @@ Before proposing or changing anything:
 
 ## Working machines
 
-The owner works on four known machines, and this repository may be run from any of them. None is the default; the owner chooses where to work as needed.
+The owner works on three known machines, and this repository may be run from any of them. None is the default; the owner chooses where to work as needed.
 
 | Label | Identify it with | Notes |
 | --- | --- | --- |
 | `intel-mac` | `uname -sm` reports `Darwin x86_64` | The earlier default; a 2020 27-inch iMac. |
-| `m2-mac` | `uname -sm` reports `Darwin arm64` | Normally Tuesdays and Wednesdays in the office. A terminal running under Rosetta reports `x86_64`; if in doubt, run `sysctl -n machdep.cpu.brand_string`. |
-| `dfp-mac-tamir` | `uname -sm` reports `Darwin arm64` and `hostname` reports `DFP-MAC-TAMIR.local` | Added 14 October 2026 at the owner's instruction. |
+| `m2-mac` | `uname -sm` reports `Darwin arm64`, and on macOS `scutil --get LocalHostName` reports `DFP-MAC-TAMIR` | A MacBook Pro, Apple M2 Pro (`Mac14,9`), normally used in the office. Its computer name is `DFP-MAC-TAMIR`, which is the same machine and not a separate one. A terminal running under Rosetta reports `x86_64`; if in doubt, run `sysctl -n machdep.cpu.brand_string`. |
 | `omarchy` | `uname -sm` reports `Linux aarch64` and `hostname` reports `omarchy-mbp` | Arch Linux ARM running Omarchy. |
 
-Use these lowercase labels wherever a machine is recorded. A cloud agent session also reports `Linux`, so `uname -sm` alone cannot separate it from `omarchy`; check `hostname`. A machine that matches none of these is treated as a cloud session or an unknown machine: ask the owner rather than assume, and do not use a label for it. Two arm64 Macs therefore exist and are separated by hostname alone, so record the hostname alongside the label whenever an arm64 machine is used.
+Use these lowercase labels wherever a machine is recorded. A cloud agent session also reports `Linux`, so `uname -sm` alone cannot separate it from `omarchy`; check `hostname`. A machine that matches none of these is treated as a cloud session or an unknown machine: ask the owner rather than assume, and do not use a label for it.
+
+On macOS, `hostname` is not a reliable identifier: it returns `HostName` when one is set and the default `Mac.localname` when it is not, and a VPN client or network change can set and unset `HostName` during a session. It returned `DFP-MAC-TAMIR.local` early in the 14 October session and `Mac.localname` later the same day on the same machine. Use `scutil --get LocalHostName` on Darwin, and `hostname` elsewhere.
 
 **Session types.** A desktop (local) session needs a folder the owner chooses (use the non-synced clone) and may use a git worktree under `.claude/worktrees/`. A cloud session works from a fresh clone of GitHub, so push first; it has no Wrangler login. The Cloudflare connector, when enabled, gives read-only inspection of D1 through `d1_database_query` (SELECT only, never a write) of staging `ai-signal-staging` (`d1d32bf8-9edf-463a-b151-8ea54abc2e4d`) and production `ai-signal` (`376a852a-26db-4d2d-983c-b872b3361372`), plus Cloudflare documentation search; it has no deploy tool. Public endpoints and some documentation hosts may be blocked by the environment's network allowlist. Deploys, migrations, and secrets are the owner's steps from a known machine with a confirmed Wrangler login.
 
@@ -66,8 +67,45 @@ In a local session, identify the machine as above and state it with the branch a
 - **Cloudflare login.** `wrangler login` is per machine. Run `npx wrangler whoami` and confirm the intended account before any remote read or write.
 - **GitHub login.** Pushing needs a working credential on that machine (for example `gh auth status`). If the configured credential helper is broken, say so and ask before changing git configuration.
 - **Deploying.** `wrangler deploy` ships the working tree, not GitHub, so deploy only from a clean tree at a pushed SHA, with the Cloudflare login confirmed on that machine and the deploy authorized by the owner. Any of the three machines may deploy under those conditions.
-- **Identity.** Give each machine its own git author name (`Tamir Levin (intel-mac)`, `Tamir Levin (m2-mac)`, `Tamir Levin (dfp-mac-tamir)`, `Tamir Levin (omarchy)`) with the same `user.email`, set in the repository's own git configuration, so `git log` shows where a commit was made.
+- **Identity.** Give each machine its own git author name (`Tamir Levin (intel-mac)`, `Tamir Levin (m2-mac)`, `Tamir Levin (omarchy)`) with `user.email` set to `tamirlevin@yahoo.com`, set in the repository's own git configuration, so `git log` shows where a commit was made. See **Git identity and the two logins** below before changing anything: the email is not a free choice.
 - **Provenance.** Put the machine label in every deploy `--message` and release record. Cloudflare version metadata is the record of which machine deployed last; do not keep a "last machine" file, which would be a progress log that goes stale.
+
+## Git identity and the two logins
+
+The owner has two accounts with different email addresses, and they are separate axes:
+
+- **GitHub** uses `tamirlevin@yahoo.com`. GitHub attributes a commit to the account from the commit's *author email*, not from whichever account you are logged in as.
+- **Cloudflare** (Wrangler) uses `tamirlevin@gmail.com`. Wrangler authenticates by OAuth and never reads git configuration, so the Cloudflare email has no bearing on how a commit is attributed.
+
+So `tamirlevin@gmail.com` in `user.email` does not link commits to the GitHub account, and `tamirlevin@yahoo.com` has nothing to do with the Cloudflare login. Setting git to the Cloudflare email breaks attribution; setting it to the GitHub email changes nothing about Cloudflare access. `17117928+tamirlevin@users.noreply.github.com` also links to the account and is unaffected by any future email change.
+
+### Runbook: fixing identity on a machine
+
+Run on each machine, in this order. `scripts/git-identity.sh` does all of it and is read-only by default:
+
+```bash
+./scripts/git-identity.sh          # report only: machine, current and target identity, linkage of the last 5 commits
+./scripts/git-identity.sh --apply # set the repository-local identity; commits, pushes and history are untouched
+```
+
+What it does, and why each step is there:
+
+1. **Identify the machine** from `uname -sm` and, on macOS, `scutil --get LocalHostName`. The author name is the machine label, so `git log` shows where each commit came from. An unrecognised machine stops and asks rather than guessing a label.
+2. **Report before changing.** It prints the repository-local and global `user.email`, because an unset local value silently inherits the global one, which is how the 14 October session ended up committing with a global email.
+3. **Set the repository-local** `user.name` and `user.email`. Repository-local, not global, so a checkout does not depend on the machine's global git state.
+4. **Show whether GitHub links each recent commit.** A commit whose email is not on the GitHub account shows `NOT LINKED`.
+
+Then confirm on the next real commit, since linkage can only be proven by a commit that exists:
+
+```bash
+gh api repos/tamirlevin/ai-signal-cloudflare/commits/HEAD --jq '.author.login'
+```
+
+`null` means the email on that commit is not on the GitHub account.
+
+### Commits that are already wrong
+
+Do not rewrite them. The 23 commits authored `tamirlevin@gmail.com` (29 September to 14 October 2026) and the 17 authored `tamir@2020.local` are unattributed on GitHub; their content is correct, they are already pushed, and rewriting pushed history is a blocked action under the governance table. Fix identity forward only, and record the unattributed range in `PROJECT_HISTORY.md` so a later session does not read an old email as an error and "fix" it the wrong way.
 
 ## Source hierarchy
 
