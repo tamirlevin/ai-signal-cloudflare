@@ -15,6 +15,7 @@ const fakeEnv = (adminToken = "test-token") => ({
   TRIAGE_SHADOW_ENABLED: "false" as const,
   JEV_SHADOW_ENABLED: "false" as const,
   CLEF_SHADOW_ENABLED: "false" as const,
+  CLEF_GATE_ENABLED: "false" as const,
   RSS_URL: "https://news.smol.ai/rss.xml" as const
 });
 

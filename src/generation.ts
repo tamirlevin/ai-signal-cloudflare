@@ -1,9 +1,11 @@
-import type { Edition, ModelAttemptAudit, RssIssue, RunResult, Source } from "./contracts";
+import type { Edition, JudgeGateRemoval, ModelAttemptAudit, RssIssue, RunResult, Source } from "./contracts";
 import { reviewEditorialEdition } from "./editorial-qa";
 import { deterministicEditorialEdition, editorialMessages, extractGeneratedEdition, generationInput, issueFromCandidateInventory, materializeCandidateStories, ModelJsonError, ModelOutputTruncatedError, modelResponseDiagnostic, type ModelResponseDiagnostic } from "./editorial";
 import { claimManualRepublish, completeManualRepublish, errorCode, getActiveProfile, insertEdition, latestEdition, melbourneCalendarDay, publishedEditionState, recordRun, recordSupplementalShadowRun, releaseManualRepublish, replaceEdition, type ManualRepublishClaim } from "./repository";
 import { normalizeEditionStories } from "./story-normalization";
-import { buildDailyCandidateInventory, buildDailySourceReport, collectSupplementalSources } from "./supplemental";
+import { buildDailyCandidateInventory, buildDailySourceReport, collectSupplementalSources, applyJudgeRemovals, preTodayPriorTitles } from "./supplemental";
+import { judgeGateEnabled, runClefGate, selectJudgeGateRemovals } from "./clef";
+import { buildJudgeQuestions } from "./judge";
 import { attachTriageScores, scoreTriage, triageShadowEnabled, type TriageScores } from "./triage";
 import { ValidationError, validateEdition, validatePresentationDiversity, validateSynthesisDiversity } from "./validation";
 
@@ -229,6 +231,23 @@ export async function generateLatestEdition(env: Env, trigger: Trigger, options:
     const sourceResults = await collectSupplementalSources({ profile, now: new Date(startedAt), rssUrl: env.RSS_URL });
     const inventory = buildDailyCandidateInventory({ sourceResults, profile, now: new Date(startedAt) });
     if (!inventory.candidates.length) throw new ValidationError(`No qualified stories were published inside the ${inventory.collection.maxFreshnessHours}-hour source window`);
+    // The bounded judge gate runs on the deterministic selection and can only remove. It is
+    // fail-open: any judge problem leaves the edition exactly as the rules would have built it.
+    let judgeGate: { removed: number; items: JudgeGateRemoval[] } | undefined;
+    if (judgeGateEnabled(env)) {
+      const priorTitles = await preTodayPriorTitles(env.DB, issue.issueDate).catch(() => [] as string[]);
+      const questions = buildJudgeQuestions(profile, priorTitles);
+      const items = inventory.candidates.map((candidate) => ({ url: candidate.sources[0]?.url ?? "", title: candidate.title, summary: candidate.summary }));
+      const gate = await runClefGate(env, { items, questions });
+      if (gate?.scores.size) {
+        const removals = selectJudgeGateRemovals(inventory.candidates, gate.scores);
+        if (removals.length) {
+          applyJudgeRemovals(inventory, removals);
+          judgeGate = { removed: removals.length, items: removals };
+          console.warn(JSON.stringify({ message: "ai-signal judge gate trimmed candidates", issueUrl, removed: removals, remaining: inventory.candidates.length }));
+        }
+      }
+    }
     const modelIssue = issueFromCandidateInventory(issue, inventory.candidates);
     const sourceIssue = {
       ...issue,
@@ -243,6 +262,7 @@ export async function generateLatestEdition(env: Env, trigger: Trigger, options:
     }
     const report = buildDailySourceReport({ issue, sourceResults, inventory, generatedAt: new Date().toISOString(), profile, triage });
     if (triage?.size) attachTriageScores(report, triage);
+    if (judgeGate) report.judgeGate = judgeGate;
     const failedSources = report.sources.filter((source) => source.status === "failed").length;
     const degradedSources = report.sources.filter((source) => source.status === "degraded").length;
     const sourceStatus = failedSources === report.sources.length ? "failed" : failedSources || degradedSources ? "degraded" : "healthy";

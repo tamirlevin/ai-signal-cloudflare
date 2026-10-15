@@ -204,6 +204,8 @@ export type DailyCollection = {
   maxFreshnessHours: 48 | 72;
   eligibleCandidates: number;
   selectedCandidates: number;
+  /** Candidates the bounded judge gate removed after deterministic selection. Absent unless the gate ran. */
+  judgeFiltered?: number;
   sourcePackId?: SourcePackId;
   sourcePackVersion?: number;
 };
@@ -337,6 +339,23 @@ export type SupplementalShadowReport = {
   triageScores?: TriageScoredItem[];
   /** Advisory per-item judge log over the full fresh pool. Absent unless judge shadow scoring ran. */
   judgeScores?: JudgeScoredItem[];
+  /** Bounded judge gate outcome: candidates the judge removed after deterministic selection. Absent unless the gate ran and removed something. */
+  judgeGate?: { removed: number; items: JudgeGateRemoval[] };
+};
+
+/**
+ * One candidate the bounded judge gate removed. The gate can only remove, never add or
+ * reorder, and only below a strict reader-want threshold and outside the protected top of
+ * the deterministic ranking.
+ */
+export type JudgeGateRemoval = {
+  id: number;
+  url: string;
+  title: string;
+  readerWants: number | null;
+  substantive: number | null;
+  novel: number | null;
+  reason: "reader-wants-below-threshold";
 };
 export type SupplementalShadowRun = {
   id: string;

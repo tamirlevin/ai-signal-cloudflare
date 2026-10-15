@@ -1,6 +1,7 @@
 import type {
   CandidateStory,
   DailyCollection,
+  JudgeGateRemoval,
   Profile,
   RssIssue,
   SourcePackSource,
@@ -975,6 +976,31 @@ export function buildDailyCandidateInventory(input: {
       sourcePackVersion: pack.version
     }
   };
+}
+
+/**
+ * Applies the bounded judge gate's removals to a built inventory, keeping the accounting honest:
+ * the selected list and count shrink, each source funnel moves the removed candidate from
+ * `selected` to `filtered.rankedOut`, the per-item report outcome flips off `selected`, and the
+ * collection records how many the judge removed. Removal only; ranking order is untouched.
+ */
+export function applyJudgeRemovals(inventory: DailyCandidateInventory, removals: ReadonlyArray<Pick<JudgeGateRemoval, "id" | "url">>): void {
+  if (!removals.length) return;
+  const removedIds = new Set(removals.map((removal) => removal.id));
+  const removedUrls = new Set(removals.map((removal) => removal.url));
+  inventory.candidates = inventory.candidates.filter((candidate) => !removedIds.has(candidate.id));
+  inventory.collection.selectedCandidates = inventory.candidates.length;
+  inventory.collection.judgeFiltered = (inventory.collection.judgeFiltered ?? 0) + removals.length;
+  for (const item of inventory.evaluated) {
+    if (item.outcome !== "selected" || !removedUrls.has(item.url)) continue;
+    item.outcome = "rankedOut";
+    for (const sourceId of item.sourceIds) {
+      const funnel = inventory.sourceFunnels[sourceId];
+      if (!funnel) continue;
+      funnel.selected = Math.max(0, funnel.selected - 1);
+      funnel.filtered.rankedOut += 1;
+    }
+  }
 }
 
 export function buildDailySourceReport(input: {

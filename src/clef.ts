@@ -1,4 +1,4 @@
-import type { Profile } from "./contracts";
+import type { JudgeGateRemoval, Profile } from "./contracts";
 import {
   buildJudgeQuestions,
   JUDGE_QUESTION_SET_VERSION,
@@ -100,6 +100,62 @@ export async function runClefShadow(env: Env, input: { items: ScoreItem[]; quest
     return result.scores;
   } catch (error) {
     console.warn(JSON.stringify({ message: "ai-signal clef shadow skipped", error: error instanceof Error ? error.message : String(error) }));
+    return undefined;
+  }
+}
+
+/**
+ * The bounded judge gate. Unlike the shadow path, this changes the published edition, so it is
+ * deliberately narrow: it can only *remove* a candidate that the judge rates as not worth the
+ * reader's attention, it never adds or reorders, it never touches the top of the deterministic
+ * ranking, and it removes at most `JUDGE_GATE_MAX_REMOVALS` per run. A quiet day simply gets
+ * quieter, which is already the rule; the gate can never pad.
+ */
+export const JUDGE_GATE_READER_WANTS_MAX = 0.25;
+export const JUDGE_GATE_MAX_REMOVALS = 3;
+export const JUDGE_GATE_PROTECTED_TOP = 3;
+
+export function judgeGateEnabled(env: Env): boolean {
+  return (env as Env & { CLEF_GATE_ENABLED?: string }).CLEF_GATE_ENABLED === "true";
+}
+
+/**
+ * Picks the candidates the gate removes, in deterministic rank order. A candidate is eligible
+ * only outside the protected top (`JUDGE_GATE_PROTECTED_TOP`) and with a `reader_wants` score at
+ * or below `JUDGE_GATE_READER_WANTS_MAX`; an unscored candidate is always kept. Removal stops at
+ * `JUDGE_GATE_MAX_REMOVALS`, so the gate is bounded no matter how the judge scores the pool.
+ */
+export function selectJudgeGateRemovals<T extends { id: number; title: string; sources: Array<{ url: string }> }>(
+  candidates: T[],
+  scores: Map<string, JudgeScores>
+): JudgeGateRemoval[] {
+  const removals: JudgeGateRemoval[] = [];
+  candidates.forEach((candidate, index) => {
+    if (index < JUDGE_GATE_PROTECTED_TOP || removals.length >= JUDGE_GATE_MAX_REMOVALS) return;
+    const url = candidate.sources[0]?.url ?? "";
+    const score = scores.get(url);
+    if (!score || score.readerWants === null || score.readerWants > JUDGE_GATE_READER_WANTS_MAX) return;
+    removals.push({ id: candidate.id, url, title: candidate.title, readerWants: score.readerWants, substantive: score.substantive, novel: score.novel, reason: "reader-wants-below-threshold" });
+  });
+  return removals;
+}
+
+/**
+ * Scores the selected candidate set with Clef on the critical path and returns the scores for
+ * gating. Scores bounded to the selected set (never the whole pool), recorded to `clef_judgments`
+ * for continuity, and best-effort: any provider or database error is logged and the gate is a
+ * no-op rather than a failed run.
+ */
+export async function runClefGate(env: Env, input: { items: ScoreItem[]; questions: JudgeAnswers }): Promise<{ scores: Map<string, JudgeScores>; attempted: number; failed: number } | undefined> {
+  try {
+    const model = clefShadowModel(env);
+    const questionHash = await judgeQuestionFingerprint(input.questions);
+    const result = await scoreClef(env.AI, model, input.items, input.questions);
+    await recordClefJudgments(env.DB, toRows(result.scores, { questionHash, model, runId: null, scoredAt: new Date().toISOString() }));
+    console.log(JSON.stringify({ message: "ai-signal judge gate scored candidates", model, attempted: result.attempted, scored: result.scores.size, failed: result.failed, firstError: result.firstError }));
+    return { scores: result.scores, attempted: result.attempted, failed: result.failed };
+  } catch (error) {
+    console.warn(JSON.stringify({ message: "ai-signal judge gate skipped", error: error instanceof Error ? error.message : String(error) }));
     return undefined;
   }
 }

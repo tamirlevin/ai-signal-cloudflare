@@ -18,6 +18,7 @@
     "SUPPLEMENTAL_SHADOW_ENABLED": "true",
     "TRIAGE_SHADOW_ENABLED": "false",
     "CLEF_SHADOW_ENABLED": "false",
+    "CLEF_GATE_ENABLED": "false",
     "RSS_URL": "https://news.smol.ai/rss.xml"
   },
   "d1_databases": [
@@ -51,6 +52,7 @@
         "TRIAGE_SHADOW_ENABLED": "true",
         "CLEF_SHADOW_ENABLED": "true",
         "CLEF_SHADOW_MODEL": "clef",
+        "CLEF_GATE_ENABLED": "true",
         "RSS_URL": "https://news.smol.ai/rss.xml"
       },
       "d1_databases": [
