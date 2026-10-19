@@ -297,6 +297,31 @@ function adminControls(profile) {
   return `<label class="range-row">Default stories <output id="admin-budget-value">${profile.storyBudget}</output><input id="admin-story-budget" type="range" min="${profile.storyBudgetRange[0]}" max="${profile.storyBudgetRange[1]}" value="${profile.storyBudget}"></label><div id="admin-weights" class="weights">${profile.weights.map((weight) => `<div class="weight"><label>${escape(weight.label)} <output>${weightLabel(weight.value)}</output></label><input data-admin-weight="${escape(weight.id)}" type="range" min="0" max="4" value="${weight.value}"></div>`).join("")}</div><fieldset><legend>Editorial safeguards</legend><label><input id="admin-exceptional" type="checkbox" ${profile.exceptionalStoryOverride ? "checked" : ""}> Exceptional-story override</label><label><input id="admin-watch-permissions" type="checkbox" ${profile.safeguards.watchPermissions ? "checked" : ""}> Watch agent permission design</label><label><input id="admin-watch-geography" type="checkbox" ${profile.safeguards.watchGeography ? "checked" : ""}> Watch AI cluster geography</label></fieldset>`;
 }
 
+function renderAdmin(profile) {
+  state.adminProfile = profile;
+  app.innerHTML = `<section class="admin"><div class="banner"><p class="eyebrow">Owner controls</p><h1>AI Signal administration</h1><p>Global profile changes affect future generation only. Browser personalisation remains local and is not shown here.</p></div><div class="admin-panel"><label>Admin token <input id="admin-token" type="password" autocomplete="off"></label><p class="muted">Used only for the request you submit below; it is not stored in the browser.</p>${adminControls(profile)}<div class="admin-actions"><button class="button" id="save-global-profile" type="button">Save global Profile v${profile.version + 1}</button><button class="button secondary" id="run-refresh" type="button">Build today's edition</button><button class="button secondary" id="run-republish" type="button">Republish today's edition (once daily)</button></div><p class="muted">Normal refresh skips today's edition after it has been published. Republish replaces that daily edition so you can test a code or profile change; one successful republish is allowed per Melbourne calendar day.</p><p class="status" id="admin-status" aria-live="polite"></p></div>${judgePanel()}${visitPanel()}</section>`;
+  app.querySelectorAll("[data-admin-weight]").forEach((input) => input.addEventListener("input", () => { input.previousElementSibling.querySelector("output").textContent = weightLabel(Number(input.value)); }));
+  app.querySelector("#admin-story-budget").addEventListener("input", (event) => { app.querySelector("#admin-budget-value").textContent = event.target.value; });
+  app.querySelector("#save-global-profile").addEventListener("click", saveGlobalProfile);
+  app.querySelector("#run-refresh").addEventListener("click", runRefresh);
+  app.querySelector("#run-republish").addEventListener("click", () => runRefresh(true));
+  app.querySelector("#load-judge-latest").addEventListener("click", loadJudgeLatest);
+  app.querySelector("#load-visits").addEventListener("click", loadVisits);
+}
+
+function globalProfileCandidate() {
+  const profile = structuredClone(state.adminProfile);
+  profile.version += 1;
+  profile.storyBudget = Number(app.querySelector("#admin-story-budget").value);
+  profile.weights.forEach((weight) => { weight.value = Number(app.querySelector(`[data-admin-weight="${CSS.escape(weight.id)}"]`).value); });
+  profile.exceptionalStoryOverride = app.querySelector("#admin-exceptional").checked;
+  profile.safeguards.watchPermissions = app.querySelector("#admin-watch-permissions").checked;
+  profile.safeguards.watchGeography = app.querySelector("#admin-watch-geography").checked;
+  return profile;
+}
+
+function adminToken() { return app.querySelector("#admin-token").value; }
+
 function visitLocationLabel(visit) {
   return [visit.city, visit.region, visit.country].filter(Boolean).join(", ") || "Unknown";
 }
