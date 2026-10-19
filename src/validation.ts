@@ -137,6 +137,7 @@ function collectionMetadata(value: unknown): NonNullable<Edition["collection"]> 
     if (maxFreshnessHours !== 48 && maxFreshnessHours !== 72) throw new ValidationError("edition.collection.maxFreshnessHours must be 48 or 72");
     const eligibleCandidates = integer(collection.eligibleCandidates, "edition.collection.eligibleCandidates", 0, 999);
     const selectedCandidates = integer(collection.selectedCandidates, "edition.collection.selectedCandidates", 0, Math.min(18, eligibleCandidates));
+    const judgeFiltered = collection.judgeFiltered === undefined ? undefined : integer(collection.judgeFiltered, "edition.collection.judgeFiltered", 0, 18);
     return {
       mode,
       sourcesChecked: list(collection.sourcesChecked, "edition.collection.sourcesChecked", 1, 12).map((item, index) => text(item, `edition.collection.sourcesChecked[${index}]`)),
@@ -145,6 +146,7 @@ function collectionMetadata(value: unknown): NonNullable<Edition["collection"]> 
       maxFreshnessHours,
       eligibleCandidates,
       selectedCandidates,
+      ...(judgeFiltered === undefined ? {} : { judgeFiltered }),
       ...(sourcePackId === undefined ? {} : { sourcePackId: sourcePackId as SourcePackId }),
       ...(sourcePackVersion === undefined ? {} : { sourcePackVersion })
     };
