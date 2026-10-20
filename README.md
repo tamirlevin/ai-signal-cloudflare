@@ -72,6 +72,17 @@ The issue header is the edition date, not a source date. Each signal retains its
 
 `SUPPLEMENTAL_SHADOW_ENABLED=true` keeps the read-only source report refreshed when a same-day edition causes generation to skip. It does not create another publication path.
 
+## Bounded Clef judge gate
+
+The gate is the only judge path that can change an edition. Its contract is in `AGENTS.md`; this section is the map for reviewing or verifying it.
+
+- `src/clef.ts` defines `JUDGE_GATE_READER_WANTS_MAX` (`0.25`, inclusive), `JUDGE_GATE_MAX_REMOVALS` (`3`), and `JUDGE_GATE_PROTECTED_TOP` (`3`), selects removals, and runs the best-effort scoring call.
+- `src/generation.ts` invokes the gate only inside `generateLatestEdition`, after deterministic selection, records `report.judgeGate`, and applies removals before the model issue is built.
+- `src/supplemental.ts` applies removals to the inventory and source funnels; `src/validation.ts` preserves `collection.judgeFiltered` through edition validation.
+- `test/judge-gate.test.ts` covers the flag, threshold, protected top, cap, unscored candidates, accounting, and fail-open. `test/judge-gate-e2e.test.ts` covers the same behavior through `generateLatestEdition`, including zero-removal recording and the disabled path.
+- Live check: `report.judgeGate` appears on every publishing run when the flag is on. `collection.judgeFiltered` equals `judgeGate.removed` and is absent when that count is zero. `/api/shadow/latest` can be a newer same-day skip report that never gated; when that happens, read `supplemental_shadow_runs` for the latest publishing run rather than treating the missing field as a gate failure. The 20 October 2026 entry in `PROJECT_HISTORY.md` records the current pending check.
+- State: `CLEF_GATE_ENABLED` is `true` in staging and `false` in production. The staging gate is deployed and verified live for the zero-removal path; a nonzero-removal run is still pending.
+
 ## Reader, profiles, and privacy
 
 AI Signal ships with Profile v2 as its empty-database default; the active production profile can advance independently in D1. The reader shows seven stories by default and allows up to 14 qualified cards without padding.
@@ -126,7 +137,7 @@ The configured cron is `15 22 * * *` UTC: 08:15 Melbourne during AEST and 09:15 
 npx wrangler deploy --env staging --tag git-<short-sha>-staging --message "Git <full-sha>; <summary>"
 ```
 
-Staging exists so experiment branches run against real Cloudflare egress without touching production data, schedule, or spend: the 8-hour cadence yields same-day idempotent skips plus fresh shadow/funnel reads, and any extra generation is an explicit owner `POST /api/refresh`. `ENVIRONMENT=staging` unlocks the `/__scheduled`, `/__shadow`, `/__jev-probe`, and `/__clef-backfill` test routes. Promote to production only by merging to `main` and following the release rules in [AGENTS.md](AGENTS.md). The owner's Jev labels can be read back against the rules, the reranker, and Jev with the read-only queries in [scripts/label-readout.sql](scripts/label-readout.sql).
+Staging exists so experiment branches run against real Cloudflare egress without touching production data, schedule, or spend: the 8-hour cadence yields same-day idempotent skips plus fresh shadow/funnel reads, and any extra generation is an explicit owner `POST /api/refresh` (or `?republish=1` for the once-daily replacement path). `ENVIRONMENT=staging` unlocks the `/__scheduled`, `/__shadow`, and `/__clef-backfill` test routes; the backfill scores ledger stories that have no Clef row yet. Promote to production only by merging to `main` and following the release rules in [AGENTS.md](AGENTS.md).
 
 ## API
 
@@ -151,4 +162,4 @@ All API responses use security headers and do not enable cross-origin access. Th
 
 ## Tests
 
-`npm test` covers source-pack policy, feed parsers, conditional 48/72-hour windows and their boundaries, source-402 fail-open generation, X exclusion, equal-source clustering, corroboration, gentle diversity, no quotas/no padding, candidate merge-decision accounting and coverage enforcement, AI Brief parsing, Jev and Clef shadow scoring, the locked Clef-versus-Jev comparison, owner-verdict agreement stats, trusted-link validation, daily idempotency, guarded republishing, model repair/fallback, one-pass editorial QA correction and fail-open paths, heartbeat aging, API authentication, visit privacy, and preservation of the last good edition under total source failure.
+`npm test` covers source-pack policy, feed parsers, conditional 48/72-hour windows and their boundaries, source-402 fail-open generation, X exclusion, equal-source clustering, corroboration, gentle diversity, no quotas/no padding, candidate merge-decision accounting and coverage enforcement, AI Brief parsing, Clef shadow scoring, the bounded judge gate's unit and end-to-end paths (protected top, removal cap, zero-removal recording, fail-open, and disabled), trusted-link validation, daily idempotency, guarded republishing, model repair/fallback, one-pass editorial QA correction and fail-open paths, heartbeat aging, API authentication, visit privacy, and preservation of the last good edition under total source failure.
